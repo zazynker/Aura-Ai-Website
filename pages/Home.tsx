@@ -75,7 +75,7 @@ export const Home = () => {
       {/* Search Header */}
       <div className="max-w-4xl mx-auto mb-12 flex flex-col items-center gap-6">
         <h1 className="text-4xl md:text-5xl font-bold text-center">
-          Create <span className="text-gradient">Professional</span> Photos <br className="hidden md:block"/> with AI in Seconnds
+          Create <span className="text-gradient">Professional</span> Photos <br className="hidden md:block"/> with AI in Seconds
         </h1>
         
         <div className="relative w-full max-w-xl group">
