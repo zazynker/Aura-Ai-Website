@@ -1,12 +1,14 @@
+
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Sparkles, ArrowRight } from 'lucide-react';
+import { mockTemplates } from '../data/mockData';
 
 export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   const navigate = useNavigate();
-  const { login, browsing } = useStore();
+  const { login, browsing, saveBrowsingState } = useStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
@@ -28,8 +30,43 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
       setLoading(false);
       
       // Smart redirect
-      if (browsing.lastViewedTemplate) {
-          navigate(`/template/${browsing.lastViewedTemplate}`);
+      if (browsing.intendedDestination) {
+          const dest = browsing.intendedDestination;
+          saveBrowsingState({ intendedDestination: null });
+          
+          // Check for pending template (if user clicked template before login)
+          if (dest === '/modify') {
+            const pendingTemplateStr = sessionStorage.getItem('pendingTemplate');
+            if (pendingTemplateStr) {
+                const pendingTemplate = JSON.parse(pendingTemplateStr);
+                sessionStorage.removeItem('pendingTemplate');
+                navigate('/modify', {
+                    state: {
+                        initialImage: pendingTemplate.imageUrl,
+                        initialImageSource: { 
+                            templateId: pendingTemplate.templateId, 
+                            templateName: pendingTemplate.templateName 
+                        }
+                    }
+                });
+                return;
+            }
+          }
+          navigate(dest);
+      } else if (browsing.lastViewedTemplate) {
+          // If we have a last viewed template but no specific destination (or loose state),
+          // default to modify for continuity
+          const template = mockTemplates.find(t => t.id === browsing.lastViewedTemplate);
+          if (template) {
+              navigate('/modify', {
+                state: {
+                    initialImage: template.imageUrl,
+                    initialImageSource: { templateId: template.id, templateName: template.name }
+                }
+              });
+          } else {
+              navigate('/');
+          }
       } else {
           navigate('/');
       }
@@ -42,52 +79,52 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl -z-10 animate-pulse" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-pink-600/20 rounded-full blur-3xl -z-10" />
 
-        <div className="w-full max-w-md glass-panel p-8 rounded-3xl border border-white/10 shadow-2xl animate-in zoom-in-95 duration-500">
+        <div className="w-full max-w-md glass-panel p-8 rounded-3xl border border-slate-200 dark:border-white/10 shadow-2xl animate-in zoom-in-95 duration-500">
             <div className="text-center mb-8">
                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center mx-auto mb-4 shadow-lg shadow-purple-500/30">
                     <Sparkles className="w-6 h-6 text-white" />
                 </div>
-                <h2 className="text-2xl font-bold text-white mb-2">{isSignup ? 'Create Account' : 'Welcome Back'}</h2>
-                <p className="text-slate-400 text-sm">Join the future of product photography</p>
+                <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">{isSignup ? 'Create Account' : 'Welcome Back'}</h2>
+                <p className="text-slate-600 dark:text-slate-400 text-sm">Join the future of product photography</p>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
                 {isSignup && (
                     <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-300 ml-1">Full Name</label>
+                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Full Name</label>
                         <input 
                             type="text" 
                             value={name} 
                             onChange={e => setName(e.target.value)} 
-                            className="w-full bg-slate-900/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all"
+                            className="w-full bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-white/10 rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all"
                             placeholder="John Doe"
                         />
                     </div>
                 )}
                 
                 <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-300 ml-1">Email</label>
+                    <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Email</label>
                     <input 
                         type="email" 
                         value={email} 
                         onChange={e => setEmail(e.target.value)} 
-                        className={`w-full bg-slate-900/50 border rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && !email.includes('@') ? 'border-red-500' : 'border-white/10'}`}
+                        className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && !email.includes('@') ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
                         placeholder="you@example.com"
                     />
                 </div>
 
                 <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-300 ml-1">Password</label>
+                    <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Password</label>
                     <input 
                         type="password" 
                         value={password} 
                         onChange={e => setPassword(e.target.value)} 
-                        className={`w-full bg-slate-900/50 border rounded-xl px-4 py-3 text-white focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && password.length < 6 ? 'border-red-500' : 'border-white/10'}`}
+                        className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && password.length < 6 ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
                         placeholder="••••••••"
                     />
                 </div>
 
-                {error && <p className="text-red-400 text-xs text-center">{error}</p>}
+                {error && <p className="text-red-500 dark:text-red-400 text-xs text-center">{error}</p>}
 
                 <Button variant="gradient" className="w-full py-3" isLoading={loading}>
                     {isSignup ? 'Sign Up' : 'Log In'} <ArrowRight className="w-4 h-4 ml-2" />
@@ -95,9 +132,9 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
             </form>
 
             <div className="mt-6 text-center">
-                <p className="text-sm text-slate-400">
+                <p className="text-sm text-slate-600 dark:text-slate-400">
                     {isSignup ? "Already have an account?" : "Don't have an account?"}
-                    <button onClick={() => navigate(isSignup ? '/login' : '/signup')} className="text-purple-400 hover:text-purple-300 font-medium ml-1">
+                    <button onClick={() => navigate(isSignup ? '/login' : '/signup')} className="text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300 font-medium ml-1">
                         {isSignup ? 'Log in' : 'Sign up'}
                     </button>
                 </p>

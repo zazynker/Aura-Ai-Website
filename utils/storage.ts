@@ -1,20 +1,20 @@
+
 import { LocalStorageData, User, BrowsingState, Generation, Collection } from '../types';
 
-const KEY = 'aura_app_data_v1';
+const KEY = 'lazora_app_data_v1';
 
 const initialData: LocalStorageData = {
   user: null,
-  browsing: { scrollY: 0, category: 'All', searchQuery: '', lastViewedTemplate: null },
+  browsing: { scrollY: 0, category: 'All', searchQuery: '', lastViewedTemplate: null, intendedDestination: null, modifySession: null },
   generations: [],
-  collections: [
-    { id: 'col_1', name: 'Favorites', imageIds: [] }
-  ],
+  collections: [], // Empty initially, created per user on login
+  theme: 'light', // Default to light
 };
 
 export const getStorage = (): LocalStorageData => {
   try {
     const data = localStorage.getItem(KEY);
-    return data ? JSON.parse(data) : initialData;
+    return data ? { ...initialData, ...JSON.parse(data) } : initialData; // Merge to ensure new fields like theme exist
   } catch (e) {
     return initialData;
   }

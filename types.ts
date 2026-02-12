@@ -1,3 +1,4 @@
+
 export type Plan = 'Free' | 'Pro' | 'Enterprise';
 
 export interface User {
@@ -23,6 +24,7 @@ export interface Template {
 
 export interface Generation {
   id: string;
+  userId: string;
   templateId: string;
   templateName?: string;
   imageUrl: string;
@@ -34,8 +36,18 @@ export interface Generation {
 
 export interface Collection {
   id: string;
+  userId: string;
   name: string;
   imageIds: string[];
+}
+
+export interface ModifySession {
+  hasSelectedImage: boolean;
+  currentImage: string;
+  originalUploadedImage: string;
+  generatedResults: string[];
+  showResults: boolean;
+  currentImageSource?: { templateId: string; templateName: string };
 }
 
 export interface BrowsingState {
@@ -43,6 +55,8 @@ export interface BrowsingState {
   category: string;
   searchQuery: string;
   lastViewedTemplate: string | null;
+  intendedDestination?: string | null;
+  modifySession?: ModifySession | null;
 }
 
 export interface LocalStorageData {
@@ -50,6 +64,7 @@ export interface LocalStorageData {
   browsing: BrowsingState;
   generations: Generation[];
   collections: Collection[];
+  theme: 'light' | 'dark';
 }
 
 export interface ToastMessage {

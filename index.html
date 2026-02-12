@@ -3,10 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aura - AI Product Photography</title>
+    <title>Lazora - AI Product Studio</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             colors: {
@@ -22,25 +23,35 @@
     </script>
     <style>
       body {
-        background-color: #0f172a; /* Slate 900 */
-        color: #f8fafc;
+        /* Default to Light Mode colors, handled by Tailwind classes in App.tsx */
         font-family: 'Inter', sans-serif;
+        transition: background-color 0.3s ease, color 0.3s ease;
       }
+      
       /* Custom Scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
         height: 8px;
       }
       ::-webkit-scrollbar-track {
-        background: #1e293b; 
+        background: #f3f4f6; /* Gray 100 */
       }
+      .dark ::-webkit-scrollbar-track {
+        background: #1e293b; /* Slate 800 */
+      }
+      
       ::-webkit-scrollbar-thumb {
-        background: #475569; 
+        background: #9ca3af; /* Gray 400 */
         border-radius: 4px;
       }
-      ::-webkit-scrollbar-thumb:hover {
-        background: #64748b; 
+      .dark ::-webkit-scrollbar-thumb {
+        background: #475569; /* Slate 600 */
       }
+      
+      ::-webkit-scrollbar-thumb:hover {
+        background: #6b7280; /* Gray 500 */
+      }
+
       .hide-scrollbar::-webkit-scrollbar {
         display: none;
       }
@@ -48,17 +59,33 @@
         -ms-overflow-style: none;
         scrollbar-width: none;
       }
+
+      /* Responsive Glass Panel */
       .glass-panel {
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(16px);
-        -webkit-backdrop-filter: blur(16px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.55); /* Light Mode: More Transparent (Enhanced Glass) */
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(226, 232, 240, 0.6); /* Slate 200 */
+        box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.05), 0 4px 8px -2px rgba(0, 0, 0, 0.02);
       }
+      
+      .dark .glass-panel {
+        background: rgba(255, 255, 255, 0.05); /* Dark Mode: Clear Glass */
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: none;
+      }
+
       .text-gradient {
         background-clip: text;
         -webkit-background-clip: text;
         color: transparent;
         background-image: linear-gradient(to right, #c084fc, #ec4899);
+      }
+      .text-gradient-brand {
+        background-clip: text;
+        -webkit-background-clip: text;
+        color: transparent;
+        background-image: linear-gradient(to right, #c084fc, #ec4899); 
       }
       .text-gradient-blue {
         background-clip: text;

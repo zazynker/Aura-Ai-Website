@@ -1,5 +1,6 @@
+
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { User, LocalStorageData, ToastMessage, Generation, Collection } from '../types';
+import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
 
 // Simple ID generator
@@ -11,12 +12,15 @@ interface StoreContextType {
   browsing: LocalStorageData['browsing'];
   generations: Generation[];
   collections: Collection[];
+  theme: 'light' | 'dark';
+  toggleTheme: () => void;
   login: (email: string, name: string) => void;
   logout: () => void;
   updateUser: (updates: Partial<User>) => void;
   addToast: (type: 'success' | 'error' | 'info', message: string) => void;
   removeToast: (id: string) => void;
   saveBrowsingState: (updates: Partial<LocalStorageData['browsing']>) => void;
+  saveModifySession: (session: ModifySession | null) => void;
   addGeneration: (gen: Generation) => void;
   addGenerations: (gens: Generation[]) => void;
   deleteGeneration: (id: string) => void;
@@ -37,8 +41,28 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // Sync state with local storage events if multiple tabs or external updates
     const handleStorage = () => setData(getStorage());
     window.addEventListener('storage-update', handleStorage);
+    
+    // Apply initial theme
+    applyTheme(data.theme);
+
     return () => window.removeEventListener('storage-update', handleStorage);
   }, []);
+
+  const applyTheme = (theme: 'light' | 'dark') => {
+      const root = window.document.documentElement;
+      if (theme === 'dark') {
+          root.classList.add('dark');
+      } else {
+          root.classList.remove('dark');
+      }
+  };
+
+  const toggleTheme = () => {
+      const newTheme = data.theme === 'dark' ? 'light' : 'dark';
+      updateStorage((prev) => ({ ...prev, theme: newTheme }));
+      setData(getStorage());
+      applyTheme(newTheme);
+  };
 
   const addToast = (type: 'success' | 'error' | 'info', message: string) => {
     const id = generateId();
@@ -51,8 +75,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const login = (email: string, name: string) => {
+    // Generate a stable ID based on email to ensure data persists for the same user across sessions
+    const stableId = `user_${email.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+
     const newUser: User = {
-      id: generateId(),
+      id: stableId,
       email,
       name,
       plan: 'Free',
@@ -60,13 +87,45 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       maxCredits: 10,
       avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
     };
-    updateStorage((prev) => ({ ...prev, user: newUser }));
+
+    updateStorage((prev) => {
+        // Ensure this user has a "Favorites" collection
+        const hasFavorites = prev.collections.some(c => c.userId === stableId && c.name === 'Favorites');
+        let newCollections = prev.collections;
+
+        if (!hasFavorites) {
+            newCollections = [...prev.collections, {
+                id: `col_${generateId()}`,
+                userId: stableId,
+                name: 'Favorites',
+                imageIds: []
+            }];
+        }
+
+        return { 
+            ...prev, 
+            user: newUser,
+            collections: newCollections
+        };
+    });
+    
     setData(getStorage());
     addToast('success', `Welcome back, ${name}!`);
   };
 
   const logout = () => {
-    updateStorage((prev) => ({ ...prev, user: null }));
+    updateStorage((prev) => ({ 
+        ...prev, 
+        user: null,
+        browsing: { 
+            scrollY: 0, 
+            category: 'All', 
+            searchQuery: '', 
+            lastViewedTemplate: null, 
+            intendedDestination: null, 
+            modifySession: null 
+        }
+    }));
     setData(getStorage());
     addToast('info', 'Logged out successfully');
   };
@@ -87,19 +146,33 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setData(getStorage());
   };
 
-  const addGeneration = (gen: Generation) => {
+  const saveModifySession = (session: ModifySession | null) => {
     updateStorage((prev) => ({
       ...prev,
-      generations: [gen, ...prev.generations],
+      browsing: { ...prev.browsing, modifySession: session },
+    }));
+    setData(getStorage());
+  };
+
+  const addGeneration = (gen: Generation) => {
+    if (!data.user) return;
+    const genWithUser = { ...gen, userId: data.user.id };
+    
+    updateStorage((prev) => ({
+      ...prev,
+      generations: [genWithUser, ...prev.generations],
       user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
     }));
     setData(getStorage());
   };
 
   const addGenerations = (gens: Generation[]) => {
+    if (!data.user) return;
+    const gensWithUser = gens.map(g => ({ ...g, userId: data.user!.id }));
+
     updateStorage((prev) => ({
       ...prev,
-      generations: [...gens, ...prev.generations],
+      generations: [...gensWithUser, ...prev.generations],
       user: prev.user ? { ...prev.user, credits: prev.user.credits - gens.reduce((acc, g) => acc + g.creditsUsed, 0) } : null
     }));
     setData(getStorage());
@@ -116,10 +189,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // --- Collection Logic ---
 
   const createCollection = (name: string) => {
+    if (!data.user) return;
+
     const newCol: Collection = {
       id: `col_${generateId()}`,
+      userId: data.user.id,
       name,
-      imageIds: [] // In this context, storing Template IDs
+      imageIds: []
     };
     updateStorage((prev) => ({
       ...prev,
@@ -164,20 +240,32 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     addToast('info', 'Removed from collection');
   };
 
+  // Filter data to only show what belongs to the current user
+  const userGenerations = data.user 
+    ? data.generations.filter(g => g.userId === data.user!.id)
+    : [];
+    
+  const userCollections = data.user
+    ? data.collections.filter(c => c.userId === data.user!.id)
+    : [];
+
   return (
     <StoreContext.Provider
       value={{
         user: data.user,
         toasts,
         browsing: data.browsing,
-        generations: data.generations,
-        collections: data.collections,
+        generations: userGenerations,
+        collections: userCollections,
+        theme: data.theme,
+        toggleTheme,
         login,
         logout,
         updateUser,
         addToast,
         removeToast,
         saveBrowsingState,
+        saveModifySession,
         addGeneration,
         addGenerations,
         deleteGeneration,
