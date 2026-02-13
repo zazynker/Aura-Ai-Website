@@ -183,9 +183,9 @@ export const Home = () => {
             />
           </div>
 
-          {/* Categories - Expandable */}
+          {/* Categories - Expandable (Adjusted Height and Margin) */}
           <div className={`w-full md:w-auto overflow-hidden transition-all duration-300 ease-in-out ${
-              isSearchFocused ? 'max-h-20 opacity-100 mt-3' : 'max-h-0 opacity-0 mt-0'
+              isSearchFocused ? 'max-h-14 opacity-100 mt-2' : 'max-h-0 opacity-0 mt-0'
           }`}>
             <div className="flex gap-2 overflow-x-auto max-w-full pb-1 hide-scrollbar mask-linear-fade justify-start md:justify-center px-1">
                 {categories.map(cat => (
@@ -207,8 +207,8 @@ export const Home = () => {
         </div>
       </div>
 
-      {/* Main Content Area - Added padding top to account for Fixed Navbar (h-16) + Fixed Search Bar (~60px) */}
-      <div className="pt-32 px-4 md:px-8 pb-12">
+      {/* Main Content Area - Increased Padding Top */}
+      <div className="pt-44 px-4 md:px-8 pb-12">
         <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 max-w-[1600px] mx-auto space-y-4">
           {filteredTemplates.map((t) => (
             <div

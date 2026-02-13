@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { StoreProvider } from './context/StoreContext';
@@ -10,10 +9,14 @@ import { Login } from './pages/Login';
 import { Pricing } from './pages/Pricing';
 import { Dashboard } from './pages/Dashboard';
 import { Modify } from './pages/Modify';
+import { Privacy } from './pages/Privacy';
+import { Terms } from './pages/Terms';
+import { Footer } from './components/Footer';
 
 const AppContent = () => {
   const location = useLocation();
   const isAuthPage = location.pathname === '/login' || location.pathname === '/signup';
+  const hideFooter = isAuthPage || location.pathname === '/modify';
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
@@ -27,7 +30,10 @@ const AppContent = () => {
         <Route path="/signup" element={<Login isSignup />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/privacy" element={<Privacy />} />
+        <Route path="/terms" element={<Terms />} />
       </Routes>
+      {!hideFooter && <Footer />}
     </div>
   );
 };
