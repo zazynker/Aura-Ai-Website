@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Link } from 'react-router-dom';
 
@@ -25,6 +26,13 @@ export const Footer = () => {
             className="hover:text-slate-900 dark:hover:text-white transition-colors"
           >
             Terms of Service
+          </Link>
+          <span className="text-slate-200 dark:text-slate-700">·</span>
+          <Link 
+            to="/about" 
+            className="hover:text-slate-900 dark:hover:text-white transition-colors"
+          >
+            About
           </Link>
           <span className="text-slate-200 dark:text-slate-700">·</span>
           <a 
