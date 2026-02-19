@@ -77,7 +77,7 @@ export const Navbar = () => {
                        <Link to="/pricing" onClick={() => setShowDropdown(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
                         <CreditCard className="w-4 h-4" /> Plans
                       </Link>
-                      <button onClick={() => { logout(); setShowDropdown(false); navigate('/'); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-white/5 hover:text-red-600 dark:hover:text-red-300 transition-colors">
+                      <button onClick={async () => { await logout(); setShowDropdown(false); navigate('/'); }} className="w-full flex items-center gap-2 px-4 py-2.5 text-sm text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-white/5 hover:text-red-600 dark:hover:text-red-300 transition-colors">
                         <LogOut className="w-4 h-4" /> Logout
                       </button>
                     </div>
