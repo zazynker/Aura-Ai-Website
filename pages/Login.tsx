@@ -1,76 +1,88 @@
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Sparkles, ArrowRight } from 'lucide-react';
-import { mockTemplates } from '../data/mockData';
+import { supabase } from '../utils/supabase';
 
 export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   const navigate = useNavigate();
-  const { login, browsing, saveBrowsingState } = useStore();
+  const { browsing, saveBrowsingState, addToast } = useStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleRedirect = () => {
+    if (browsing.intendedDestination) {
+      const dest = browsing.intendedDestination;
+      saveBrowsingState({ intendedDestination: null });
+
+      if (dest === '/modify') {
+        const pendingTemplateStr = sessionStorage.getItem('pendingTemplate');
+        if (pendingTemplateStr) {
+          const pendingTemplate = JSON.parse(pendingTemplateStr);
+          sessionStorage.removeItem('pendingTemplate');
+          navigate('/modify', {
+            state: {
+              initialImage: pendingTemplate.imageUrl,
+              initialImageSource: {
+                templateId: pendingTemplate.templateId,
+                templateName: pendingTemplate.templateName
+              }
+            }
+          });
+          return;
+        }
+      }
+      navigate(dest);
+    } else {
+      navigate('/');
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    // Validation
     if (!email.includes('@')) return setError('Invalid email address');
     if (password.length < 6) return setError('Password must be at least 6 characters');
     if (isSignup && !name) return setError('Name is required');
 
+    console.log('SUBMIT_DEBUG', { isSignup, email, password: '***' });
     setLoading(true);
-    setTimeout(() => {
-      login(email, isSignup ? name : email.split('@')[0]);
-      setLoading(false);
-      
-      // Smart redirect
-      if (browsing.intendedDestination) {
-          const dest = browsing.intendedDestination;
-          saveBrowsingState({ intendedDestination: null });
-          
-          // Check for pending template (if user clicked template before login)
-          if (dest === '/modify') {
-            const pendingTemplateStr = sessionStorage.getItem('pendingTemplate');
-            if (pendingTemplateStr) {
-                const pendingTemplate = JSON.parse(pendingTemplateStr);
-                sessionStorage.removeItem('pendingTemplate');
-                navigate('/modify', {
-                    state: {
-                        initialImage: pendingTemplate.imageUrl,
-                        initialImageSource: { 
-                            templateId: pendingTemplate.templateId, 
-                            templateName: pendingTemplate.templateName 
-                        }
-                    }
-                });
-                return;
-            }
+
+    try {
+      if (isSignup) {
+        console.log('CALLING_SIGNUP...');
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: { name }
           }
-          navigate(dest);
-      } else if (browsing.lastViewedTemplate) {
-          // If we have a last viewed template but no specific destination (or loose state),
-          // default to modify for continuity
-          const template = mockTemplates.find(t => t.id === browsing.lastViewedTemplate);
-          if (template) {
-              navigate('/modify', {
-                state: {
-                    initialImage: template.imageUrl,
-                    initialImageSource: { templateId: template.id, templateName: template.name }
-                }
-              });
-          } else {
-              navigate('/');
-          }
+        });
+        console.log('SIGNUP_RESULT', { data, error });
+        if (error) throw error;
+        addToast('success', 'Account created successfully!');
       } else {
-          navigate('/');
+        console.log('CALLING_LOGIN...');
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password
+        });
+        console.log('LOGIN_RESULT', { data, error });
+        if (error) throw error;
       }
-    }, 1500);
+
+      handleRedirect();
+    } catch (err: any) {
+      console.log('AUTH_ERROR', err);
+      setError(err.message || 'Authentication failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
