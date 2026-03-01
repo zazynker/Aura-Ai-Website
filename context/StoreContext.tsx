@@ -2,6 +2,8 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
+import { supabase } from '../utils/supabase';
+import { Session } from '@supabase/supabase-js';
 
 // Simple ID generator
 const generateId = () => Math.random().toString(36).substr(2, 9);
@@ -13,9 +15,9 @@ interface StoreContextType {
   generations: Generation[];
   collections: Collection[];
   theme: 'light' | 'dark';
+  authLoading: boolean;
   toggleTheme: () => void;
-  login: (email: string, name: string) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   updateUser: (updates: Partial<User>) => void;
   addToast: (type: 'success' | 'error' | 'info', message: string) => void;
   removeToast: (id: string) => void;
@@ -36,33 +38,104 @@ const StoreContext = createContext<StoreContextType | undefined>(undefined);
 export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [data, setData] = useState<LocalStorageData>(getStorage());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // --- Supabase Auth ---
+
+  const syncUserFromSession = (session: Session) => {
+    const supaUser = session.user;
+    const newUser: User = {
+      id: supaUser.id,
+      email: supaUser.email || '',
+      name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
+      plan: 'Free',
+      credits: 10,
+      maxCredits: 10,
+      avatarUrl: supaUser.user_metadata?.avatar_url ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
+    };
+
+    updateStorage((prev) => {
+      // 保留已有的 credits/plan（如果用户之前登录过）
+      const existingUser = prev.user;
+      const mergedUser = existingUser && existingUser.id === newUser.id
+        ? { ...newUser, credits: existingUser.credits, plan: existingUser.plan }
+        : newUser;
+
+      // 确保有 Favorites 集合
+      const hasFavorites = prev.collections.some(
+        c => c.userId === mergedUser.id && c.name === 'Favorites'
+      );
+      let newCollections = prev.collections;
+      if (!hasFavorites) {
+        newCollections = [...prev.collections, {
+          id: `col_${generateId()}`,
+          userId: mergedUser.id,
+          name: 'Favorites',
+          imageIds: []
+        }];
+      }
+
+      return { ...prev, user: mergedUser, collections: newCollections };
+    });
+    setData(getStorage());
+  };
 
   useEffect(() => {
-    // Sync state with local storage events if multiple tabs or external updates
+    // 1. 获取初始 session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        syncUserFromSession(session);
+      }
+      setAuthLoading(false);
+    });
+
+    // 2. 监听 auth 状态变化
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (session?.user) {
+          syncUserFromSession(session);
+        } else {
+          // 用户登出了
+          updateStorage((prev) => ({
+            ...prev,
+            user: null,
+            browsing: { ...prev.browsing, modifySession: null }
+          }));
+          setData(getStorage());
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // --- Theme ---
+
+  useEffect(() => {
     const handleStorage = () => setData(getStorage());
     window.addEventListener('storage-update', handleStorage);
-    
-    // Apply initial theme
     applyTheme(data.theme);
-
     return () => window.removeEventListener('storage-update', handleStorage);
   }, []);
 
   const applyTheme = (theme: 'light' | 'dark') => {
-      const root = window.document.documentElement;
-      if (theme === 'dark') {
-          root.classList.add('dark');
-      } else {
-          root.classList.remove('dark');
-      }
+    const root = window.document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
   };
 
   const toggleTheme = () => {
-      const newTheme = data.theme === 'dark' ? 'light' : 'dark';
-      updateStorage((prev) => ({ ...prev, theme: newTheme }));
-      setData(getStorage());
-      applyTheme(newTheme);
+    const newTheme = data.theme === 'dark' ? 'light' : 'dark';
+    updateStorage((prev) => ({ ...prev, theme: newTheme }));
+    setData(getStorage());
+    applyTheme(newTheme);
   };
+
+  // --- Toasts ---
 
   const addToast = (type: 'success' | 'error' | 'info', message: string) => {
     const id = generateId();
@@ -74,57 +147,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  const login = (email: string, name: string) => {
-    // Generate a stable ID based on email to ensure data persists for the same user across sessions
-    const stableId = `user_${email.toLowerCase().replace(/[^a-z0-9]/g, '')}`;
+  // --- Auth Actions ---
 
-    const newUser: User = {
-      id: stableId,
-      email,
-      name,
-      plan: 'Free',
-      credits: 10,
-      maxCredits: 10,
-      avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${name}`,
-    };
-
-    updateStorage((prev) => {
-        // Ensure this user has a "Favorites" collection
-        const hasFavorites = prev.collections.some(c => c.userId === stableId && c.name === 'Favorites');
-        let newCollections = prev.collections;
-
-        if (!hasFavorites) {
-            newCollections = [...prev.collections, {
-                id: `col_${generateId()}`,
-                userId: stableId,
-                name: 'Favorites',
-                imageIds: []
-            }];
-        }
-
-        return { 
-            ...prev, 
-            user: newUser,
-            collections: newCollections
-        };
-    });
-    
-    setData(getStorage());
-    addToast('success', `Welcome back, ${name}!`);
-  };
-
-  const logout = () => {
-    updateStorage((prev) => ({ 
-        ...prev, 
-        user: null,
-        browsing: { 
-            scrollY: 0, 
-            category: 'All', 
-            searchQuery: '', 
-            lastViewedTemplate: null, 
-            intendedDestination: null, 
-            modifySession: null 
-        }
+  const logout = async () => {
+    await supabase.auth.signOut();
+    updateStorage((prev) => ({
+      ...prev,
+      user: null,
+      browsing: { ...prev.browsing, modifySession: null }
     }));
     setData(getStorage());
     addToast('info', 'Logged out successfully');
@@ -137,6 +167,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }));
     setData(getStorage());
   };
+
+  // --- Browsing State ---
 
   const saveBrowsingState = (updates: Partial<LocalStorageData['browsing']>) => {
     updateStorage((prev) => ({
@@ -154,10 +186,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setData(getStorage());
   };
 
+  // --- Generations ---
+
   const addGeneration = (gen: Generation) => {
     if (!data.user) return;
     const genWithUser = { ...gen, userId: data.user.id };
-    
+
     updateStorage((prev) => ({
       ...prev,
       generations: [genWithUser, ...prev.generations],
@@ -186,7 +220,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setData(getStorage());
   };
 
-  // --- Collection Logic ---
+  // --- Collections ---
 
   const createCollection = (name: string) => {
     if (!data.user) return;
@@ -215,15 +249,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const addToCollection = (collectionId: string, itemId: string) => {
-     // Check if already exists
-     const current = getStorage();
-     const collection = current.collections.find(c => c.id === collectionId);
-     if (collection && collection.imageIds.includes(itemId)) {
-         addToast('info', 'Already in collection');
-         return;
-     }
+    const current = getStorage();
+    const collection = current.collections.find(c => c.id === collectionId);
+    if (collection && collection.imageIds.includes(itemId)) {
+      addToast('info', 'Already in collection');
+      return;
+    }
 
-     updateStorage((prev) => ({
+    updateStorage((prev) => ({
       ...prev,
       collections: prev.collections.map(c => c.id === collectionId ? { ...c, imageIds: [itemId, ...c.imageIds] } : c)
     }));
@@ -241,10 +274,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   // Filter data to only show what belongs to the current user
-  const userGenerations = data.user 
+  const userGenerations = data.user
     ? data.generations.filter(g => g.userId === data.user!.id)
     : [];
-    
+
   const userCollections = data.user
     ? data.collections.filter(c => c.userId === data.user!.id)
     : [];
@@ -258,8 +291,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         generations: userGenerations,
         collections: userCollections,
         theme: data.theme,
+        authLoading,
         toggleTheme,
-        login,
         logout,
         updateUser,
         addToast,
