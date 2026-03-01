@@ -120,7 +120,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
             Click the link in the email to activate your account. If you don't see it, check your spam folder.
           </p>
           <button
-            onClick={() => window.location.href = '/#/login'}
+            onClick={() => { window.location.hash = '/login'; window.location.reload(); }}
             className="text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300 font-medium text-sm"
           >
             Back to Log in
