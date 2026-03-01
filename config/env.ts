@@ -31,7 +31,6 @@ const requiredEnvVars = [
   }
   
   // Export environment variables
-  console.log('ENV_DEBUG:', import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
   export const env = {
     supabase: {
       url: import.meta.env.VITE_SUPABASE_URL || '',
