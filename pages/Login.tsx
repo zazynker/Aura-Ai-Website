@@ -50,35 +50,29 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
     if (password.length < 6) return setError('Password must be at least 6 characters');
     if (isSignup && !name) return setError('Name is required');
 
-    console.log('SUBMIT_DEBUG', { isSignup, email, password: '***' });
     setLoading(true);
 
     try {
       if (isSignup) {
-        console.log('CALLING_SIGNUP...');
-        const { data, error } = await supabase.auth.signUp({
+        const { error } = await supabase.auth.signUp({
           email,
           password,
           options: {
             data: { name }
           }
         });
-        console.log('SIGNUP_RESULT', { data, error });
         if (error) throw error;
         addToast('success', 'Account created successfully!');
       } else {
-        console.log('CALLING_LOGIN...');
-        const { data, error } = await supabase.auth.signInWithPassword({
+        const { error } = await supabase.auth.signInWithPassword({
           email,
           password
         });
-        console.log('LOGIN_RESULT', { data, error });
         if (error) throw error;
       }
 
       handleRedirect();
     } catch (err: any) {
-      console.log('AUTH_ERROR', err);
       setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);
