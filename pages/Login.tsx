@@ -5,6 +5,25 @@ import { Button } from '../components/ui/Button';
 import { Sparkles, ArrowRight, Mail } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 
+const ALLOWED_EMAIL_DOMAINS = [
+  'gmail.com',
+  'outlook.com',
+  'hotmail.com',
+  'yahoo.com',
+  'icloud.com',
+  'me.com',
+  'mac.com',
+  'live.com',
+  'msn.com',
+  'protonmail.com',
+  'proton.me',
+];
+
+function isAllowedEmail(email: string): boolean {
+  const domain = email.split('@')[1]?.toLowerCase();
+  return ALLOWED_EMAIL_DOMAINS.includes(domain);
+}
+
 export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   const navigate = useNavigate();
   const { browsing, saveBrowsingState, addToast } = useStore();
@@ -49,6 +68,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
     setError('');
 
     if (!email.includes('@')) return setError('Invalid email address');
+    if (isSignup && !isAllowedEmail(email)) return setError('Please use a major email provider (Gmail, Outlook, Yahoo, iCloud, etc.)');
     if (password.length < 6) return setError('Password must be at least 6 characters');
     if (isSignup && !name) return setError('Name is required');
     if (isSignup && password !== confirmPassword) return setError('Passwords do not match');
@@ -81,7 +101,6 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
     }
   };
 
-  // 注册成功后显示确认邮件提示
   if (signupSuccess) {
     return (
       <div className="min-h-screen flex items-center justify-center px-4 relative overflow-hidden">
@@ -101,7 +120,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
             Click the link in the email to activate your account. If you don't see it, check your spam folder.
           </p>
           <button
-            onClick={() => navigate('/login')}
+            onClick={() => window.location.href = '/#/login'}
             className="text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300 font-medium text-sm"
           >
             Back to Log in
@@ -113,7 +132,6 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
 
   return (
     <div className="min-h-screen flex items-center justify-center px-4 relative overflow-hidden">
-        {/* Background blobs */}
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl -z-10 animate-pulse" />
         <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-pink-600/20 rounded-full blur-3xl -z-10" />
 
