@@ -1,12 +1,12 @@
-
 import React from 'react';
 import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { StoreProvider } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { ToastContainer } from './components/ui/Toast';
 import { Home } from './pages/Home';
-// TemplateDetail removed
 import { Login } from './pages/Login';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { ResetPassword } from './pages/ResetPassword';
 import { Pricing } from './pages/Pricing';
 import { Dashboard } from './pages/Dashboard';
 import { Modify } from './pages/Modify';
@@ -17,7 +17,7 @@ import { Footer } from './components/Footer';
 
 const AppContent = () => {
   const location = useLocation();
-  const isAuthPage = location.pathname === '/login' || location.pathname === '/signup';
+  const isAuthPage = ['/login', '/signup', '/forgot-password', '/reset-password'].includes(location.pathname);
   const hideFooter = isAuthPage || location.pathname === '/modify';
 
   return (
@@ -30,6 +30,8 @@ const AppContent = () => {
         <Route path="/modify" element={<Modify />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Login isSignup />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/privacy" element={<Privacy />} />

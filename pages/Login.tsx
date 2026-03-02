@@ -170,7 +170,18 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
                 </div>
 
                 <div className="space-y-1">
-                    <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Password</label>
+                    <div className="flex justify-between items-center">
+                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Password</label>
+                        {!isSignup && (
+                            <button
+                                type="button"
+                                onClick={() => navigate('/forgot-password')}
+                                className="text-xs text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300"
+                            >
+                                Forgot password?
+                            </button>
+                        )}
+                    </div>
                     <input 
                         type="password" 
                         value={password} 
