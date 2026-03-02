@@ -15,39 +15,59 @@ export const ResetPassword = () => {
   const [sessionReady, setSessionReady] = useState(false);
 
   useEffect(() => {
-    // 监听 PASSWORD_RECOVERY 事件
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') {
+    const recoverSession = async () => {
+      // 从完整 URL 中提取 access_token 和 refresh_token
+      const fullHash = window.location.href.split('#').slice(1).join('#');
+      const params = new URLSearchParams(fullHash.replace(/^.*#/, ''));
+      const accessToken = params.get('access_token');
+      const refreshToken = params.get('refresh_token');
+
+      if (accessToken && refreshToken) {
+        // 手动设置 session
+        const { error } = await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+
+        if (error) {
+          setError('Reset link has expired or is invalid. Please request a new one.');
+        } else {
+          setSessionReady(true);
+          // 清理 URL 中的 token
+          window.history.replaceState(null, '', '/#/reset-password');
+        }
+        setVerifying(false);
+      } else {
+        // 没有 token，检查已有 session
+        const { data: { session } } = await supabase.auth.getSession();
         if (session) {
           setSessionReady(true);
           setVerifying(false);
+        } else {
+          // 也监听 auth 事件作为后备
+          const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+            if ((event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') && session) {
+              setSessionReady(true);
+              setVerifying(false);
+            }
+          });
+
+          setTimeout(() => {
+            setVerifying(prev => {
+              if (prev) {
+                setError('Reset link has expired or is invalid. Please request a new one.');
+                return false;
+              }
+              return prev;
+            });
+          }, 5000);
+
+          return () => subscription.unsubscribe();
         }
       }
-    });
-
-    // 也检查是否已有 session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        setSessionReady(true);
-        setVerifying(false);
-      }
-    });
-
-    // 超时处理
-    const timeout = setTimeout(() => {
-      setVerifying(prev => {
-        if (prev) {
-          setError('Reset link has expired or is invalid. Please request a new one.');
-          return false;
-        }
-        return prev;
-      });
-    }, 5000);
-
-    return () => {
-      subscription.unsubscribe();
-      clearTimeout(timeout);
     };
+
+    recoverSession();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
