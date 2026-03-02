@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
-import { Lock, ArrowRight, CheckCircle } from 'lucide-react';
+import { Lock, ArrowRight, CheckCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 
 export const ResetPassword = () => {
@@ -11,6 +11,38 @@ export const ResetPassword = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
+
+  useEffect(() => {
+    // 监听 Supabase auth 事件，等待 PASSWORD_RECOVERY 事件
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setSessionReady(true);
+      }
+    });
+
+    // 也检查是否已经有 session（用户可能刷新了页面）
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session) {
+        setSessionReady(true);
+      }
+    });
+
+    // 5秒后如果还没有 session，显示错误
+    const timeout = setTimeout(() => {
+      setSessionReady((ready) => {
+        if (!ready) {
+          setError('Reset link has expired or is invalid. Please request a new one.');
+        }
+        return ready;
+      });
+    }, 5000);
+
+    return () => {
+      subscription.unsubscribe();
+      clearTimeout(timeout);
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,35 +100,57 @@ export const ResetPassword = () => {
           <p className="text-slate-600 dark:text-slate-400 text-sm">Enter your new password below</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">New Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && password.length < 6 ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
-              placeholder="••••••••"
-            />
+        {!sessionReady && !error ? (
+          <div className="text-center py-8">
+            <Loader2 className="w-8 h-8 text-purple-500 animate-spin mx-auto mb-4" />
+            <p className="text-slate-500 dark:text-slate-400 text-sm">Verifying your reset link...</p>
           </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">New Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && password.length < 6 ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
+                placeholder="••••••••"
+              />
+            </div>
 
-          <div className="space-y-1">
-            <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Confirm New Password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={e => setConfirmPassword(e.target.value)}
-              className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && password !== confirmPassword ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
-              placeholder="••••••••"
-            />
-          </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Confirm New Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={e => setConfirmPassword(e.target.value)}
+                className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && password !== confirmPassword ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
+                placeholder="••••••••"
+              />
+            </div>
 
-          {error && <p className="text-red-500 dark:text-red-400 text-xs text-center">{error}</p>}
+            {error && (
+              <div className="text-center">
+                <p className="text-red-500 dark:text-red-400 text-xs">{error}</p>
+                {error.includes('expired') && (
+                  <button
+                    type="button"
+                    onClick={() => navigate('/forgot-password')}
+                    className="text-purple-600 dark:text-purple-400 hover:text-purple-500 text-xs font-medium mt-2"
+                  >
+                    Request a new reset link
+                  </button>
+                )}
+              </div>
+            )}
 
-          <Button variant="gradient" className="w-full py-3" isLoading={loading}>
-            Reset Password <ArrowRight className="w-4 h-4 ml-2" />
-          </Button>
-        </form>
+            {sessionReady && (
+              <Button variant="gradient" className="w-full py-3" isLoading={loading}>
+                Reset Password <ArrowRight className="w-4 h-4 ml-2" />
+              </Button>
+            )}
+          </form>
+        )}
       </div>
     </div>
   );
