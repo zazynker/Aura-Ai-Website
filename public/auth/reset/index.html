@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Resetting password...</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f8fafc; color: #64748b; }
+  </style>
+</head>
+<body>
+  <p>Verifying your reset link, please wait...</p>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const tokenHash = params.get('token_hash');
+    const type = params.get('type');
+
+    if (tokenHash && type) {
+      // 调用 Supabase 验证端点
+      fetch('https://qdbixebjariupvcvsqff.supabase.co/auth/v1/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': document.cookie ? '' : '' },
+        body: JSON.stringify({ token_hash: tokenHash, type: type })
+      });
+
+      // 直接重定向，让 Supabase JS 客户端在应用内处理 session
+      // 把 token 信息传递给 hash route
+      window.location.href = '/#/reset-password?token_hash=' + encodeURIComponent(tokenHash) + '&type=' + encodeURIComponent(type);
+    } else {
+      window.location.href = '/#/login';
+    }
+  </script>
+</body>
+</html>

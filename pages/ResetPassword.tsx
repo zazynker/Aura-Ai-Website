@@ -1,47 +1,65 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button } from '../components/ui/Button';
 import { Lock, ArrowRight, CheckCircle, Loader2 } from 'lucide-react';
 import { supabase } from '../utils/supabase';
 
 export const ResetPassword = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [verifying, setVerifying] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
 
   useEffect(() => {
-    // 监听 Supabase auth 事件，等待 PASSWORD_RECOVERY 事件
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
-        setSessionReady(true);
-      }
-    });
+    const tokenHash = searchParams.get('token_hash');
+    const type = searchParams.get('type');
 
-    // 也检查是否已经有 session（用户可能刷新了页面）
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        setSessionReady(true);
-      }
-    });
-
-    // 5秒后如果还没有 session，显示错误
-    const timeout = setTimeout(() => {
-      setSessionReady((ready) => {
-        if (!ready) {
+    if (tokenHash && type) {
+      // 用 token 直接验证
+      supabase.auth.verifyOtp({
+        token_hash: tokenHash,
+        type: type as 'recovery',
+      }).then(({ error }) => {
+        if (error) {
           setError('Reset link has expired or is invalid. Please request a new one.');
+        } else {
+          setSessionReady(true);
         }
-        return ready;
+        setVerifying(false);
       });
-    }, 5000);
+    } else {
+      // 没有 token，检查是否已有 session（从 onAuthStateChange 恢复的）
+      const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+        if (event === 'PASSWORD_RECOVERY') {
+          setSessionReady(true);
+          setVerifying(false);
+        }
+      });
 
-    return () => {
-      subscription.unsubscribe();
-      clearTimeout(timeout);
-    };
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session) {
+          setSessionReady(true);
+        }
+        setVerifying(false);
+      });
+
+      const timeout = setTimeout(() => {
+        if (!sessionReady) {
+          setError('Reset link has expired or is invalid. Please request a new one.');
+          setVerifying(false);
+        }
+      }, 5000);
+
+      return () => {
+        subscription.unsubscribe();
+        clearTimeout(timeout);
+      };
+    }
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -100,7 +118,7 @@ export const ResetPassword = () => {
           <p className="text-slate-600 dark:text-slate-400 text-sm">Enter your new password below</p>
         </div>
 
-        {!sessionReady && !error ? (
+        {verifying ? (
           <div className="text-center py-8">
             <Loader2 className="w-8 h-8 text-purple-500 animate-spin mx-auto mb-4" />
             <p className="text-slate-500 dark:text-slate-400 text-sm">Verifying your reset link...</p>
