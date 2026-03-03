@@ -19,6 +19,19 @@ const ALLOWED_EMAIL_DOMAINS = [
   'proton.me',
 ];
 
+function normalizeEmail(email: string): string {
+  const [localPart, domain] = email.toLowerCase().split('@');
+  if (!domain) return email.toLowerCase();
+
+  if (domain === 'gmail.com') {
+    const cleaned = localPart.replace(/\./g, '').split('+')[0];
+    return `${cleaned}@gmail.com`;
+  }
+
+  const cleaned = localPart.split('+')[0];
+  return `${cleaned}@${domain}`;
+}
+
 function isAllowedEmail(email: string): boolean {
   const domain = email.split('@')[1]?.toLowerCase();
   return ALLOWED_EMAIL_DOMAINS.includes(domain);
@@ -78,7 +91,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
     try {
       if (isSignup) {
         const { error } = await supabase.auth.signUp({
-          email,
+          email: normalizeEmail(email),
           password,
           options: {
             data: { name }
@@ -88,7 +101,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
         setSignupSuccess(true);
       } else {
         const { error } = await supabase.auth.signInWithPassword({
-          email,
+          email: normalizeEmail(email),
           password
         });
         if (error) throw error;
@@ -212,7 +225,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
             </form>
 
             <div className="mt-6 text-center">
-                <p className="text-sm text-slate-600 dark:text-slate-400">
+                <p className="text-sm text-text-slate-600 dark:text-slate-400">
                     {isSignup ? "Already have an account?" : "Don't have an account?"}
                     <button onClick={() => navigate(isSignup ? '/login' : '/signup')} className="text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300 font-medium ml-1">
                         {isSignup ? 'Log in' : 'Sign up'}
