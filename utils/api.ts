@@ -20,7 +20,7 @@ export interface FetchTemplatesResult {
 export async function fetchTemplates(
   options: FetchTemplatesOptions = {}
 ): Promise<FetchTemplatesResult> {
-  const { search = '', category = 'All', limit = 50, offset = 0 } = options;
+  const { search = '', category = 'All', limit = 300, offset = 0 } = options;
 
   try {
     // Build query
