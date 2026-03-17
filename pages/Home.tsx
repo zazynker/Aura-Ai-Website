@@ -8,6 +8,8 @@ import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 
+const TEMPLATES_PER_PAGE = 30;
+
 export const Home = () => {
   const navigate = useNavigate();
   const { browsing, saveBrowsingState, addToast, user, collections, addToCollection, createCollection } = useStore();
@@ -15,8 +17,11 @@ export const Home = () => {
   // Templates State
   const [templates, setTemplates] = useState<Template[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [categories, setCategories] = useState<string[]>(['All']);
+  const [hasMore, setHasMore] = useState(true);
+  const [offset, setOffset] = useState(0);
   
   // Search & Filter State
   const [search, setSearch] = useState(browsing.searchQuery);
@@ -36,6 +41,7 @@ export const Home = () => {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const lastScrollY = useRef(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
 
   // Debounce search input
   useEffect(() => {
@@ -54,60 +60,95 @@ export const Home = () => {
     loadCategories();
   }, []);
 
-  // Fetch templates when search or category changes
-  const loadTemplates = useCallback(async () => {
-    setIsLoading(true);
+  // Reset and fetch templates when search or category changes
+  const loadTemplates = useCallback(async (reset = false) => {
+    if (reset) {
+      setIsLoading(true);
+      setOffset(0);
+      setHasMore(true);
+    } else {
+      setIsLoadingMore(true);
+    }
     setError(null);
+    
+    const currentOffset = reset ? 0 : offset;
     
     const result = await fetchTemplates({
       search: debouncedSearch,
       category: activeCategory,
-      limit: 300,
+      limit: TEMPLATES_PER_PAGE,
+      offset: currentOffset,
     });
     
     if (result.error) {
       setError(result.error);
-      setTemplates([]);
+      if (reset) setTemplates([]);
     } else {
-      setTemplates(result.templates);
+      if (reset) {
+        setTemplates(result.templates);
+      } else {
+        setTemplates(prev => [...prev, ...result.templates]);
+      }
+      
+      // Check if there are more templates to load
+      if (result.templates.length < TEMPLATES_PER_PAGE) {
+        setHasMore(false);
+      } else {
+        setOffset(currentOffset + TEMPLATES_PER_PAGE);
+      }
     }
     
     setIsLoading(false);
+    setIsLoadingMore(false);
+  }, [debouncedSearch, activeCategory, offset]);
+
+  // Initial load and when filters change
+  useEffect(() => {
+    loadTemplates(true);
   }, [debouncedSearch, activeCategory]);
 
+  // Infinite scroll - Intersection Observer
   useEffect(() => {
-    loadTemplates();
-  }, [loadTemplates]);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !isLoading && !isLoadingMore) {
+          loadTemplates(false);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [hasMore, isLoading, isLoadingMore, loadTemplates]);
 
   // Restore scroll position
   useEffect(() => {
     if (!isLoading && templates.length > 0) {
       window.scrollTo(0, browsing.scrollY);
     }
-  }, [isLoading, templates.length]); 
+  }, [isLoading]); 
 
   // Scroll Handler for Search Bar Visibility
   useEffect(() => {
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
       
-      // Threshold to prevent jitter on small movements
       if (Math.abs(currentScrollY - lastScrollY.current) < 5) return;
 
       if (currentScrollY < 50) {
-        // Always show at the top
         setShowSearchBar(true);
       } else if (currentScrollY > lastScrollY.current && currentScrollY > 80) {
-        // Scrolling Down - Hide
         setShowSearchBar(false);
         setIsSearchFocused(false);
         
-        // Blur input if needed to prevent keyboard from sticking up
         if (document.activeElement instanceof HTMLElement && searchContainerRef.current?.contains(document.activeElement)) {
             document.activeElement.blur();
         }
       } else if (currentScrollY < lastScrollY.current) {
-        // Scrolling Up - Show
         setShowSearchBar(true);
       }
       
@@ -131,7 +172,6 @@ export const Home = () => {
   }, []);
 
   const handleTemplateClick = (t: Template) => {
-    // Login Check
     if (!user) {
       saveBrowsingState({ 
         scrollY: window.scrollY, 
@@ -140,7 +180,6 @@ export const Home = () => {
         lastViewedTemplate: t.id,
         intendedDestination: '/modify'
       });
-      // Store template info for after login
       sessionStorage.setItem('pendingTemplate', JSON.stringify({
         imageUrl: t.imageUrl,
         templateId: t.id,
@@ -150,7 +189,6 @@ export const Home = () => {
       return;
     }
 
-    // Pro Permission Check
     const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
     if (t.isPro && !isProUser) {
       setModalType('upgrade');
@@ -159,7 +197,6 @@ export const Home = () => {
 
     saveBrowsingState({ scrollY: window.scrollY, searchQuery: search, category: activeCategory, lastViewedTemplate: t.id });
     
-    // Navigate to Modify with template as initial image
     navigate('/modify', {
       state: {
         initialImage: t.imageUrl,
@@ -171,10 +208,9 @@ export const Home = () => {
   const handleAction = (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => {
     e.stopPropagation();
 
-    // Login Check for Collection
     if (type === 'collect' && !user) {
       saveBrowsingState({ 
-        intendedDestination: '/' // Stay on home if they just wanted to collect
+        intendedDestination: '/'
       });
       navigate('/login');
       return;
@@ -182,7 +218,7 @@ export const Home = () => {
 
     setSelectedTemplateForModal(t);
     setModalType(type);
-    setIsCreatingCollection(false); // Reset creation state
+    setIsCreatingCollection(false);
     setNewCollectionName('');
   };
 
@@ -223,7 +259,7 @@ export const Home = () => {
               placeholder="Search templates (e.g., 'lemon perfume', 'baby skincare')..."
               className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-white/10 rounded-full py-2.5 pl-10 pr-6 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:bg-white dark:focus:bg-slate-800 transition-all shadow-inner"
             />
-            {isLoading && (
+            {(isLoading || isLoadingMore) && (
               <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-purple-500 animate-spin" />
             )}
           </div>
@@ -237,7 +273,7 @@ export const Home = () => {
                 <button
                     key={cat}
                     onClick={() => setActiveCategory(cat)}
-                    onMouseDown={(e) => e.preventDefault()} // Prevent input blur when clicking buttons
+                    onMouseDown={(e) => e.preventDefault()}
                     className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${
                     activeCategory === cat
                         ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-md'
@@ -261,13 +297,13 @@ export const Home = () => {
               <p className="text-lg font-medium">Failed to load templates</p>
               <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{error}</p>
             </div>
-            <Button variant="secondary" onClick={loadTemplates}>
+            <Button variant="secondary" onClick={() => loadTemplates(true)}>
               Try Again
             </Button>
           </div>
         )}
 
-        {/* Loading State */}
+        {/* Initial Loading State */}
         {isLoading && templates.length === 0 && !error && (
           <div className="flex flex-col items-center justify-center py-20">
             <Loader2 className="w-8 h-8 text-purple-500 animate-spin mb-4" />
@@ -341,6 +377,19 @@ export const Home = () => {
             ))}
           </div>
         )}
+
+        {/* Load More Trigger */}
+        <div ref={loadMoreRef} className="py-8 flex justify-center">
+          {isLoadingMore && (
+            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              <span className="text-sm">Loading more...</span>
+            </div>
+          )}
+          {!hasMore && templates.length > 0 && (
+            <p className="text-slate-400 dark:text-slate-500 text-sm">You've seen all templates ✨</p>
+          )}
+        </div>
       </div>
 
       {/* Share Modal */}
