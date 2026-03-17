@@ -62,7 +62,7 @@ export const Home = () => {
     const result = await fetchTemplates({
       search: debouncedSearch,
       category: activeCategory,
-      limit: 100,
+      limit: 300,
     });
     
     if (result.error) {
