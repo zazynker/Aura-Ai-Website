@@ -62,6 +62,13 @@ export const Home = () => {
   const [selectedTemplateForModal, setSelectedTemplateForModal] = useState<Template | null>(null);
   const [modalType, setModalType] = useState<'share' | 'collect' | 'upgrade' | null>(null);
   
+  // Tag Filter State
+  const [activeScene, setActiveScene] = useState<string>('All');
+  const [activeModel, setActiveModel] = useState<string>('All');
+  const [activeMood, setActiveMood] = useState<string>('All');
+  const [activeHoliday, setActiveHoliday] = useState<string>('All');
+  const [showFilters, setShowFilters] = useState(false);
+  
   // Create Collection State inside Modal
   const [isCreatingCollection, setIsCreatingCollection] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
@@ -72,7 +79,12 @@ export const Home = () => {
   const lastScrollY = useRef(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
+  // Filter Options
   const categories = ['All', 'Cosmetic', 'Candle', 'Bath Body', 'Sports', 'Baby', 'Mens Care'];
+  const scenes = ['All', 'Studio', 'Outdoor', 'Lifestyle'];
+  const models = ['All', 'No Model', 'Hand Only', 'With Model'];
+  const moods = ['All', 'Minimal', 'Luxury', 'Fashion', 'Playful', 'Dark', 'Casual'];
+  const holidays = ['All', 'Christmas', 'Valentine', 'Halloween', 'Easter', "Mother's Day"];
 
   // Fetch templates from Supabase
   useEffect(() => {
@@ -164,8 +176,15 @@ export const Home = () => {
   const filteredTemplates = templates.filter(t => {
     const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) || t.tags.some(tag => tag.toLowerCase().includes(search.toLowerCase()));
     const matchesCategory = activeCategory === 'All' || t.category.includes(activeCategory);
-    return matchesSearch && matchesCategory;
+    const matchesScene = activeScene === 'All' || t.scene === activeScene;
+    const matchesModel = activeModel === 'All' || t.model === activeModel;
+    const matchesMood = activeMood === 'All' || (t.mood && t.mood.includes(activeMood));
+    const matchesHoliday = activeHoliday === 'All' || t.holiday === activeHoliday;
+    return matchesSearch && matchesCategory && matchesScene && matchesModel && matchesMood && matchesHoliday;
   });
+  
+  // Count active filters
+  const activeFilterCount = [activeScene, activeModel, activeMood, activeHoliday].filter(f => f !== 'All').length;
 
   const handleTemplateClick = (t: Template) => {
     // Login Check
@@ -283,6 +302,120 @@ export const Home = () => {
                     {cat}
                 </button>
                 ))}
+                {/* Filter Toggle Button */}
+                <button
+                    onClick={() => setShowFilters(!showFilters)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all border flex items-center gap-1.5 ${
+                      showFilters || activeFilterCount > 0
+                        ? 'bg-purple-600 text-white border-purple-600 shadow-md'
+                        : 'bg-transparent border-slate-300 dark:border-white/20 text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5'
+                    }`}
+                >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                    </svg>
+                    Filters {activeFilterCount > 0 && `(${activeFilterCount})`}
+                </button>
+            </div>
+          </div>
+
+          {/* Advanced Filters Panel */}
+          <div className={`w-full overflow-hidden transition-all duration-300 ease-in-out ${
+              showFilters && isSearchFocused ? 'max-h-96 opacity-100 mt-3' : 'max-h-0 opacity-0 mt-0'
+          }`}>
+            <div className="bg-slate-100/80 dark:bg-slate-800/50 rounded-xl p-4 space-y-3">
+              {/* Scene */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400 w-16">Scene:</span>
+                {scenes.map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setActiveScene(s)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className={`px-3 py-1 rounded-full text-xs transition-all ${
+                      activeScene === s
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Model */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400 w-16">Model:</span>
+                {models.map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setActiveModel(m)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className={`px-3 py-1 rounded-full text-xs transition-all ${
+                      activeModel === m
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Mood */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400 w-16">Mood:</span>
+                {moods.map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setActiveMood(m)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className={`px-3 py-1 rounded-full text-xs transition-all ${
+                      activeMood === m
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Holiday */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400 w-16">Holiday:</span>
+                {holidays.map(h => (
+                  <button
+                    key={h}
+                    onClick={() => setActiveHoliday(h)}
+                    onMouseDown={(e) => e.preventDefault()}
+                    className={`px-3 py-1 rounded-full text-xs transition-all ${
+                      activeHoliday === h
+                        ? 'bg-purple-600 text-white'
+                        : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-slate-600'
+                    }`}
+                  >
+                    {h}
+                  </button>
+                ))}
+              </div>
+              
+              {/* Clear Filters */}
+              {activeFilterCount > 0 && (
+                <button
+                  onClick={() => {
+                    setActiveScene('All');
+                    setActiveModel('All');
+                    setActiveMood('All');
+                    setActiveHoliday('All');
+                  }}
+                  onMouseDown={(e) => e.preventDefault()}
+                  className="text-xs text-purple-600 dark:text-purple-400 hover:underline"
+                >
+                  Clear all filters
+                </button>
+              )}
             </div>
           </div>
         </div>
