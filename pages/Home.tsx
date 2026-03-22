@@ -1,34 +1,21 @@
-
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Heart, Share2, Crown, Plus, Check, Loader2 } from 'lucide-react';
-import { fetchTemplates, fetchCategories } from '../utils/api';
+import { supabase } from '../utils/supabase';
 import { useStore } from '../context/StoreContext';
 import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 
-const TEMPLATES_PER_PAGE = 30;
-
 export const Home = () => {
   const navigate = useNavigate();
   const { browsing, saveBrowsingState, addToast, user, collections, addToCollection, createCollection } = useStore();
   
-  // Templates State
+  // State
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [categories, setCategories] = useState<string[]>(['All']);
-  const [hasMore, setHasMore] = useState(true);
-  const [offset, setOffset] = useState(0);
-  
-  // Search & Filter State
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState(browsing.searchQuery);
   const [activeCategory, setActiveCategory] = useState(browsing.category);
-  const [debouncedSearch, setDebouncedSearch] = useState(search);
-  
-  // Modal State
   const [selectedTemplateForModal, setSelectedTemplateForModal] = useState<Template | null>(null);
   const [modalType, setModalType] = useState<'share' | 'collect' | 'upgrade' | null>(null);
   
@@ -41,114 +28,71 @@ export const Home = () => {
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const lastScrollY = useRef(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
-  const loadMoreRef = useRef<HTMLDivElement>(null);
 
-  // Debounce search input
+  const categories = ['All', 'Cosmetic', 'Candle', 'Bath Body', 'Sports', 'Baby', 'Mens Care'];
+
+  // Fetch templates from Supabase
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearch(search);
-    }, 300);
-    return () => clearTimeout(timer);
-  }, [search]);
-
-  // Fetch categories on mount
-  useEffect(() => {
-    const loadCategories = async () => {
-      const cats = await fetchCategories();
-      setCategories(cats);
-    };
-    loadCategories();
-  }, []);
-
-  // Reset and fetch templates when search or category changes
-  const loadTemplates = useCallback(async (reset = false) => {
-    if (reset) {
-      setIsLoading(true);
-      setOffset(0);
-      setHasMore(true);
-    } else {
-      setIsLoadingMore(true);
-    }
-    setError(null);
-    
-    const currentOffset = reset ? 0 : offset;
-    
-    const result = await fetchTemplates({
-      search: debouncedSearch,
-      category: activeCategory,
-      limit: TEMPLATES_PER_PAGE,
-      offset: currentOffset,
-    });
-    
-    if (result.error) {
-      setError(result.error);
-      if (reset) setTemplates([]);
-    } else {
-      if (reset) {
-        setTemplates(result.templates);
-      } else {
-        setTemplates(prev => [...prev, ...result.templates]);
-      }
+    const fetchTemplates = async () => {
+      setLoading(true);
+      const { data, error } = await supabase
+        .from('templates')
+        .select('*')
+        .order('created_at', { ascending: false });
       
-      // Check if there are more templates to load
-      if (result.templates.length < TEMPLATES_PER_PAGE) {
-        setHasMore(false);
+      if (error) {
+        console.error('Error fetching templates:', error);
+        addToast('error', 'Failed to load templates');
       } else {
-        setOffset(currentOffset + TEMPLATES_PER_PAGE);
+        // Map database fields to Template type
+        const mapped = (data || []).map(t => ({
+          id: t.id,
+          name: t.display_name || t.name,
+          imageUrl: t.image_url,
+          thumbUrl: t.thumb_url,
+          category: t.category,
+          tags: t.tags || [],
+          isPro: t.is_pro || false,
+          scene: t.scene,
+          model: t.model,
+          mood: t.mood,
+          holiday: t.holiday
+        }));
+        setTemplates(mapped);
       }
-    }
+      setLoading(false);
+    };
     
-    setIsLoading(false);
-    setIsLoadingMore(false);
-  }, [debouncedSearch, activeCategory, offset]);
-
-  // Initial load and when filters change
-  useEffect(() => {
-    loadTemplates(true);
-  }, [debouncedSearch, activeCategory]);
-
-  // Infinite scroll - Intersection Observer
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMore && !isLoading && !isLoadingMore) {
-          loadTemplates(false);
-        }
-      },
-      { threshold: 0.1 }
-    );
-
-    if (loadMoreRef.current) {
-      observer.observe(loadMoreRef.current);
-    }
-
-    return () => observer.disconnect();
-  }, [hasMore, isLoading, isLoadingMore, loadTemplates]);
+    fetchTemplates();
+  }, []);
 
   // Restore scroll position
   useEffect(() => {
-    if (!isLoading && templates.length > 0) {
-      window.scrollTo(0, browsing.scrollY);
-    }
-  }, [isLoading]); 
+    window.scrollTo(0, browsing.scrollY);
+  }, []); 
 
   // Scroll Handler for Search Bar Visibility
   useEffect(() => {
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
       
+      // Threshold to prevent jitter on small movements
       if (Math.abs(currentScrollY - lastScrollY.current) < 5) return;
 
       if (currentScrollY < 50) {
+        // Always show at the top
         setShowSearchBar(true);
       } else if (currentScrollY > lastScrollY.current && currentScrollY > 80) {
+        // Scrolling Down - Hide
         setShowSearchBar(false);
         setIsSearchFocused(false);
         
+        // Blur input if needed to prevent keyboard from sticking up
         if (document.activeElement instanceof HTMLElement && searchContainerRef.current?.contains(document.activeElement)) {
             document.activeElement.blur();
         }
       } else if (currentScrollY < lastScrollY.current) {
+        // Scrolling Up - Show
         setShowSearchBar(true);
       }
       
@@ -171,7 +115,15 @@ export const Home = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Filter Logic
+  const filteredTemplates = templates.filter(t => {
+    const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) || t.tags.some(tag => tag.toLowerCase().includes(search.toLowerCase()));
+    const matchesCategory = activeCategory === 'All' || t.category === activeCategory;
+    return matchesSearch && matchesCategory;
+  });
+
   const handleTemplateClick = (t: Template) => {
+    // Login Check
     if (!user) {
       saveBrowsingState({ 
         scrollY: window.scrollY, 
@@ -180,6 +132,7 @@ export const Home = () => {
         lastViewedTemplate: t.id,
         intendedDestination: '/modify'
       });
+      // Store template info for after login
       sessionStorage.setItem('pendingTemplate', JSON.stringify({
         imageUrl: t.imageUrl,
         templateId: t.id,
@@ -189,6 +142,7 @@ export const Home = () => {
       return;
     }
 
+    // Pro Permission Check
     const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
     if (t.isPro && !isProUser) {
       setModalType('upgrade');
@@ -197,6 +151,7 @@ export const Home = () => {
 
     saveBrowsingState({ scrollY: window.scrollY, searchQuery: search, category: activeCategory, lastViewedTemplate: t.id });
     
+    // Navigate to Modify with template as initial image
     navigate('/modify', {
       state: {
         initialImage: t.imageUrl,
@@ -208,9 +163,10 @@ export const Home = () => {
   const handleAction = (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => {
     e.stopPropagation();
 
+    // Login Check for Collection
     if (type === 'collect' && !user) {
       saveBrowsingState({ 
-        intendedDestination: '/'
+        intendedDestination: '/' // Stay on home if they just wanted to collect
       });
       navigate('/login');
       return;
@@ -218,7 +174,7 @@ export const Home = () => {
 
     setSelectedTemplateForModal(t);
     setModalType(type);
-    setIsCreatingCollection(false);
+    setIsCreatingCollection(false); // Reset creation state
     setNewCollectionName('');
   };
 
@@ -243,28 +199,27 @@ export const Home = () => {
       {/* Fixed Search Bar */}
       <div 
         ref={searchContainerRef}
-        className={`fixed top-16 left-0 right-0 z-30 transition-all duration-300 ease-out ${
-          showSearchBar ? 'translate-y-0 opacity-100' : '-translate-y-full opacity-0 pointer-events-none'
+        className={`fixed top-16 left-0 right-0 z-40 px-4 md:px-8 py-2.5 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xl border-b border-slate-200 dark:border-white/5 shadow-sm transition-transform duration-300 ease-out ${
+            showSearchBar ? 'translate-y-0' : '-translate-y-full'
         }`}
       >
-        <div className="max-w-2xl mx-auto px-4 pt-6 pb-4">
-          {/* Search Input */}
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500 pointer-events-none" />
+        <div className="max-w-4xl mx-auto flex flex-col items-center">
+          {/* Search Bar Input */}
+          <div className="relative w-full max-w-xl group z-50">
+            <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
+              <Search className={`w-4 h-4 transition-colors ${isSearchFocused ? 'text-purple-500' : 'text-slate-400 dark:text-slate-500'}`} />
+            </div>
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onFocus={() => setIsSearchFocused(true)}
-              placeholder="Search templates (e.g., 'lemon perfume', 'baby skincare')..."
+              placeholder="Search templates (e.g., 'minimal perfume', 'neon sneakers')..."
               className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-white/10 rounded-full py-2.5 pl-10 pr-6 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:bg-white dark:focus:bg-slate-800 transition-all shadow-inner"
             />
-            {(isLoading || isLoadingMore) && (
-              <Loader2 className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-purple-500 animate-spin" />
-            )}
           </div>
 
-          {/* Categories - Expandable */}
+          {/* Categories - Expandable (Adjusted Height and Margin) */}
           <div className={`w-full md:w-auto overflow-hidden transition-all duration-300 ease-in-out ${
               isSearchFocused ? 'max-h-14 opacity-100 mt-2' : 'max-h-0 opacity-0 mt-0'
           }`}>
@@ -273,7 +228,7 @@ export const Home = () => {
                 <button
                     key={cat}
                     onClick={() => setActiveCategory(cat)}
-                    onMouseDown={(e) => e.preventDefault()}
+                    onMouseDown={(e) => e.preventDefault()} // Prevent input blur when clicking buttons
                     className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all border ${
                     activeCategory === cat
                         ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-md'
@@ -288,108 +243,71 @@ export const Home = () => {
         </div>
       </div>
 
-      {/* Main Content Area */}
+      {/* Main Content Area - Increased Padding Top */}
       <div className="pt-44 px-4 md:px-8 pb-12">
-        {/* Error State */}
-        {error && (
-          <div className="max-w-md mx-auto text-center py-12">
-            <div className="text-red-500 dark:text-red-400 mb-4">
-              <p className="text-lg font-medium">Failed to load templates</p>
-              <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{error}</p>
-            </div>
-            <Button variant="secondary" onClick={() => loadTemplates(true)}>
-              Try Again
-            </Button>
+        {loading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
           </div>
-        )}
-
-        {/* Initial Loading State */}
-        {isLoading && templates.length === 0 && !error && (
-          <div className="flex flex-col items-center justify-center py-20">
-            <Loader2 className="w-8 h-8 text-purple-500 animate-spin mb-4" />
-            <p className="text-slate-500 dark:text-slate-400 text-sm">Loading templates...</p>
-          </div>
-        )}
-
-        {/* Empty State */}
-        {!isLoading && !error && templates.length === 0 && (
+        ) : filteredTemplates.length === 0 ? (
           <div className="text-center py-20">
-            <p className="text-slate-500 dark:text-slate-400 text-lg mb-2">No templates found</p>
-            <p className="text-slate-400 dark:text-slate-500 text-sm">
-              Try adjusting your search or category filter
-            </p>
+            <p className="text-slate-500 dark:text-slate-400">No templates found</p>
           </div>
-        )}
-
-        {/* Templates Grid */}
-        {templates.length > 0 && (
-          <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 max-w-[1600px] mx-auto space-y-4">
-            {templates.map((t) => (
-              <div
-                key={t.id}
-                onClick={() => handleTemplateClick(t)}
-                className="group relative break-inside-avoid rounded-2xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-900/10"
-              >
-                <div className="relative">
-                  <img
-                    src={t.imageUrl}
-                    alt={t.name}
-                    loading="lazy"
-                    className="w-full h-auto object-cover transform transition-transform duration-700 group-hover:scale-105"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  
-                  {/* Pro Badge */}
-                  {t.isPro && (
-                    <div className="absolute top-3 right-3 z-20">
-                      <div className="px-2 py-1 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg flex items-center gap-1.5">
-                        <Crown className="w-3 h-3 text-white" />
-                        <span className="text-[10px] font-bold text-white uppercase tracking-wider">Pro</span>
-                      </div>
+        ) : (
+        <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 max-w-[1600px] mx-auto space-y-4">
+          {filteredTemplates.map((t) => (
+            <div
+              key={t.id}
+              onClick={() => handleTemplateClick(t)}
+              className="group relative break-inside-avoid rounded-2xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-900/10"
+            >
+              <div className="relative">
+                <img
+                  src={t.thumbUrl || t.imageUrl}
+                  alt={t.name}
+                  loading="lazy"
+                  className="w-full h-auto object-cover transform transition-transform duration-700 group-hover:scale-105"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                
+                {/* Pro Badge */}
+                {t.isPro && (
+                  <div className="absolute top-3 right-3 z-20">
+                    <div className="px-2 py-1 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg flex items-center gap-1.5">
+                      <Crown className="w-3 h-3 text-white" />
+                      <span className="text-[10px] font-bold text-white uppercase tracking-wider">Pro</span>
                     </div>
-                  )}
-
-                  {/* Action Buttons */}
-                  <div className="absolute top-3 left-3 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 -translate-x-4 group-hover:translate-x-0 z-10">
-                     <button 
-                      onClick={(e) => handleAction(e, 'collect', t)}
-                      className="p-2 rounded-full glass-panel hover:bg-white text-slate-900 dark:text-white hover:text-pink-500 transition-colors"
-                     >
-                       <Heart className="w-4 h-4" />
-                     </button>
-                     <button 
-                      onClick={(e) => handleAction(e, 'share', t)}
-                      className="p-2 rounded-full glass-panel hover:bg-white text-slate-900 dark:text-white hover:text-blue-500 transition-colors"
-                     >
-                       <Share2 className="w-4 h-4" />
-                     </button>
                   </div>
+                )}
 
-                  {/* Info Overlay */}
-                  <div className="absolute bottom-0 left-0 right-0 p-4 translate-y-4 group-hover:translate-y-0 opacity-0 group-hover:opacity-100 transition-all duration-300">
-                    <h3 className="text-white font-medium truncate text-sm">{t.name}</h3>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[10px] text-slate-300">{t.category}</span>
-                    </div>
+                {/* Action Buttons */}
+                <div className="absolute top-3 left-3 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 -translate-x-4 group-hover:translate-x-0 z-10">
+                   <button 
+                    onClick={(e) => handleAction(e, 'collect', t)}
+                    className="p-2 rounded-full glass-panel hover:bg-white text-slate-900 dark:text-white hover:text-pink-500 transition-colors"
+                   >
+                     <Heart className="w-4 h-4" />
+                   </button>
+                   <button 
+                    onClick={(e) => handleAction(e, 'share', t)}
+                    className="p-2 rounded-full glass-panel hover:bg-white text-slate-900 dark:text-white hover:text-blue-500 transition-colors"
+                   >
+                     <Share2 className="w-4 h-4" />
+                   </button>
+                </div>
+
+                {/* Info Overlay */}
+                <div className="absolute bottom-0 left-0 right-0 p-4 translate-y-4 group-hover:translate-y-0 opacity-0 group-hover:opacity-100 transition-all duration-300">
+                  <h3 className="text-white font-medium truncate text-sm">{t.name}</h3>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="text-[10px] text-slate-300">{t.category}</span>
                   </div>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-
-        {/* Load More Trigger */}
-        <div ref={loadMoreRef} className="py-8 flex justify-center">
-          {isLoadingMore && (
-            <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">Loading more...</span>
             </div>
-          )}
-          {!hasMore && templates.length > 0 && (
-            <p className="text-slate-400 dark:text-slate-500 text-sm">You've seen all templates ✨</p>
-          )}
+          ))}
         </div>
+        )}
       </div>
 
       {/* Share Modal */}
