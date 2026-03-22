@@ -163,7 +163,7 @@ export const Home = () => {
   // Filter Logic
   const filteredTemplates = templates.filter(t => {
     const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) || t.tags.some(tag => tag.toLowerCase().includes(search.toLowerCase()));
-    const matchesCategory = activeCategory === 'All' || t.category === activeCategory;
+    const matchesCategory = activeCategory === 'All' || t.category.includes(activeCategory);
     return matchesSearch && matchesCategory;
   });
 
