@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Heart, Share2, Crown, Plus, Check, Loader2 } from 'lucide-react';
 import { supabase } from '../utils/supabase';
@@ -6,6 +6,49 @@ import { useStore } from '../context/StoreContext';
 import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
+
+// Lazy loading image component with skeleton
+const LazyImage = ({ src, alt, className }: { src: string; alt: string; className?: string }) => {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isInView, setIsInView] = useState(false);
+  const imgRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setIsInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '100px' }
+    );
+
+    if (imgRef.current) {
+      observer.observe(imgRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={imgRef} className="relative" style={{ minHeight: isLoaded ? 'auto' : '200px' }}>
+      {/* Skeleton placeholder */}
+      {!isLoaded && (
+        <div className="absolute inset-0 bg-slate-200 dark:bg-slate-700 animate-pulse rounded-2xl" />
+      )}
+      {/* Actual image */}
+      {isInView && (
+        <img
+          src={src}
+          alt={alt}
+          onLoad={() => setIsLoaded(true)}
+          className={`${className} ${isLoaded ? 'opacity-100' : 'opacity-0'} transition-opacity duration-300`}
+        />
+      )}
+    </div>
+  );
+};
 
 export const Home = () => {
   const navigate = useNavigate();
@@ -38,12 +81,14 @@ export const Home = () => {
       const { data, error } = await supabase
         .from('templates')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(1000);
       
       if (error) {
         console.error('Error fetching templates:', error);
         addToast('error', 'Failed to load templates');
       } else {
+        console.log('Fetched templates:', data?.length);
         // Map database fields to Template type
         const mapped = (data || []).map(t => ({
           id: t.id,
@@ -262,10 +307,9 @@ export const Home = () => {
               className="group relative break-inside-avoid rounded-2xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-900/10"
             >
               <div className="relative">
-                <img
+                <LazyImage
                   src={t.thumbUrl || t.imageUrl}
                   alt={t.name}
-                  loading="lazy"
                   className="w-full h-auto object-cover transform transition-transform duration-700 group-hover:scale-105"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
