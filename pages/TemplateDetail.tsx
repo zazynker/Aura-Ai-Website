@@ -180,21 +180,27 @@ export const TemplateDetail = () => {
     setIsUploading(true);
     setUploadProgress(0);
     
-    // Simulate progress (actual upload doesn't provide progress callback)
+    // Simulate progress
     const progressInterval = setInterval(() => {
       setUploadProgress(prev => Math.min(prev + 15, 90));
     }, 200);
     
     try {
-      const { url } = await uploadUserImage(user.id, file);
+      const result = await uploadUserImage(user.id, file);
       
       clearInterval(progressInterval);
       setUploadProgress(100);
       
+      // 检查 success 字段
+      if (!result.success || !result.url) {
+        addToast('error', result.error || 'Upload failed');
+        return;
+      }
+      
       // Update state
-      setCurrentImage(url);
+      setCurrentImage(result.url);
       setCurrentImageSource({ templateId: 'modify-session', templateName: 'User Upload' });
-      setUploadedOriginalImage(url);
+      setUploadedOriginalImage(result.url);
       setShowImagePicker(false);
       
       addToast('success', 'Image uploaded successfully!');
