@@ -158,61 +158,76 @@ export const TemplateDetail = () => {
   };
 
   // UPDATED: Async upload to Supabase Storage
-  const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files?.[0]) return;
+const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  console.log('=== Upload started ===');
+  
+  if (!e.target.files?.[0]) {
+    console.log('No file selected');
+    return;
+  }
+  
+  const file = e.target.files[0];
+  console.log('File:', file.name, file.type, file.size);
+  
+  // Check user login status
+  if (!user) {
+    console.log('User not logged in');
+    addToast('error', 'Please login to upload images');
+    navigate('/login');
+    return;
+  }
+  
+  console.log('User ID:', user.id);
+  
+  // Validate file
+  const validationError = validateFile(file);
+  if (validationError) {
+    console.log('Validation error:', validationError);
+    addToast('error', validationError.message);
+    return;
+  }
+  
+  setIsUploading(true);
+  setUploadProgress(0);
+  
+  // Simulate progress
+  const progressInterval = setInterval(() => {
+    setUploadProgress(prev => Math.min(prev + 15, 90));
+  }, 200);
+  
+  try {
+    console.log('Calling uploadUserImage...');
+    const result = await uploadUserImage(user.id, file);
+    console.log('Upload result:', result);
     
-    const file = e.target.files[0];
+    clearInterval(progressInterval);
+    setUploadProgress(100);
     
-    // Check user login status
-    if (!user) {
-      addToast('error', 'Please login to upload images');
-      navigate('/login');
+    // 检查 success 字段
+    if (!result.success || !result.url) {
+      console.log('Upload failed:', result.error);
+      addToast('error', result.error || 'Upload failed');
       return;
     }
     
-    // Validate file
-    const validationError = validateFile(file);
-    if (validationError) {
-      addToast('error', validationError.message);
-      return;
-    }
+    console.log('Upload successful! URL:', result.url);
     
-    setIsUploading(true);
+    // Update state
+    setCurrentImage(result.url);
+    setCurrentImageSource({ templateId: 'modify-session', templateName: 'User Upload' });
+    setUploadedOriginalImage(result.url);
+    setShowImagePicker(false);
+    
+    addToast('success', 'Image uploaded successfully!');
+  } catch (err) {
+    console.error('Upload exception:', err);
+    addToast('error', err instanceof Error ? err.message : 'Upload failed. Please try again.');
+  } finally {
+    clearInterval(progressInterval);
+    setIsUploading(false);
     setUploadProgress(0);
-    
-    // Simulate progress
-    const progressInterval = setInterval(() => {
-      setUploadProgress(prev => Math.min(prev + 15, 90));
-    }, 200);
-    
-    try {
-      const result = await uploadUserImage(user.id, file);
-      
-      clearInterval(progressInterval);
-      setUploadProgress(100);
-      
-      // 检查 success 字段
-      if (!result.success || !result.url) {
-        addToast('error', result.error || 'Upload failed');
-        return;
-      }
-      
-      // Update state
-      setCurrentImage(result.url);
-      setCurrentImageSource({ templateId: 'modify-session', templateName: 'User Upload' });
-      setUploadedOriginalImage(result.url);
-      setShowImagePicker(false);
-      
-      addToast('success', 'Image uploaded successfully!');
-    } catch (err) {
-      console.error('Upload failed:', err);
-      addToast('error', err instanceof Error ? err.message : 'Upload failed. Please try again.');
-    } finally {
-      clearInterval(progressInterval);
-      setIsUploading(false);
-      setUploadProgress(0);
-    }
-  };
+  }
+};
 
   const handleAllHistoryClick = (gen: Generation) => {
     console.log('handleAllHistoryClick called:', gen.templateId, gen.imageUrl);
