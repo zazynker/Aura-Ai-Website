@@ -50,7 +50,7 @@ const faqs = [
   },
 ];
 
-const FaqItem = ({ q, a }: { q: string; a: string }) => {
+const FaqItem: React.FC<{ q: string; a: string }> = ({ q, a }) => {
   const [open, setOpen] = useState(false);
   return (
     <div className="border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden transition-all">
