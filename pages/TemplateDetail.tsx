@@ -1,4 +1,4 @@
-
+import { uploadUserImage, validateFile } from '../utils/uploadService';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Type, ExternalLink, Heart } from 'lucide-react';
@@ -39,6 +39,10 @@ export const TemplateDetail = () => {
   const [showLightbox, setShowLightbox] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [isLocked, setIsLocked] = useState(false);
+
+  // Upload State (NEW)
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   // History & Navigation State
   const [historyTab, setHistoryTab] = useState<'template' | 'all'>('template');
@@ -153,15 +157,54 @@ export const TemplateDetail = () => {
     }
   };
 
-  const handleImagePickerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const imageUrl = URL.createObjectURL(e.target.files[0]);
-      setCurrentImage(imageUrl);
-      // Mark as user upload - generations will be labeled as "User Upload"
+  // UPDATED: Async upload to Supabase Storage
+  const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files?.[0]) return;
+    
+    const file = e.target.files[0];
+    
+    // Check user login status
+    if (!user) {
+      addToast('error', 'Please login to upload images');
+      navigate('/login');
+      return;
+    }
+    
+    // Validate file
+    const validationError = validateFile(file);
+    if (validationError) {
+      addToast('error', validationError.message);
+      return;
+    }
+    
+    setIsUploading(true);
+    setUploadProgress(0);
+    
+    // Simulate progress (actual upload doesn't provide progress callback)
+    const progressInterval = setInterval(() => {
+      setUploadProgress(prev => Math.min(prev + 15, 90));
+    }, 200);
+    
+    try {
+      const { url } = await uploadUserImage(user.id, file);
+      
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      
+      // Update state
+      setCurrentImage(url);
       setCurrentImageSource({ templateId: 'modify-session', templateName: 'User Upload' });
-      // Save the original uploaded image to show in history
-      setUploadedOriginalImage(imageUrl);
+      setUploadedOriginalImage(url);
       setShowImagePicker(false);
+      
+      addToast('success', 'Image uploaded successfully!');
+    } catch (err) {
+      console.error('Upload failed:', err);
+      addToast('error', err instanceof Error ? err.message : 'Upload failed. Please try again.');
+    } finally {
+      clearInterval(progressInterval);
+      setIsUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -989,26 +1032,45 @@ export const TemplateDetail = () => {
                 </div>
             )}
 
+            {/* UPDATED: Upload tab with progress indicator */}
             {imagePickerTab === 'upload' && (
             <div className="p-4">
-                <div className="relative group cursor-pointer">
-                <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleImagePickerUpload}
-                    className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                />
-                <div className="h-48 rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 group-hover:border-purple-500/50 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
-                    <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                    <Upload className="w-8 h-8 text-slate-400 group-hover:text-purple-500" />
+                {isUploading ? (
+                  // Uploading state with progress bar
+                  <div className="h-48 rounded-2xl border-2 border-dashed border-purple-300 dark:border-purple-500/30 bg-purple-50/50 dark:bg-purple-500/5 flex flex-col items-center justify-center gap-4">
+                    <Loader2 className="w-10 h-10 text-purple-500 animate-spin" />
+                    <div className="w-full max-w-[200px]">
+                      <div className="h-2 bg-purple-100 dark:bg-purple-900/30 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300 ease-out"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                      <p className="text-center text-sm text-purple-600 dark:text-purple-400 mt-2 font-medium">
+                        Uploading... {Math.round(uploadProgress)}%
+                      </p>
                     </div>
-                    <div>
-                    <p className="text-base font-semibold text-slate-900 dark:text-white">Upload New Image</p>
-                    <p className="text-xs text-slate-500 mt-1">Use your own product image</p>
-                    <p className="text-[10px] text-purple-500 dark:text-purple-400 mt-2">Results will be saved as User Uploads</p>
+                  </div>
+                ) : (
+                  // Default upload area
+                  <div className="relative group cursor-pointer">
+                    <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        onChange={handleImagePickerUpload}
+                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                    />
+                    <div className="h-48 rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 group-hover:border-purple-500/50 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
+                        <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                          <Upload className="w-8 h-8 text-slate-400 group-hover:text-purple-500" />
+                        </div>
+                        <div>
+                          <p className="text-base font-semibold text-slate-900 dark:text-white">Upload Your Image</p>
+                          <p className="text-xs text-slate-500 mt-1">PNG, JPG, or WebP • Max 10MB</p>
+                        </div>
                     </div>
-                </div>
-                </div>
+                  </div>
+                )}
             </div>
             )}
         </div>
