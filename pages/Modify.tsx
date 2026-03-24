@@ -1,4 +1,3 @@
-import { uploadUserImage, validateFile } from '../utils/uploadService';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Type, Clock, Heart, ExternalLink } from 'lucide-react';
@@ -7,6 +6,7 @@ import { mockTemplates } from '../data/mockData';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Template } from '../types';
+import { generateImages } from '../utils/generateService';
 
 export const Modify = () => {
   const navigate = useNavigate();
@@ -72,10 +72,6 @@ export const Modify = () => {
   const [modifyPrompt, setModifyPrompt] = useState('');
   const [selectedRatio, setSelectedRatio] = useState('Square');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
-
-  // Upload State (for Supabase upload)
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
 
   // --- Logic: History ---
   const history = useMemo(() => {
@@ -172,70 +168,13 @@ export const Modify = () => {
   };
 
   // --- Logic: Image Selection ---
-  const handleLocalUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log('=== handleLocalUpload started ===');
-    
-    if (!e.target.files?.[0]) {
-      console.log('No file selected');
-      return;
-    }
-    
-    const file = e.target.files[0];
-    console.log('File:', file.name, file.type, file.size);
-    
-    if (!user) {
-      console.log('User not logged in');
-      addToast('error', 'Please login to upload images');
-      saveBrowsingState({ intendedDestination: '/modify' });
-      navigate('/login');
-      return;
-    }
-    
-    console.log('User ID:', user.id);
-    
-    const validationError = validateFile(file);
-    if (validationError) {
-      console.log('Validation error:', validationError);
-      addToast('error', validationError.message);
-      return;
-    }
-    
-    setIsUploading(true);
-    setUploadProgress(0);
-    
-    const progressInterval = setInterval(() => {
-      setUploadProgress(prev => Math.min(prev + 15, 90));
-    }, 200);
-    
-    try {
-      console.log('Calling uploadUserImage...');
-      const result = await uploadUserImage(user.id, file);
-      console.log('Upload result:', result);
-      
-      clearInterval(progressInterval);
-      setUploadProgress(100);
-      
-      if (!result.success || !result.url) {
-        console.log('Upload failed:', result.error);
-        addToast('error', result.error || 'Upload failed');
-        return;
-      }
-      
-      console.log('Upload successful! URL:', result.url);
-      
-      setCurrentImage(result.url);
-      setOriginalUploadedImage(result.url);
+  const handleLocalUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const imageUrl = URL.createObjectURL(e.target.files[0]);
+      setCurrentImage(imageUrl);
+      setOriginalUploadedImage(imageUrl);
       setCurrentImageSource({ templateId: MODIFY_SESSION_ID, templateName: 'User Upload' });
       setHasSelectedImage(true);
-      
-      addToast('success', 'Image uploaded successfully!');
-    } catch (err) {
-      console.error('Upload exception:', err);
-      clearInterval(progressInterval);
-      addToast('error', err instanceof Error ? err.message : 'Upload failed. Please try again.');
-    } finally {
-      setIsUploading(false);
-      setUploadProgress(0);
     }
   };
 
@@ -254,71 +193,14 @@ export const Modify = () => {
     setShowImagePicker(false);
   };
 
-  const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log('=== handleImagePickerUpload started ===');
-    
-    if (!e.target.files?.[0]) {
-      console.log('No file selected');
-      return;
-    }
-    
-    const file = e.target.files[0];
-    console.log('File:', file.name, file.type, file.size);
-    
-    if (!user) {
-      console.log('User not logged in');
-      addToast('error', 'Please login to upload images');
-      saveBrowsingState({ intendedDestination: '/modify' });
-      navigate('/login');
-      return;
-    }
-    
-    console.log('User ID:', user.id);
-    
-    const validationError = validateFile(file);
-    if (validationError) {
-      console.log('Validation error:', validationError);
-      addToast('error', validationError.message);
-      return;
-    }
-    
-    setIsUploading(true);
-    setUploadProgress(0);
-    
-    const progressInterval = setInterval(() => {
-      setUploadProgress(prev => Math.min(prev + 15, 90));
-    }, 200);
-    
-    try {
-      console.log('Calling uploadUserImage...');
-      const result = await uploadUserImage(user.id, file);
-      console.log('Upload result:', result);
-      
-      clearInterval(progressInterval);
-      setUploadProgress(100);
-      
-      if (!result.success || !result.url) {
-        console.log('Upload failed:', result.error);
-        addToast('error', result.error || 'Upload failed');
-        return;
-      }
-      
-      console.log('Upload successful! URL:', result.url);
-      
-      setCurrentImage(result.url);
-      setOriginalUploadedImage(result.url);
+  const handleImagePickerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const imageUrl = URL.createObjectURL(e.target.files[0]);
+      setCurrentImage(imageUrl);
+      setOriginalUploadedImage(imageUrl);
       setCurrentImageSource({ templateId: MODIFY_SESSION_ID, templateName: 'User Upload' });
       setHasSelectedImage(true);
       setShowImagePicker(false);
-      
-      addToast('success', 'Image uploaded successfully!');
-    } catch (err) {
-      console.error('Upload exception:', err);
-      clearInterval(progressInterval);
-      addToast('error', err instanceof Error ? err.message : 'Upload failed. Please try again.');
-    } finally {
-      setIsUploading(false);
-      setUploadProgress(0);
     }
   };
 
@@ -334,8 +216,8 @@ export const Modify = () => {
     }
   };
 
-  // --- Logic: Generation (Mirrored from TemplateDetail) ---
-  const runGeneration = (toolName: string, promptText: string) => {
+  // --- Logic: Generation (Using Real Gemini API) ---
+  const runGeneration = async (toolName: string, promptText: string) => {
     if (!user) { navigate('/login'); return; }
     if (user.credits < outputCount) { addToast('error', 'Not enough credits'); navigate('/pricing'); return; }
 
@@ -361,28 +243,55 @@ export const Modify = () => {
     setProgress(0);
     setGenerationContext(promptText || toolName);
 
-    const duration = 2000; 
-    const intervalTime = 50;
-    const steps = duration / intervalTime;
-    let currentStep = 0;
+    // Build the full prompt based on tool type
+    let fullPrompt = '';
+    if (toolName === 'Replace') {
+      fullPrompt = `Edit this image: Replace the main product/subject with: ${promptText}. Keep the background and style similar.`;
+    } else if (toolName === 'Add Text') {
+      fullPrompt = `Edit this image: Add the text "${promptText}" to the image in an aesthetically pleasing way.`;
+    } else if (toolName === 'Modify') {
+      fullPrompt = `Edit this image: ${promptText}`;
+    } else if (toolName === 'Enhance') {
+      fullPrompt = 'Enhance this image: Improve the quality, lighting, and overall appearance while keeping the same content.';
+    } else if (toolName === 'Change Ratio') {
+      fullPrompt = `Edit this image: Extend or crop this image to fit a ${promptText} aspect ratio while maintaining the visual style.`;
+    } else {
+      fullPrompt = promptText || `Apply ${toolName} effect to this image.`;
+    }
 
-    const timer = setInterval(() => {
-        currentStep++;
-        const newProgress = Math.min((currentStep / steps) * 100, 99);
-        setProgress(newProgress);
+    console.log('=== Starting generation ===');
+    console.log('Tool:', toolName);
+    console.log('Prompt:', fullPrompt);
+    console.log('Input image:', currentImage ? 'Yes' : 'No');
 
-        if (currentStep >= steps) {
-            clearInterval(timer);
-            finalizeGeneration(toolName, promptText);
-        }
-    }, intervalTime);
-  };
+    // Start progress animation
+    const progressInterval = setInterval(() => {
+      setProgress(prev => Math.min(prev + 2, 90));
+    }, 500);
 
-  const finalizeGeneration = (toolName: string, promptText: string) => {
+    try {
+      // Call the real API
+      const result = await generateImages({
+        prompt: fullPrompt,
+        imageUrl: currentImage || undefined,
+        numberOfImages: 1, // Gemini generates 1 at a time
+      });
+
+      clearInterval(progressInterval);
+
+      if (!result.success || !result.images || result.images.length === 0) {
+        console.error('Generation failed:', result.error);
+        setIsGenerating(false);
+        setProgress(0);
+        addToast('error', result.error || 'Generation failed. Please try again.');
+        return;
+      }
+
+      console.log('Generation successful! Images:', result.images.length);
       setProgress(100);
-      const newImages = Array.from({ length: outputCount }).map((_, i) => 
-        `https://picsum.photos/1024/1024?random=${Date.now() + i}`
-      );
+
+      // Process the generated images
+      const newImages = result.images;
 
       const newGenerations: Generation[] = newImages.map(imgUrl => ({
           id: `gen_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -404,8 +313,16 @@ export const Modify = () => {
           setCurrentImage(newImages[0]);
           setShowResults(true);
           setProgress(0);
-          addToast('success', `Generated ${outputCount} images!`);
+          addToast('success', `Generated ${newImages.length} image(s)!`);
       }, 300);
+
+    } catch (err) {
+      console.error('Generation exception:', err);
+      clearInterval(progressInterval);
+      setIsGenerating(false);
+      setProgress(0);
+      addToast('error', err instanceof Error ? err.message : 'Generation failed. Please try again.');
+    }
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1097,40 +1014,23 @@ export const Modify = () => {
 
             {imagePickerTab === 'upload' && (
             <div className="p-4">
-                {isUploading ? (
-                  <div className="h-48 rounded-2xl border-2 border-dashed border-purple-500/50 bg-purple-50/50 dark:bg-purple-500/5 flex flex-col items-center justify-center text-center gap-3">
-                    <Loader2 className="w-10 h-10 text-purple-500 animate-spin" />
-                    <div className="w-48">
-                      <div className="h-2 bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
-                        <div 
-                          className="h-full bg-purple-500 transition-all duration-300"
-                          style={{ width: `${uploadProgress}%` }}
-                        />
-                      </div>
-                      <p className="text-sm text-purple-600 dark:text-purple-400 mt-2">
-                        Uploading... {Math.round(uploadProgress)}%
-                      </p>
+                <div className="relative group cursor-pointer">
+                <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImagePickerUpload}
+                    className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                />
+                <div className="h-48 rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 group-hover:border-purple-500/50 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
+                    <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <Upload className="w-8 h-8 text-slate-400 group-hover:text-purple-500" />
                     </div>
-                  </div>
-                ) : (
-                  <div className="relative group cursor-pointer">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleImagePickerUpload}
-                      className="absolute inset-0 opacity-0 cursor-pointer z-10"
-                    />
-                    <div className="h-48 rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 group-hover:border-purple-500/50 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
-                      <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <Upload className="w-8 h-8 text-slate-400 group-hover:text-purple-500" />
-                      </div>
-                      <div>
-                        <p className="text-base font-semibold text-slate-900 dark:text-white">Upload New Image</p>
-                        <p className="text-xs text-slate-500 mt-1">PNG, JPG, WebP up to 10MB</p>
-                      </div>
+                    <div>
+                    <p className="text-base font-semibold text-slate-900 dark:text-white">Upload New Image</p>
+                    <p className="text-xs text-slate-500 mt-1">Click or drag and drop</p>
                     </div>
-                  </div>
-                )}
+                </div>
+                </div>
             </div>
             )}
         </div>
