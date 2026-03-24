@@ -244,21 +244,24 @@ export const Modify = () => {
 
     // Build the full prompt based on tool type
     let fullPrompt = '';
-    let inputImageUrl: string | undefined = currentImage || undefined;
+    let baseImageUrl: string | undefined = currentImage || undefined;  // The scene/model image
+    let productImageUrl: string | undefined = undefined;  // The product to insert
     
     if (toolName === 'Replace') {
-      // For Replace: use the uploaded product image as input, generate new scene
+      // For Replace: send BOTH the scene image AND the product image
+      // The AI will replace the product in the scene with the uploaded product
       if (uploadedFile) {
-        // Convert uploaded file to base64 data URL for API
+        // Convert uploaded product file to base64 data URL
         const reader = new FileReader();
-        const uploadedImageUrl = await new Promise<string>((resolve) => {
+        productImageUrl = await new Promise<string>((resolve) => {
           reader.onload = () => resolve(reader.result as string);
           reader.readAsDataURL(uploadedFile);
         });
-        inputImageUrl = uploadedImageUrl;
+        
+        // Build prompt for product replacement
         fullPrompt = promptText 
-          ? `Place this product in a professional product photography scene: ${promptText}. Keep the product exactly as shown but create an appealing background and lighting.`
-          : `Create a professional product photography scene for this product. Add an elegant background with professional studio lighting.`;
+          ? `Look at the first image (the product) and the second image (the scene). Replace the product/bottle in the second image with the product from the first image. ${promptText}. Keep the model, pose, lighting and background exactly the same, only replace the product.`
+          : `Look at the first image (the product) and the second image (the scene). Replace the product/bottle in the scene with the product from the first image. Keep everything else exactly the same - the model, pose, lighting, and background should remain unchanged. Only swap out the product.`;
       } else {
         fullPrompt = `Edit this image: ${promptText}`;
       }
@@ -277,7 +280,8 @@ export const Modify = () => {
     console.log('=== Starting AI Generation ===');
     console.log('Tool:', toolName);
     console.log('Full Prompt:', fullPrompt);
-    console.log('Has input image:', !!inputImageUrl);
+    console.log('Has base image:', !!baseImageUrl);
+    console.log('Has product image:', !!productImageUrl);
 
     // Start progress animation
     const progressInterval = setInterval(() => {
@@ -288,7 +292,8 @@ export const Modify = () => {
       // Call the real Gemini API
       const result = await generateImages({
         prompt: fullPrompt,
-        imageUrl: inputImageUrl,
+        imageUrl: baseImageUrl,           // The scene/model image
+        productImageUrl: productImageUrl, // The product to insert (for Replace)
         numberOfImages: 1, // Gemini generates 1 at a time
       });
 
