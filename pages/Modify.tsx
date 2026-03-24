@@ -221,11 +221,10 @@ export const Modify = () => {
     if (!user) { navigate('/login'); return; }
     if (user.credits < outputCount) { addToast('error', 'Not enough credits'); navigate('/pricing'); return; }
 
+    // Validation
     if (toolName === 'Replace' && !uploadedFile && !promptText) {
-       if (!promptText && !uploadedFile) {
-          addToast('error', 'Please upload a product or enter a prompt');
-          return;
-       }
+       addToast('error', 'Please upload a product or enter a prompt');
+       return;
     }
 
     if (toolName === 'Add Text' && !promptText.trim()) {
@@ -245,24 +244,40 @@ export const Modify = () => {
 
     // Build the full prompt based on tool type
     let fullPrompt = '';
+    let inputImageUrl: string | undefined = currentImage || undefined;
+    
     if (toolName === 'Replace') {
-      fullPrompt = `Edit this image: Replace the main product/subject with: ${promptText}. Keep the background and style similar.`;
+      // For Replace: use the uploaded product image as input, generate new scene
+      if (uploadedFile) {
+        // Convert uploaded file to base64 data URL for API
+        const reader = new FileReader();
+        const uploadedImageUrl = await new Promise<string>((resolve) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(uploadedFile);
+        });
+        inputImageUrl = uploadedImageUrl;
+        fullPrompt = promptText 
+          ? `Place this product in a professional product photography scene: ${promptText}. Keep the product exactly as shown but create an appealing background and lighting.`
+          : `Create a professional product photography scene for this product. Add an elegant background with professional studio lighting.`;
+      } else {
+        fullPrompt = `Edit this image: ${promptText}`;
+      }
     } else if (toolName === 'Add Text') {
-      fullPrompt = `Edit this image: Add the text "${promptText}" to the image in an aesthetically pleasing way.`;
+      fullPrompt = `Edit this image: Add the text "${promptText}" to the image in an aesthetically pleasing way that matches the image style.`;
     } else if (toolName === 'Modify') {
       fullPrompt = `Edit this image: ${promptText}`;
     } else if (toolName === 'Enhance') {
-      fullPrompt = 'Enhance this image: Improve the quality, lighting, and overall appearance while keeping the same content.';
-    } else if (toolName === 'Change Ratio') {
-      fullPrompt = `Edit this image: Extend or crop this image to fit a ${promptText} aspect ratio while maintaining the visual style.`;
+      fullPrompt = 'Enhance this image: Improve the quality, lighting, colors and overall appearance while keeping the same content.';
+    } else if (toolName === 'Ratio') {
+      fullPrompt = `Edit this image: Extend or crop this image to fit a ${promptText} aspect ratio while maintaining the visual style and content.`;
     } else {
       fullPrompt = promptText || `Apply ${toolName} effect to this image.`;
     }
 
-    console.log('=== Starting generation ===');
+    console.log('=== Starting AI Generation ===');
     console.log('Tool:', toolName);
-    console.log('Prompt:', fullPrompt);
-    console.log('Input image:', currentImage ? 'Yes' : 'No');
+    console.log('Full Prompt:', fullPrompt);
+    console.log('Has input image:', !!inputImageUrl);
 
     // Start progress animation
     const progressInterval = setInterval(() => {
@@ -270,10 +285,10 @@ export const Modify = () => {
     }, 500);
 
     try {
-      // Call the real API
+      // Call the real Gemini API
       const result = await generateImages({
         prompt: fullPrompt,
-        imageUrl: currentImage || undefined,
+        imageUrl: inputImageUrl,
         numberOfImages: 1, // Gemini generates 1 at a time
       });
 
@@ -287,7 +302,8 @@ export const Modify = () => {
         return;
       }
 
-      console.log('Generation successful! Images:', result.images.length);
+      console.log('=== Generation Successful ===');
+      console.log('Generated images:', result.images.length);
       setProgress(100);
 
       // Process the generated images
@@ -313,7 +329,7 @@ export const Modify = () => {
           setCurrentImage(newImages[0]);
           setShowResults(true);
           setProgress(0);
-          addToast('success', `Generated ${newImages.length} image(s)!`);
+          addToast('success', `Generated ${newImages.length} image(s) with AI!`);
       }, 300);
 
     } catch (err) {
