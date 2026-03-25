@@ -32,6 +32,7 @@ export interface Generation {
   creditsUsed: number;
   prompt: string;
   isOriginal?: boolean;
+  isSessionOnly?: boolean;
 }
 
 export interface Collection {

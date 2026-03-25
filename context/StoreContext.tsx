@@ -1,4 +1,3 @@
-
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
@@ -7,6 +6,25 @@ import { Session } from '@supabase/supabase-js';
 
 // Simple ID generator
 const generateId = () => Math.random().toString(36).substr(2, 9);
+
+// Helper: Check if a string is a base64 data URL (these are too large for localStorage)
+const isBase64DataUrl = (str: string): boolean => {
+  return str?.startsWith('data:image/') && str.includes('base64');
+};
+
+// Helper: Clean generation for storage (remove base64 images to prevent quota exceeded)
+const cleanGenerationForStorage = (gen: Generation): Generation => {
+  // If imageUrl is a base64 data URL, don't store it (it's too large)
+  // We'll mark it as a session-only image
+  if (isBase64DataUrl(gen.imageUrl)) {
+    return {
+      ...gen,
+      imageUrl: '', // Don't store base64 in localStorage
+      isSessionOnly: true, // Mark as session-only
+    };
+  }
+  return gen;
+};
 
 interface StoreContextType {
   user: User | null;
@@ -39,6 +57,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [data, setData] = useState<LocalStorageData>(getStorage());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
+  
+  // Session-only generations (not persisted to localStorage)
+  const [sessionGenerations, setSessionGenerations] = useState<Generation[]>([]);
 
   // --- Supabase Auth ---
 
@@ -103,6 +124,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             browsing: { ...prev.browsing, modifySession: null }
           }));
           setData(getStorage());
+          setSessionGenerations([]); // Clear session generations on logout
         }
       }
     );
@@ -157,6 +179,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       browsing: { ...prev.browsing, modifySession: null }
     }));
     setData(getStorage());
+    setSessionGenerations([]); // Clear session generations
     addToast('info', 'Logged out successfully');
   };
 
@@ -179,9 +202,20 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const saveModifySession = (session: ModifySession | null) => {
+    // Clean session before saving - remove base64 images
+    let cleanSession = session;
+    if (session) {
+      cleanSession = {
+        ...session,
+        currentImage: isBase64DataUrl(session.currentImage || '') ? '' : session.currentImage,
+        originalUploadedImage: isBase64DataUrl(session.originalUploadedImage || '') ? '' : session.originalUploadedImage,
+        generatedResults: session.generatedResults?.filter(img => !isBase64DataUrl(img)) || [],
+      };
+    }
+    
     updateStorage((prev) => ({
       ...prev,
-      browsing: { ...prev.browsing, modifySession: session },
+      browsing: { ...prev.browsing, modifySession: cleanSession },
     }));
     setData(getStorage());
   };
@@ -192,6 +226,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (!data.user) return;
     const genWithUser = { ...gen, userId: data.user.id };
 
+    // If it's a base64 image, only keep in session state (don't persist)
+    if (isBase64DataUrl(gen.imageUrl)) {
+      setSessionGenerations(prev => [genWithUser, ...prev]);
+      // Still deduct credits
+      updateStorage((prev) => ({
+        ...prev,
+        user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
+      }));
+      setData(getStorage());
+      return;
+    }
+
+    // For regular URLs, persist to localStorage
     updateStorage((prev) => ({
       ...prev,
       generations: [genWithUser, ...prev.generations],
@@ -204,15 +251,32 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (!data.user) return;
     const gensWithUser = gens.map(g => ({ ...g, userId: data.user!.id }));
 
+    // Separate base64 images (session-only) from regular URLs (persist)
+    const base64Gens = gensWithUser.filter(g => isBase64DataUrl(g.imageUrl));
+    const regularGens = gensWithUser.filter(g => !isBase64DataUrl(g.imageUrl));
+
+    // Add base64 images to session state only
+    if (base64Gens.length > 0) {
+      setSessionGenerations(prev => [...base64Gens, ...prev]);
+    }
+
+    // Calculate total credits used
+    const totalCredits = gens.reduce((acc, g) => acc + g.creditsUsed, 0);
+
+    // Update storage with only regular URLs and deduct credits
     updateStorage((prev) => ({
       ...prev,
-      generations: [...gensWithUser, ...prev.generations],
-      user: prev.user ? { ...prev.user, credits: prev.user.credits - gens.reduce((acc, g) => acc + g.creditsUsed, 0) } : null
+      generations: [...regularGens, ...prev.generations],
+      user: prev.user ? { ...prev.user, credits: prev.user.credits - totalCredits } : null
     }));
     setData(getStorage());
   };
 
   const deleteGeneration = (id: string) => {
+    // Try to delete from session generations first
+    setSessionGenerations(prev => prev.filter(g => g.id !== id));
+    
+    // Also try to delete from persisted generations
     updateStorage((prev) => ({
       ...prev,
       generations: prev.generations.filter(g => g.id !== id)
@@ -273,9 +337,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     addToast('info', 'Removed from collection');
   };
 
-  // Filter data to only show what belongs to the current user
+  // Combine persisted generations with session-only generations
+  // Filter to only show current user's data
   const userGenerations = data.user
-    ? data.generations.filter(g => g.userId === data.user!.id)
+    ? [...sessionGenerations.filter(g => g.userId === data.user!.id), ...data.generations.filter(g => g.userId === data.user!.id)]
     : [];
 
   const userCollections = data.user
