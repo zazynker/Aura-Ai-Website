@@ -30,23 +30,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('Number of images:', numberOfImages);
 
         // Build the request content parts
+        // IMPORTANT: Order matters! Scene/base image FIRST, then product image, then prompt
+        // This matches Google AI Studio's behavior
         const parts: any[] = [];
 
-        // Add product image first if provided (for Replace functionality)
-        if (productImageUrl) {
-            const productImageData = await fetchImageAsBase64(productImageUrl);
-            if (productImageData) {
-                parts.push({
-                    inline_data: {
-                        mime_type: productImageData.mimeType,
-                        data: productImageData.base64
-                    }
-                });
-                console.log('Added product image to request');
-            }
-        }
-
-        // Add base/scene image if provided
+        // Add base/scene image FIRST if provided (the model/background photo)
         if (imageUrl) {
             const baseImageData = await fetchImageAsBase64(imageUrl);
             if (baseImageData) {
@@ -56,24 +44,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         data: baseImageData.base64
                     }
                 });
-                console.log('Added base image to request');
+                console.log('Added base/scene image to request (FIRST)');
             }
         }
 
-        // Add the text prompt
+        // Add product image SECOND if provided (the product to insert)
+        if (productImageUrl) {
+            const productImageData = await fetchImageAsBase64(productImageUrl);
+            if (productImageData) {
+                parts.push({
+                    inline_data: {
+                        mime_type: productImageData.mimeType,
+                        data: productImageData.base64
+                    }
+                });
+                console.log('Added product image to request (SECOND)');
+            }
+        }
+
+        // Add the text prompt LAST
         parts.push({ text: prompt });
 
         // Build the full request body
+        // Using "Image" only mode (not "Text", "Image") to match Google AI Studio
         const requestBody = {
             contents: [{
                 parts: parts
             }],
             generationConfig: {
-                responseModalities: ["Text", "Image"],
+                responseModalities: ["Image"],  // Images only - matches Google AI Studio
                 temperature: 1,
-                topP: 0.95,
-                topK: 40,
-                maxOutputTokens: 8192,
+                // Remove topP, topK, maxOutputTokens to use defaults like AI Studio
             },
             safetySettings: [
                 { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
@@ -85,6 +86,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log('Sending request to Gemini API...');
         console.log('Request parts count:', parts.length);
+        console.log('Parts order: base image -> product image -> prompt');
 
         const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
             method: 'POST',

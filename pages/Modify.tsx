@@ -249,7 +249,7 @@ export const Modify = () => {
     
     if (toolName === 'Replace') {
       // For Replace: send BOTH the scene image AND the product image
-      // The AI will replace the product in the scene with the uploaded product
+      // Order in API: scene image FIRST, product image SECOND (matches Google AI Studio)
       if (uploadedFile) {
         // Convert uploaded product file to base64 data URL
         const reader = new FileReader();
@@ -258,19 +258,18 @@ export const Modify = () => {
           reader.readAsDataURL(uploadedFile);
         });
         
-        // Build prompt for product replacement
-        fullPrompt = promptText 
-          ? `Look at the first image (the product) and the second image (the scene). Replace the product/bottle in the second image with the product from the first image. ${promptText}. Keep the model, pose, lighting and background exactly the same, only replace the product.`
-          : `Look at the first image (the product) and the second image (the scene). Replace the product/bottle in the scene with the product from the first image. Keep everything else exactly the same - the model, pose, lighting, and background should remain unchanged. Only swap out the product.`;
+        // Simple prompt like Google AI Studio - just describe what to do
+        // The user's promptText should describe the replacement naturally
+        fullPrompt = promptText || `Replace the bottle in the model's hand with the product in the other photo`;
       } else {
         fullPrompt = `Edit this image: ${promptText}`;
       }
     } else if (toolName === 'Add Text') {
-      fullPrompt = `Edit this image: Add the text "${promptText}" to the image in an aesthetically pleasing way that matches the image style.`;
+      fullPrompt = `Add the text "${promptText}" to this image`;
     } else if (toolName === 'Modify') {
-      fullPrompt = `Edit this image: ${promptText}`;
+      fullPrompt = promptText;  // Use user's prompt directly, simple and clean
     } else if (toolName === 'Enhance') {
-      fullPrompt = 'Enhance this image: Improve the quality, lighting, colors and overall appearance while keeping the same content.';
+      fullPrompt = 'Enhance this image: improve quality, lighting and colors';
     } else if (toolName === 'Ratio') {
       fullPrompt = `Edit this image: Extend or crop this image to fit a ${promptText} aspect ratio while maintaining the visual style and content.`;
     } else {
