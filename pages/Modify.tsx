@@ -51,8 +51,8 @@ export const Modify = () => {
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [imagePickerTab, setImagePickerTab] = useState<'session' | 'all' | 'upload' | 'collection'>('session');
 
-  // Generation Configuration
-  const [outputCount, setOutputCount] = useState(2);
+  // Generation Configuration - DEFAULT TO 4
+  const [outputCount, setOutputCount] = useState(4);
   const [quality, setQuality] = useState<'Standard' | 'High' | 'Ultra'>('Standard');
   
   // Generation Process State
@@ -221,9 +221,9 @@ export const Modify = () => {
     if (!user) { navigate('/login'); return; }
     if (user.credits < outputCount) { addToast('error', 'Not enough credits'); navigate('/pricing'); return; }
 
-    // Validation
-    if (toolName === 'Replace' && !uploadedFile && !promptText) {
-       addToast('error', 'Please upload a product or enter a prompt');
+    // Validation - For Replace, only require uploaded file (prompt is optional)
+    if (toolName === 'Replace' && !uploadedFile) {
+       addToast('error', 'Please upload a product image');
        return;
     }
 
@@ -258,11 +258,19 @@ export const Modify = () => {
           reader.readAsDataURL(uploadedFile);
         });
         
-        // Simple prompt like Google AI Studio - just describe what to do
-        // The user's promptText should describe the replacement naturally
-        fullPrompt = promptText || `Replace the bottle in the model's hand with the product in the other photo`;
+        // Zero-prompt: use default or combine with material description
+        if (promptText && promptText.trim()) {
+          // User provided material description - use it to improve accuracy
+          fullPrompt = `Replace the product in Image 1 with ${promptText.trim()} from Image 2`;
+        } else {
+          // No description - use simple default prompt
+          fullPrompt = `Replace the product in Image 1 with the product from Image 2`;
+        }
       } else {
-        fullPrompt = `Edit this image: ${promptText}`;
+        // This shouldn't happen due to validation above, but just in case
+        addToast('error', 'Please upload a product image');
+        setIsGenerating(false);
+        return;
       }
     } else if (toolName === 'Add Text') {
       fullPrompt = `Add the text "${promptText}" to this image`;
@@ -281,19 +289,20 @@ export const Modify = () => {
     console.log('Full Prompt:', fullPrompt);
     console.log('Has base image:', !!baseImageUrl);
     console.log('Has product image:', !!productImageUrl);
+    console.log('Output count:', outputCount);
 
     // Start progress animation
     const progressInterval = setInterval(() => {
-      setProgress(prev => Math.min(prev + 2, 90));
-    }, 500);
+      setProgress(prev => Math.min(prev + 1, 90));
+    }, 300);
 
     try {
-      // Call the real Gemini API
+      // Call the real Gemini API with the selected number of images
       const result = await generateImages({
         prompt: fullPrompt,
         imageUrl: baseImageUrl,           // The scene/model image
         productImageUrl: productImageUrl, // The product to insert (for Replace)
-        numberOfImages: 1, // Gemini generates 1 at a time
+        numberOfImages: outputCount,      // Generate multiple images in parallel
       });
 
       clearInterval(progressInterval);
@@ -453,35 +462,39 @@ export const Modify = () => {
                     <>
                     {history.length > 0 ? (
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                        {history.map((gen) => (
-                            <div 
-                            key={gen.id} 
-                            onClick={() => {
-                                setCurrentImage(gen.imageUrl);
-                            }}
-                            className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all shrink-0 ${
-                                currentImage === gen.imageUrl 
-                                ? 'border-purple-500 ring-2 ring-purple-500/20 shadow-lg shadow-purple-900/20' 
-                                : 'border-transparent hover:border-slate-300 dark:hover:border-white/20'
-                            }`}
+                            {history.map((gen) => (
+                            <div
+                                key={gen.id}
+                                onClick={() => handleSelectFromHistory(gen.imageUrl)}
+                                className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${
+                                currentImage === gen.imageUrl
+                                    ? 'border-purple-500 ring-2 ring-purple-500/20'
+                                    : 'border-transparent hover:border-purple-500/50'
+                                }`}
                             >
-                            <img src={gen.imageUrl} className="w-full h-full object-cover" loading="lazy" alt="history" />
-                            {gen.isOriginal && (
-                                <div className="absolute top-1 left-1 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded text-[10px] text-white font-medium border border-white/10">Original</div>
-                            )}
-                            <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                <p className="text-[10px] text-white truncate">{gen.prompt}</p>
+                                <img
+                                src={gen.imageUrl}
+                                className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                                alt="History item"
+                                loading="lazy"
+                                />
+                                {gen.isOriginal && (
+                                    <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white font-medium border border-white/10">
+                                    Original
+                                    </div>
+                                )}
                             </div>
-                            </div>
-                        ))}
+                            ))}
                         </div>
                     ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center text-center p-4 opacity-50">
-                            <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center mb-2">
-                                <Layers className="w-6 h-6 text-slate-400" />
-                            </div>
-                            <p className="text-sm text-slate-500 dark:text-slate-400">No history</p>
-                            <p className="text-xs text-slate-400 dark:text-slate-500 mt-1">Generate images to see them here</p>
+                        <div className="flex-1 flex flex-col items-center justify-center text-center px-4 gap-4">
+                        <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center">
+                            <Layers className="w-8 h-8 text-slate-400 dark:text-white/20" />
+                        </div>
+                        <div>
+                            <p className="text-sm font-medium text-slate-900 dark:text-white">No history for this source</p>
+                            <p className="text-xs text-slate-500 mt-1">Generate some images first</p>
+                        </div>
                         </div>
                     )}
                     </>
@@ -490,174 +503,166 @@ export const Modify = () => {
                     <>
                     {generations.length > 0 ? (
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                        {[...generations].sort((a, b) => b.createdAt - a.createdAt).map((gen) => (
-                            <div 
-                            key={gen.id} 
-                            onClick={() => handleAllHistoryClick(gen)}
-                            className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all shrink-0 ${
-                                currentImage === gen.imageUrl 
-                                ? 'border-purple-500 ring-2 ring-purple-500/20 shadow-lg shadow-purple-900/20' 
-                                : 'border-transparent hover:border-slate-300 dark:hover:border-white/20'
-                            }`}
-                            >
-                            <img src={gen.imageUrl} className="w-full h-full object-cover" loading="lazy" alt="history" />
-                            {/* Source Badge */}
-                            <div className="absolute top-1 left-1 bg-black/60 backdrop-blur-sm px-2 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 truncate max-w-[80px]">
-                                {gen.templateId === MODIFY_SESSION_ID ? 'Upload' : (gen.templateName || 'Template')}
-                            </div>
-                            {/* External link indicator for template items */}
-                            {gen.templateId !== MODIFY_SESSION_ID && (
-                                <div className="absolute top-1 right-1 bg-black/60 backdrop-blur-sm p-1 rounded border border-white/10">
-                                <ExternalLink className="w-3 h-3 text-white" />
+                            {[...generations].sort((a, b) => b.createdAt - a.createdAt).map((gen) => {
+                                const isModify = gen.templateId === MODIFY_SESSION_ID;
+                                return (
+                                <div
+                                    key={gen.id}
+                                    onClick={() => handleAllHistoryClick(gen)}
+                                    className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${
+                                    currentImage === gen.imageUrl
+                                        ? 'border-purple-500 ring-2 ring-purple-500/20'
+                                        : 'border-transparent hover:border-purple-500/50'
+                                    }`}
+                                >
+                                    <img
+                                    src={gen.imageUrl}
+                                    className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                                    alt="History item"
+                                    loading="lazy"
+                                    />
+                                    <div className={`absolute top-2 left-2 backdrop-blur-sm px-2 py-1 rounded text-[10px] font-medium border ${
+                                        isModify
+                                            ? 'bg-purple-600/80 text-white border-purple-400/30'
+                                            : 'bg-black/60 text-white border-white/10'
+                                    }`}>
+                                        {isModify ? 'Upload' : (gen.templateName || 'Template')}
+                                    </div>
                                 </div>
-                            )}
-                            <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                <p className="text-[10px] text-white truncate">{gen.prompt}</p>
-                            </div>
-                            </div>
-                        ))}
+                            )})}
                         </div>
                     ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center text-center p-4 opacity-50">
-                        <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center mb-2">
-                            <Layers className="w-6 h-6 text-slate-400" />
+                        <div className="flex-1 flex flex-col items-center justify-center text-center px-4 gap-4">
+                        <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center">
+                            <Clock className="w-8 h-8 text-slate-400 dark:text-white/20" />
                         </div>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">No history yet</p>
+                        <div>
+                            <p className="text-sm font-medium text-slate-900 dark:text-white">No history yet</p>
+                            <p className="text-xs text-slate-500 mt-1">Your generated images will appear here</p>
+                        </div>
                         </div>
                     )}
                     </>
                 )}
             </div>
 
-            {/* MIDDLE COLUMN: Canvas */}
-            <div className="flex-1 relative flex flex-col min-w-0">
-                <div className="flex-1 relative rounded-2xl overflow-hidden bg-white dark:bg-slate-950 border border-slate-300 dark:border-white/5 flex items-center justify-center group shadow-2xl transition-colors duration-300">
-                    
-                    {!hasSelectedImage ? (
-                        // --- UPLOAD STATE INSIDE CANVAS ---
-                        <div className="flex flex-col items-center justify-center h-full w-full p-8 animate-in zoom-in-95 duration-300">
-                             <div className="text-center space-y-2 mb-8">
-                                <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
-                                    {generatedResults.length > 0 ? 'Change Image' : 'Upload Image'}
-                                </h2>
-                                <p className="text-sm text-slate-500 dark:text-slate-400">
-                                    {generatedResults.length > 0 
-                                    ? 'Select a new image to continue editing' 
-                                    : 'Start editing by choosing a source'}
-                                </p>
-                                {generatedResults.length > 0 && (
-                                    <p className="text-xs text-purple-500 dark:text-purple-400">
-                                    Your session history will be preserved
-                                    </p>
-                                )}
-                             </div>
-                             
-                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-2xl">
-                                {/* 1. Local Upload */}
-                                <div className="relative group cursor-pointer h-40">
-                                    <input type="file" accept="image/*" onChange={handleLocalUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
-                                    <div className="h-full rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 group-hover:border-purple-500/50 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
-                                        <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                            <Upload className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
-                                        </div>
-                                        <div>
-                                            <p className="text-sm font-semibold text-slate-900 dark:text-white">Upload</p>
-                                            <p className="text-[10px] text-slate-500 mt-1">Local File</p>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* 2. From History */}
-                                <button onClick={() => { setImagePickerTab('all'); setShowImagePicker(true); }} className="group h-40 rounded-2xl border border-slate-200 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
+            {/* CENTER COLUMN: Preview */}
+            <div className="flex-1 glass-panel rounded-2xl relative overflow-hidden flex items-center justify-center bg-slate-100 dark:bg-slate-800/50 mt-8 md:mt-0">
+                {!hasSelectedImage ? (
+                    // --- NO IMAGE STATE ---
+                    <div className="flex flex-col items-center justify-center gap-6 p-8 text-center">
+                         <div className="w-20 h-20 rounded-full bg-slate-200 dark:bg-white/5 flex items-center justify-center">
+                            <Wand2 className="w-10 h-10 text-slate-400 dark:text-white/30" />
+                         </div>
+                         <div>
+                            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Start a new session</h2>
+                            <p className="text-sm text-slate-500 mt-2">Upload an image or select from history</p>
+                         </div>
+                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-2xl">
+                            {/* 1. Local Upload */}
+                            <div className="relative group cursor-pointer h-40">
+                                <input type="file" accept="image/*" onChange={handleLocalUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
+                                <div className="h-full rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 group-hover:border-purple-500/50 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
                                     <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                        <Clock className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
+                                        <Upload className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-semibold text-slate-900 dark:text-white">History</p>
-                                        <p className="text-[10px] text-slate-500 mt-1">{generations.length} items</p>
+                                        <p className="text-sm font-semibold text-slate-900 dark:text-white">Upload</p>
+                                        <p className="text-[10px] text-slate-500 mt-1">Local File</p>
                                     </div>
-                                </button>
-
-                                {/* 3. From Collections */}
-                                <button onClick={() => { setImagePickerTab('collection'); setShowImagePicker(true); }} className="group h-40 rounded-2xl border border-slate-200 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
-                                    <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                                        <Heart className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-semibold text-slate-900 dark:text-white">Collection</p>
-                                        <p className="text-[10px] text-slate-500 mt-1">{collections.length} packs</p>
-                                    </div>
-                                </button>
-                             </div>
-                        </div>
-                    ) : (
-                        // --- IMAGE PREVIEW STATE ---
-                        <>
-                            {/* Change Image Button */}
-                            {hasSelectedImage && !isGenerating && (
-                                <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
-                                    <div className="glass-panel px-3 py-1.5 rounded-lg flex items-center gap-2 bg-black/40 dark:bg-black/40 backdrop-blur-md border border-white/10 w-fit">
-                                        <span className="font-semibold text-white text-sm">
-                                            {currentImageSource?.templateId === MODIFY_SESSION_ID ? 'User Upload' : currentImageSource?.templateName}
-                                        </span>
-                                    </div>
-
-                                    <button
-                                        onClick={handleChangeImage}
-                                        className="px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white text-sm font-medium border border-slate-200 dark:border-white/10 shadow-sm"
-                                    >
-                                        <Upload className="w-4 h-4" />
-                                        Change Image
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* Progress Overlay */}
-                            {isGenerating && (
-                            <div className="absolute inset-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-                                <div className="w-64 space-y-4">
-                                    <div className="flex justify-between text-xs font-medium uppercase tracking-wider text-slate-900 dark:text-white">
-                                        <span className="flex items-center gap-2"><Sparkles className="w-3 h-3 animate-pulse text-purple-500 dark:text-purple-400"/> Generating</span>
-                                        <span>{Math.round(progress)}%</span>
-                                    </div>
-                                    <div className="h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden border border-slate-300 dark:border-white/5">
-                                        <div 
-                                            className="h-full bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 transition-all duration-75 ease-linear"
-                                            style={{ width: `${progress}%` }}
-                                        />
-                                    </div>
-                                    <p className="text-center text-xs text-slate-500 dark:text-slate-400 animate-pulse">Creating {outputCount} variations...</p>
                                 </div>
                             </div>
-                            )}
 
-                            <img 
-                                src={currentImage} 
-                                className="max-h-full max-w-full object-contain transition-all duration-500"
-                                alt="Main preview"
-                                onLoad={(e) => {
-                                    const img = e.currentTarget;
-                                    setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight });
-                                }}
-                            />
+                            {/* 2. From History */}
+                            <button onClick={() => { setImagePickerTab('all'); setShowImagePicker(true); }} className="group h-40 rounded-2xl border border-slate-200 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
+                                <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <Clock className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">History</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">{generations.length} items</p>
+                                </div>
+                            </button>
 
-                            {imageDimensions.width > 0 && (
-                                <div className="absolute bottom-4 right-4 z-10">
-                                    <span className="text-xs text-slate-200 dark:text-slate-400 font-mono bg-black/60 backdrop-blur-md px-2 py-1 rounded border border-white/10">
-                                        {imageDimensions.width} x {imageDimensions.height}
+                            {/* 3. From Collections */}
+                            <button onClick={() => { setImagePickerTab('collection'); setShowImagePicker(true); }} className="group h-40 rounded-2xl border border-slate-200 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
+                                <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                                    <Heart className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
+                                </div>
+                                <div>
+                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">Collection</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">{collections.length} packs</p>
+                                </div>
+                            </button>
+                         </div>
+                    </div>
+                ) : (
+                    // --- IMAGE PREVIEW STATE ---
+                    <>
+                        {/* Change Image Button */}
+                        {hasSelectedImage && !isGenerating && (
+                            <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
+                                <div className="glass-panel px-3 py-1.5 rounded-lg flex items-center gap-2 bg-black/40 dark:bg-black/40 backdrop-blur-md border border-white/10 w-fit">
+                                    <span className="font-semibold text-white text-sm">
+                                        {currentImageSource?.templateId === MODIFY_SESSION_ID ? 'User Upload' : currentImageSource?.templateName}
                                     </span>
                                 </div>
-                            )}
 
-                            <button 
-                                onClick={() => setShowLightbox(true)}
-                                className="absolute top-4 right-4 w-10 h-10 rounded-xl glass-panel flex items-center justify-center text-white hover:bg-white hover:text-black transition-all hover:scale-105 z-20 bg-black/20"
-                            >
-                                <Maximize2 className="w-5 h-5" />
-                            </button>
-                        </>
-                    )}
-                </div>
+                                <button
+                                    onClick={handleChangeImage}
+                                    className="px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white text-sm font-medium border border-slate-200 dark:border-white/10 shadow-sm"
+                                >
+                                    <Upload className="w-4 h-4" />
+                                    Change Image
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Progress Overlay */}
+                        {isGenerating && (
+                        <div className="absolute inset-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
+                            <div className="w-64 space-y-4">
+                                <div className="flex justify-between text-xs font-medium uppercase tracking-wider text-slate-900 dark:text-white">
+                                    <span className="flex items-center gap-2"><Sparkles className="w-3 h-3 animate-pulse text-purple-500 dark:text-purple-400"/> Generating {outputCount} images</span>
+                                    <span>{Math.round(progress)}%</span>
+                                </div>
+                                <div className="h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden border border-slate-300 dark:border-white/5">
+                                    <div 
+                                        className="h-full bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 transition-all duration-75 ease-linear"
+                                        style={{ width: `${progress}%` }}
+                                    />
+                                </div>
+                                <p className="text-center text-xs text-slate-500 dark:text-slate-400 animate-pulse">Creating {outputCount} variations...</p>
+                            </div>
+                        </div>
+                        )}
+
+                        <img 
+                            src={currentImage} 
+                            className="max-h-full max-w-full object-contain transition-all duration-500"
+                            alt="Main preview"
+                            onLoad={(e) => {
+                                const img = e.currentTarget;
+                                setImageDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+                            }}
+                        />
+
+                        {imageDimensions.width > 0 && (
+                            <div className="absolute bottom-4 right-4 z-10">
+                                <span className="text-xs text-slate-200 dark:text-slate-400 font-mono bg-black/60 backdrop-blur-md px-2 py-1 rounded border border-white/10">
+                                    {imageDimensions.width} x {imageDimensions.height}
+                                </span>
+                            </div>
+                        )}
+
+                        <button 
+                            onClick={() => setShowLightbox(true)}
+                            className="absolute bottom-4 left-4 z-10 p-2 rounded-lg bg-black/60 hover:bg-black/80 text-white transition-colors backdrop-blur-md border border-white/10"
+                        >
+                            <Maximize2 className="w-4 h-4" />
+                        </button>
+                    </>
+                )}
 
                 {/* Results Tray */}
                 <div className={`absolute bottom-0 left-4 right-4 glass-panel border border-slate-500/20 dark:border-white/10 p-6 rounded-t-2xl transition-transform duration-500 ease-out z-40 shadow-2xl bg-white/60 dark:bg-slate-900/70 backdrop-blur-2xl ${showResults ? 'translate-y-0' : 'translate-y-[120%]'}`}>
@@ -706,16 +711,7 @@ export const Modify = () => {
                     
                     {activeTool === 'replace' && (
                         <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
-                            <div className="space-y-2">
-                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium ml-1">Context Prompt</label>
-                                <textarea 
-                                    value={prompt}
-                                    onChange={(e) => setPrompt(e.target.value)}
-                                    placeholder="E.g. On a marble table with sunlight..."
-                                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl p-3 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-20"
-                                />
-                            </div>
-
+                            {/* Product Upload - FIRST (required) */}
                             <div className="border-2 border-dashed border-slate-200 dark:border-white/10 rounded-xl p-4 transition-colors hover:border-purple-500/30 hover:bg-white dark:hover:bg-white/5 relative group">
                                 <input type="file" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" accept="image/png, image/jpeg" />
                                 {!uploadedFile ? (
@@ -723,7 +719,7 @@ export const Modify = () => {
                                         <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10 transition-colors">
                                         <Upload className="w-5 h-5 text-slate-400 group-hover:text-purple-400" />
                                         </div>
-                                        <p className="text-xs text-slate-500 dark:text-slate-400 text-center">Drag & drop new product image</p>
+                                        <p className="text-xs text-slate-500 dark:text-slate-400 text-center">Upload your product image (white background)</p>
                                     </div>
                                 ) : (
                                     <div className="flex items-center gap-3">
@@ -736,15 +732,30 @@ export const Modify = () => {
                                     </div>
                                 )}
                             </div>
+
+                            {/* Material Description - OPTIONAL */}
+                            <div className="space-y-2">
+                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium ml-1">
+                                    Describe your product <span className="text-slate-400 dark:text-slate-500">(optional)</span>
+                                </label>
+                                <textarea 
+                                    value={prompt}
+                                    onChange={(e) => setPrompt(e.target.value)}
+                                    placeholder="e.g., frosted glass bottle with white dropper and gold cap"
+                                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl p-3 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-20"
+                                />
+                                <p className="text-[10px] text-slate-400 dark:text-slate-500 ml-1">
+                                    Adding material details can improve generation accuracy
+                                </p>
+                            </div>
                             
                             <div className="pt-2 border-t border-slate-200 dark:border-white/5">
-                                <QualitySelector />
                                 <ImageCountSelector />
                             </div>
                             
-                            <Button variant="gradient" className="w-full" onClick={() => runGeneration('Replace', prompt)} disabled={isGenerating}>
+                            <Button variant="gradient" className="w-full" onClick={() => runGeneration('Replace', prompt)} disabled={isGenerating || !uploadedFile}>
                             {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                            Generate Magic
+                            {uploadedFile ? 'Generate Magic' : 'Upload product first'}
                             </Button>
                         </div>
                     )}
@@ -788,7 +799,6 @@ export const Modify = () => {
                                     placeholder="E.g. add flowers, make it winter..." 
                                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-purple-500/50 resize-none"
                                 />
-                                <QualitySelector />
                                 <ImageCountSelector />
                                 <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Modify', modifyPrompt)}>Generate Changes</Button>
                             </div>
@@ -833,7 +843,6 @@ export const Modify = () => {
                         {activeTool === 'enhance' && (
                             <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
                                 <p className="text-xs text-slate-500 dark:text-slate-400">Upscale resolution and improve lighting details.</p>
-                                <QualitySelector />
                                 <ImageCountSelector />
                                 <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Enhance', 'High Resolution Upscale')}>Enhance Image</Button>
                             </div>

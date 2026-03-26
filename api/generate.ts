@@ -17,7 +17,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const { prompt, imageUrl, productImageUrl, numberOfImages = 1 } = req.body;
+        const { prompt, imageUrl, productImageUrl, numberOfImages = 4 } = req.body;
 
         if (!prompt) {
             return res.status(400).json({ error: 'Prompt is required' });
@@ -27,7 +27,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('Prompt:', prompt.substring(0, 100) + '...');
         console.log('Has base image:', !!imageUrl);
         console.log('Has product image:', !!productImageUrl);
-        console.log('Number of images:', numberOfImages);
+        console.log('Number of images requested:', numberOfImages);
 
         // Build the request content parts
         // IMPORTANT: Order matters! Scene/base image FIRST, then product image, then prompt
@@ -66,15 +66,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         parts.push({ text: prompt });
 
         // Build the full request body
-        // Using "Image" only mode (not "Text", "Image") to match Google AI Studio
         const requestBody = {
             contents: [{
                 parts: parts
             }],
             generationConfig: {
-                responseModalities: ["Image"],  // Images only - matches Google AI Studio
+                responseModalities: ["Image"],
                 temperature: 1,
-                // Remove topP, topK, maxOutputTokens to use defaults like AI Studio
             },
             safetySettings: [
                 { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
@@ -86,53 +84,64 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         console.log('Sending request to Gemini API...');
         console.log('Request parts count:', parts.length);
-        console.log('Parts order: base image -> product image -> prompt');
+        console.log('Number of images to generate:', numberOfImages);
 
-        const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(requestBody)
-        });
+        // Generate multiple images by calling API multiple times in parallel
+        const generateOne = async (): Promise<string | null> => {
+            try {
+                const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(requestBody)
+                });
 
-        if (!response.ok) {
-            const errorText = await response.text();
-            console.error('Gemini API error:', errorText);
-            return res.status(response.status).json({ 
-                error: 'Gemini API error', 
-                details: errorText 
+                if (!response.ok) {
+                    console.error('Gemini API error for one request:', response.status);
+                    return null;
+                }
+
+                const data = await response.json();
+                
+                if (data.candidates && data.candidates[0]?.content?.parts) {
+                    for (const part of data.candidates[0].content.parts) {
+                        if (part.inlineData?.data) {
+                            const mimeType = part.inlineData.mimeType || 'image/png';
+                            return `data:${mimeType};base64,${part.inlineData.data}`;
+                        }
+                    }
+                }
+                return null;
+            } catch (err) {
+                console.error('Error in generateOne:', err);
+                return null;
+            }
+        };
+
+        // Run multiple generations in parallel
+        const numToGenerate = Math.min(Math.max(1, numberOfImages), 4); // Clamp between 1-4
+        const promises = Array.from({ length: numToGenerate }, () => generateOne());
+        const results = await Promise.all(promises);
+        
+        // Filter out failed generations
+        const images = results.filter((img): img is string => img !== null);
+        
+        console.log('Total images generated:', images.length, 'out of', numToGenerate, 'requested');
+
+        if (images.length === 0) {
+            return res.status(500).json({
+                success: false,
+                error: 'All generation attempts failed',
+                images: [],
+                count: 0
             });
         }
-
-        const data = await response.json();
-        console.log('Gemini API response received');
-
-        // Extract images from response
-        const images: string[] = [];
-        let textResponse = '';
-
-        if (data.candidates && data.candidates[0]?.content?.parts) {
-            for (const part of data.candidates[0].content.parts) {
-                if (part.inlineData?.data) {
-                    // Convert base64 to data URL
-                    const mimeType = part.inlineData.mimeType || 'image/png';
-                    const dataUrl = `data:${mimeType};base64,${part.inlineData.data}`;
-                    images.push(dataUrl);
-                    console.log('Extracted image from response');
-                } else if (part.text) {
-                    textResponse += part.text;
-                }
-            }
-        }
-
-        console.log('Total images generated:', images.length);
-        console.log('Text response length:', textResponse.length);
 
         return res.status(200).json({
             success: true,
             images: images,
-            text: textResponse,
+            text: '',
             count: images.length
         });
 
