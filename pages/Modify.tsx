@@ -73,7 +73,16 @@ export const Modify = () => {
   const [productSizePercent, setProductSizePercent] = useState<string>(''); // Empty = no adjustment
   
   // Inputs
-  const [prompt, setPrompt] = useState('');
+  const [prompt, setPrompt] = useState(() => {
+    // 从localStorage读取上次的describe
+    const saved = localStorage.getItem('lazora_describe_prompt');
+    return saved || '';
+  });
+  const [describeHistory, setDescribeHistory] = useState<string[]>(() => {
+    const saved = localStorage.getItem('lazora_describe_history');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [showDescribeHistory, setShowDescribeHistory] = useState(false);
   const [textPrompt, setTextPrompt] = useState('');
   const [modifyPrompt, setModifyPrompt] = useState('');
   const [selectedRatio, setSelectedRatio] = useState('Square');
@@ -230,9 +239,22 @@ export const Modify = () => {
   };
 
   // --- Logic: Generation (Using Real Gemini API) ---
+  const saveDescribeToHistory = (text: string) => {
+    if (!text.trim()) return;
+    const newHistory = [text, ...describeHistory.filter(h => h !== text)].slice(0, 3);
+    setDescribeHistory(newHistory);
+    localStorage.setItem('lazora_describe_history', JSON.stringify(newHistory));
+    localStorage.setItem('lazora_describe_prompt', text);
+  };
+
   const runGeneration = async (toolName: string, promptText: string) => {
     if (!user) { navigate('/login'); return; }
     if (user.credits < outputCount) { addToast('error', 'Not enough credits'); navigate('/pricing'); return; }
+
+    // Save describe to history when generating with Replace tool
+    if (toolName === 'Replace' && promptText.trim()) {
+      saveDescribeToHistory(promptText);
+    }
 
     // Validation - For Replace, only require uploaded file (prompt is optional)
     if (toolName === 'Replace' && !uploadedFile) {
@@ -405,10 +427,10 @@ export const Modify = () => {
   const ImageCountSelector = () => (
       <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <label className="text-xs text-slate-500 dark:text-slate-400 font-medium ml-1 flex items-center gap-2">
-                <Layers className="w-3 h-3" /> Variations
+            <label className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
+                <Layers className="w-3.5 h-3.5" /> Variations
             </label>
-            <span className="text-[10px] text-slate-500">{outputCount} images</span>
+            <span className="text-[10px] text-slate-400">{outputCount} images</span>
           </div>
           <div className="grid grid-cols-4 gap-2">
               {[1, 2, 3, 4].map(num => (
@@ -418,7 +440,7 @@ export const Modify = () => {
                       className={`py-2 text-xs font-medium rounded-lg border transition-all ${
                           outputCount === num
                               ? 'bg-purple-600 border-purple-500 text-white shadow-lg shadow-purple-900/20'
-                              : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-white/5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'
+                              : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
                       }`}
                   >
                       {num}
@@ -604,15 +626,24 @@ export const Modify = () => {
                 ) : (
                     // --- IMAGE PREVIEW STATE ---
                     <>
-                        {/* Change Image Button */}
+                        {/* Top Action Buttons - Symmetrical */}
                         {hasSelectedImage && !isGenerating && (
-                            <button
-                                onClick={handleChangeImage}
-                                className="absolute top-4 left-4 z-20 px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white border border-slate-200 dark:border-white/10 shadow-sm"
-                            >
-                                <Upload className="w-4 h-4" />
-                                <span className="text-sm font-semibold text-slate-700 dark:text-white">Change Image</span>
-                            </button>
+                            <div className="absolute top-4 left-4 right-4 z-20 flex justify-between">
+                                <button
+                                    onClick={handleChangeImage}
+                                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/60 hover:bg-black/80 text-white text-sm font-medium transition-colors backdrop-blur-md border border-white/10"
+                                >
+                                    <Upload className="w-4 h-4" />
+                                    Change Image
+                                </button>
+                                <button 
+                                    onClick={handleDownload}
+                                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/60 hover:bg-black/80 text-white text-sm font-medium transition-colors backdrop-blur-md border border-white/10"
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                    Download
+                                </button>
+                            </div>
                         )}
 
                         {/* Progress Overlay */}
@@ -645,18 +676,9 @@ export const Modify = () => {
                         />
 
                         {imageDimensions.width > 0 && (
-                            <div className="absolute bottom-4 right-4 z-10 flex items-center gap-2">
-                                <span className="text-xs text-slate-200 font-mono bg-black/60 backdrop-blur-md px-2 py-1 rounded border border-white/10">
-                                    {imageDimensions.width} x {imageDimensions.height}
-                                </span>
-                                <button 
-                                    onClick={handleDownload}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white text-xs font-medium transition-colors backdrop-blur-md border border-white/10"
-                                >
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                    Download
-                                </button>
-                            </div>
+                            <span className="absolute bottom-4 right-4 z-10 text-xs text-slate-200 font-mono bg-black/60 backdrop-blur-md px-2 py-1 rounded border border-white/10">
+                                {imageDimensions.width} x {imageDimensions.height}
+                            </span>
                         )}
 
                         <button 
@@ -751,24 +773,24 @@ export const Modify = () => {
                             <ImageCountSelector />
 
                             {/* Advanced Options - Collapsible */}
-                            <div className="border-t border-slate-200 dark:border-white/5 pt-3">
+                            <div className="space-y-2">
                                 <button 
                                     onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-                                    className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+                                    className="w-full flex items-center justify-between"
                                 >
-                                    <span className="flex items-center gap-2">
+                                    <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
                                         <Settings2 className="w-3.5 h-3.5" />
                                         Advanced options
                                     </span>
-                                    <ChevronDown className={`w-4 h-4 transition-transform ${showAdvancedOptions ? 'rotate-180' : ''}`} />
+                                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${showAdvancedOptions ? 'rotate-180' : ''}`} />
                                 </button>
                                 
                                 {showAdvancedOptions && (
-                                    <div className="mt-3 space-y-4 animate-in slide-in-from-top-2">
-                                        {/* Product Description */}
-                                        <div className="space-y-1.5">
+                                    <div className="space-y-4 animate-in slide-in-from-top-2 pt-2">
+                                        {/* Product Description with History */}
+                                        <div className="space-y-2">
                                             <div className="flex items-center gap-1.5">
-                                                <label className="text-sm text-slate-700 dark:text-slate-300 font-semibold">
+                                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
                                                     Describe your product
                                                 </label>
                                                 <div className="relative group/tip">
@@ -776,18 +798,37 @@ export const Modify = () => {
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Improves replacement accuracy</div>
                                                 </div>
                                             </div>
-                                            <textarea 
-                                                value={prompt}
-                                                onChange={(e) => setPrompt(e.target.value)}
-                                                placeholder="a frosted glass bottle with white dropper and gold cap"
-                                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-16"
-                                            />
+                                            <div className="relative">
+                                                <textarea 
+                                                    value={prompt}
+                                                    onChange={(e) => setPrompt(e.target.value)}
+                                                    onFocus={() => setShowDescribeHistory(true)}
+                                                    onBlur={() => setTimeout(() => setShowDescribeHistory(false), 200)}
+                                                    placeholder="a frosted glass bottle with white dropper and gold cap"
+                                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-16"
+                                                />
+                                                {/* History Dropdown */}
+                                                {showDescribeHistory && describeHistory.length > 0 && (
+                                                    <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg shadow-xl z-50 overflow-hidden">
+                                                        <p className="px-3 py-1.5 text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-white/5">Recent</p>
+                                                        {describeHistory.map((h, i) => (
+                                                            <button
+                                                                key={i}
+                                                                onMouseDown={() => setPrompt(h)}
+                                                                className="w-full text-left px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5 truncate"
+                                                            >
+                                                                {h}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
 
                                         {/* Extra Blend Toggle */}
                                         <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-1.5">
-                                                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Extra Blend</p>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">Extra Blend</p>
                                                 <div className="relative group/tip">
                                                     <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Harmonize product lighting with scene</div>
@@ -806,9 +847,9 @@ export const Modify = () => {
                                         </div>
 
                                         {/* Size Adjustment */}
-                                        <div className="space-y-1.5">
+                                        <div className="space-y-2">
                                             <div className="flex items-center gap-1.5">
-                                                <label className="text-sm text-slate-700 dark:text-slate-300 font-semibold">
+                                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
                                                     Resize product
                                                 </label>
                                                 <div className="relative group/tip">
@@ -838,9 +879,9 @@ export const Modify = () => {
                                                     placeholder="100"
                                                     min="10"
                                                     max="300"
-                                                    className="w-20 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:outline-none"
+                                                    className="w-20 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:outline-none"
                                                 />
-                                                <span className="text-xs text-slate-500">% (10-300)</span>
+                                                <span className="text-xs text-slate-400">% (10-300)</span>
                                             </div>
                                         </div>
                                     </div>
