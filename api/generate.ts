@@ -87,7 +87,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('Number of images to generate:', numberOfImages);
 
         // Generate multiple images by calling API multiple times in parallel
-        const generateOne = async (): Promise<string | null> => {
+        // With retry mechanism to improve success rate
+        const generateOne = async (attempt = 1): Promise<string | null> => {
+            const maxAttempts = 2; // Max retry attempts per image
             try {
                 const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
                     method: 'POST',
@@ -98,7 +100,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 });
 
                 if (!response.ok) {
-                    console.error('Gemini API error for one request:', response.status);
+                    const errorText = await response.text();
+                    console.error(`Gemini API error (attempt ${attempt}):`, response.status, errorText);
+                    // Retry on failure
+                    if (attempt < maxAttempts) {
+                        console.log(`Retrying... (attempt ${attempt + 1})`);
+                        await new Promise(r => setTimeout(r, 500)); // Wait 500ms before retry
+                        return generateOne(attempt + 1);
+                    }
                     return null;
                 }
 
@@ -112,9 +121,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         }
                     }
                 }
+                
+                // No image in response, retry
+                if (attempt < maxAttempts) {
+                    console.log(`No image in response, retrying... (attempt ${attempt + 1})`);
+                    await new Promise(r => setTimeout(r, 500));
+                    return generateOne(attempt + 1);
+                }
                 return null;
             } catch (err) {
-                console.error('Error in generateOne:', err);
+                console.error(`Error in generateOne (attempt ${attempt}):`, err);
+                if (attempt < maxAttempts) {
+                    await new Promise(r => setTimeout(r, 500));
+                    return generateOne(attempt + 1);
+                }
                 return null;
             }
         };

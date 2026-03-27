@@ -283,11 +283,15 @@ export const Modify = () => {
           promptParts.push(`Replace the product in Image 1 with the product from Image 2`);
         }
         
-        // Add size adjustment if specified
+        // Add size adjustment if specified (10-300%, skip if 100)
         if (productSizePercent && productSizePercent.trim()) {
           const percent = parseInt(productSizePercent);
-          if (percent > 0 && percent < 100) {
-            promptParts.push(`Scale the product to approximately ${percent}% of the original product's size in the template`);
+          if (percent >= 10 && percent <= 300 && percent !== 100) {
+            if (percent < 100) {
+              promptParts.push(`Scale the replacement product down to approximately ${percent}% of the original product's size`);
+            } else {
+              promptParts.push(`Scale the replacement product up to approximately ${percent}% of the original product's size`);
+            }
           }
         }
         
@@ -818,13 +822,27 @@ export const Modify = () => {
                                                 <input 
                                                     type="number"
                                                     value={productSizePercent}
-                                                    onChange={(e) => setProductSizePercent(e.target.value)}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        if (val === '') {
+                                                            setProductSizePercent('');
+                                                        } else {
+                                                            const num = parseInt(val);
+                                                            if (num >= 10 && num <= 300) {
+                                                                setProductSizePercent(val);
+                                                            } else if (num < 10) {
+                                                                setProductSizePercent('10');
+                                                            } else if (num > 300) {
+                                                                setProductSizePercent('300');
+                                                            }
+                                                        }
+                                                    }}
                                                     placeholder="100"
                                                     min="10"
-                                                    max="200"
+                                                    max="300"
                                                     className="w-20 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:outline-none"
                                                 />
-                                                <span className="text-xs text-slate-500">% (10-200)</span>
+                                                <span className="text-xs text-slate-500">% (10-300)</span>
                                             </div>
                                         </div>
                                     </div>
