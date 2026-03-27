@@ -89,7 +89,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Generate multiple images by calling API multiple times in parallel
         // With retry mechanism to improve success rate
         const generateOne = async (attempt = 1): Promise<string | null> => {
-            const maxAttempts = 2; // Max retry attempts per image
+            const maxAttempts = 3; // Max retry attempts per image
             try {
                 const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
                     method: 'POST',
@@ -102,10 +102,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (!response.ok) {
                     const errorText = await response.text();
                     console.error(`Gemini API error (attempt ${attempt}):`, response.status, errorText);
-                    // Retry on failure
                     if (attempt < maxAttempts) {
-                        console.log(`Retrying... (attempt ${attempt + 1})`);
-                        await new Promise(r => setTimeout(r, 500)); // Wait 500ms before retry
+                        await new Promise(r => setTimeout(r, 300 * attempt)); // Increasing delay
                         return generateOne(attempt + 1);
                     }
                     return null;
@@ -125,27 +123,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 // No image in response, retry
                 if (attempt < maxAttempts) {
                     console.log(`No image in response, retrying... (attempt ${attempt + 1})`);
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise(r => setTimeout(r, 300 * attempt));
                     return generateOne(attempt + 1);
                 }
                 return null;
             } catch (err) {
                 console.error(`Error in generateOne (attempt ${attempt}):`, err);
                 if (attempt < maxAttempts) {
-                    await new Promise(r => setTimeout(r, 500));
+                    await new Promise(r => setTimeout(r, 300 * attempt));
                     return generateOne(attempt + 1);
                 }
                 return null;
             }
         };
 
-        // Run multiple generations in parallel
-        const numToGenerate = Math.min(Math.max(1, numberOfImages), 4); // Clamp between 1-4
+        // Run generations and ensure we get the requested number
+        const numToGenerate = Math.min(Math.max(1, numberOfImages), 4);
+        let images: string[] = [];
+        let totalAttempts = 0;
+        const maxTotalAttempts = numToGenerate * 2; // Allow up to 2x attempts to fill quota
+        
+        // First batch - parallel
         const promises = Array.from({ length: numToGenerate }, () => generateOne());
         const results = await Promise.all(promises);
+        images = results.filter((img): img is string => img !== null);
+        totalAttempts = numToGenerate;
         
-        // Filter out failed generations
-        const images = results.filter((img): img is string => img !== null);
+        // If we didn't get enough, try to fill the gap
+        while (images.length < numToGenerate && totalAttempts < maxTotalAttempts) {
+            const needed = numToGenerate - images.length;
+            console.log(`Only got ${images.length}/${numToGenerate}, generating ${needed} more...`);
+            const extraPromises = Array.from({ length: needed }, () => generateOne());
+            const extraResults = await Promise.all(extraPromises);
+            const extraImages = extraResults.filter((img): img is string => img !== null);
+            images = [...images, ...extraImages];
+            totalAttempts += needed;
+        }
         
         console.log('Total images generated:', images.length, 'out of', numToGenerate, 'requested');
 
