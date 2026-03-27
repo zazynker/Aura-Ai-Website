@@ -69,7 +69,7 @@ export const Modify = () => {
   
   // Replace Product Advanced Options
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
-  const [autoBlend, setAutoBlend] = useState(true); // Default ON
+  const [extraBlend, setExtraBlend] = useState(true); // Default ON
   const [productSizePercent, setProductSizePercent] = useState<string>(''); // Empty = no adjustment
   
   // Inputs
@@ -292,7 +292,7 @@ export const Modify = () => {
         }
         
         // Add blend instruction if enabled
-        if (autoBlend) {
+        if (extraBlend) {
           promptParts.push(`Blend the light, shadow and color of the product naturally with the background`);
         }
         
@@ -321,7 +321,7 @@ export const Modify = () => {
     console.log('Has base image:', !!baseImageUrl);
     console.log('Has product image:', !!productImageUrl);
     console.log('Output count:', outputCount);
-    console.log('Auto Blend:', autoBlend);
+    console.log('Extra Blend:', extraBlend);
     console.log('Size Percent:', productSizePercent);
 
     // Start progress animation
@@ -464,7 +464,7 @@ export const Modify = () => {
 
                 <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-4 uppercase tracking-wider pl-1 flex items-center gap-2 truncate">
                     <Layers className="w-4 h-4 shrink-0" /> 
-                    {historyTab === 'current' ? currentImageSource.templateName : 'All History'}
+                    {historyTab === 'current' ? 'Session' : 'All History'}
                 </h3>
                 
                 {historyTab === 'current' ? (
@@ -609,23 +609,15 @@ export const Modify = () => {
                 ) : (
                     // --- IMAGE PREVIEW STATE ---
                     <>
-                        {/* Change Image Button */}
+                        {/* Change Image Button - Compact */}
                         {hasSelectedImage && !isGenerating && (
-                            <div className="absolute top-4 left-4 z-20 flex flex-col gap-2">
-                                <div className="glass-panel px-3 py-1.5 rounded-lg flex items-center gap-2 bg-black/40 dark:bg-black/40 backdrop-blur-md border border-white/10 w-fit">
-                                    <span className="font-semibold text-white text-sm">
-                                        {currentImageSource?.templateId === MODIFY_SESSION_ID ? 'User Upload' : currentImageSource?.templateName}
-                                    </span>
-                                </div>
-
-                                <button
-                                    onClick={handleChangeImage}
-                                    className="px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white text-sm font-medium border border-slate-200 dark:border-white/10 shadow-sm"
-                                >
-                                    <Upload className="w-4 h-4" />
-                                    Change Image
-                                </button>
-                            </div>
+                            <button
+                                onClick={handleChangeImage}
+                                className="absolute top-4 left-4 z-20 p-2.5 rounded-xl glass-panel flex items-center justify-center hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white border border-slate-200 dark:border-white/10 shadow-sm"
+                                title="Change Image"
+                            >
+                                <Upload className="w-4 h-4" />
+                            </button>
                         )}
 
                         {/* Progress Overlay */}
@@ -773,55 +765,67 @@ export const Modify = () => {
                                     <div className="mt-3 space-y-4 animate-in slide-in-from-top-2">
                                         {/* Product Description */}
                                         <div className="space-y-1.5">
-                                            <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                                                Describe your product
-                                            </label>
+                                            <div className="flex items-center gap-1.5">
+                                                <label className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                                                    Describe your product
+                                                </label>
+                                                <div className="relative group/tip">
+                                                    <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
+                                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Improves replacement accuracy</div>
+                                                </div>
+                                            </div>
                                             <textarea 
                                                 value={prompt}
                                                 onChange={(e) => setPrompt(e.target.value)}
-                                                placeholder="e.g., frosted glass bottle with white dropper and gold cap"
+                                                placeholder="a frosted glass bottle with white dropper and gold cap"
                                                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-16"
                                             />
                                         </div>
 
-                                        {/* Auto Blend Toggle */}
+                                        {/* Extra Blend Toggle */}
                                         <div className="flex items-center justify-between">
-                                            <div>
-                                                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">Auto Blend</p>
-                                                <p className="text-[10px] text-slate-400">Match lighting & shadows</p>
+                                            <div className="flex items-center gap-1.5">
+                                                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">Extra Blend</p>
+                                                <div className="relative group/tip">
+                                                    <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
+                                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Harmonize product lighting with scene</div>
+                                                </div>
                                             </div>
                                             <button
-                                                onClick={() => setAutoBlend(!autoBlend)}
+                                                onClick={() => setExtraBlend(!extraBlend)}
                                                 className={`relative w-11 h-6 rounded-full transition-colors ${
-                                                    autoBlend ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-600'
+                                                    extraBlend ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-600'
                                                 }`}
                                             >
                                                 <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-                                                    autoBlend ? 'translate-x-6' : 'translate-x-1'
+                                                    extraBlend ? 'translate-x-6' : 'translate-x-1'
                                                 }`} />
                                             </button>
                                         </div>
 
                                         {/* Size Adjustment */}
                                         <div className="space-y-1.5">
-                                            <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-                                                Resize product <span className="text-slate-400">(optional)</span>
-                                            </label>
+                                            <div className="flex items-center gap-1.5">
+                                                <label className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                                                    Resize product
+                                                </label>
+                                                <div className="relative group/tip">
+                                                    <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
+                                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">50% = half size, 200% = double size</div>
+                                                </div>
+                                            </div>
                                             <div className="flex items-center gap-2">
                                                 <input 
                                                     type="number"
                                                     value={productSizePercent}
                                                     onChange={(e) => setProductSizePercent(e.target.value)}
-                                                    placeholder="e.g., 50"
-                                                    min="1"
+                                                    placeholder="100"
+                                                    min="10"
                                                     max="200"
                                                     className="w-20 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:outline-none"
                                                 />
-                                                <span className="text-xs text-slate-500">% of template product size</span>
+                                                <span className="text-xs text-slate-500">% (10-200)</span>
                                             </div>
-                                            <p className="text-[10px] text-slate-400">
-                                                If your product is smaller than the one in template, enter a smaller percentage
-                                            </p>
                                         </div>
                                     </div>
                                 )}
