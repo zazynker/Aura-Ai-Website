@@ -517,9 +517,7 @@ export const Modify = () => {
                     <>
                     {generations.length > 0 ? (
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                            {[...generations].sort((a, b) => b.createdAt - a.createdAt).map((gen) => {
-                                const isModify = gen.templateId === MODIFY_SESSION_ID;
-                                return (
+                            {[...generations].sort((a, b) => b.createdAt - a.createdAt).map((gen) => (
                                 <div
                                     key={gen.id}
                                     onClick={() => handleAllHistoryClick(gen)}
@@ -535,15 +533,8 @@ export const Modify = () => {
                                     alt="History item"
                                     loading="lazy"
                                     />
-                                    <div className={`absolute top-2 left-2 backdrop-blur-sm px-2 py-1 rounded text-[10px] font-medium border ${
-                                        isModify
-                                            ? 'bg-purple-600/80 text-white border-purple-400/30'
-                                            : 'bg-black/60 text-white border-white/10'
-                                    }`}>
-                                        {isModify ? 'Upload' : (gen.templateName || 'Template')}
-                                    </div>
                                 </div>
-                            )})}
+                            ))}
                         </div>
                     ) : (
                         <div className="flex-1 flex flex-col items-center justify-center text-center px-4 gap-4">
@@ -613,14 +604,14 @@ export const Modify = () => {
                 ) : (
                     // --- IMAGE PREVIEW STATE ---
                     <>
-                        {/* Change Image Button - Compact */}
+                        {/* Change Image Button */}
                         {hasSelectedImage && !isGenerating && (
                             <button
                                 onClick={handleChangeImage}
-                                className="absolute top-4 left-4 z-20 p-2.5 rounded-xl glass-panel flex items-center justify-center hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white border border-slate-200 dark:border-white/10 shadow-sm"
-                                title="Change Image"
+                                className="absolute top-4 left-4 z-20 px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white border border-slate-200 dark:border-white/10 shadow-sm"
                             >
                                 <Upload className="w-4 h-4" />
+                                <span className="text-sm font-semibold text-slate-700 dark:text-white">Change Image</span>
                             </button>
                         )}
 
@@ -654,10 +645,17 @@ export const Modify = () => {
                         />
 
                         {imageDimensions.width > 0 && (
-                            <div className="absolute bottom-4 right-4 z-10">
-                                <span className="text-xs text-slate-200 dark:text-slate-400 font-mono bg-black/60 backdrop-blur-md px-2 py-1 rounded border border-white/10">
+                            <div className="absolute bottom-4 right-4 z-10 flex items-center gap-2">
+                                <span className="text-xs text-slate-200 font-mono bg-black/60 backdrop-blur-md px-2 py-1 rounded border border-white/10">
                                     {imageDimensions.width} x {imageDimensions.height}
                                 </span>
+                                <button 
+                                    onClick={handleDownload}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white text-xs font-medium transition-colors backdrop-blur-md border border-white/10"
+                                >
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                    Download
+                                </button>
                             </div>
                         )}
 
@@ -770,7 +768,7 @@ export const Modify = () => {
                                         {/* Product Description */}
                                         <div className="space-y-1.5">
                                             <div className="flex items-center gap-1.5">
-                                                <label className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                                                <label className="text-sm text-slate-700 dark:text-slate-300 font-semibold">
                                                     Describe your product
                                                 </label>
                                                 <div className="relative group/tip">
@@ -789,7 +787,7 @@ export const Modify = () => {
                                         {/* Extra Blend Toggle */}
                                         <div className="flex items-center justify-between">
                                             <div className="flex items-center gap-1.5">
-                                                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">Extra Blend</p>
+                                                <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">Extra Blend</p>
                                                 <div className="relative group/tip">
                                                     <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
                                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Harmonize product lighting with scene</div>
@@ -810,7 +808,7 @@ export const Modify = () => {
                                         {/* Size Adjustment */}
                                         <div className="space-y-1.5">
                                             <div className="flex items-center gap-1.5">
-                                                <label className="text-xs text-slate-700 dark:text-slate-300 font-medium">
+                                                <label className="text-sm text-slate-700 dark:text-slate-300 font-semibold">
                                                     Resize product
                                                 </label>
                                                 <div className="relative group/tip">
@@ -952,11 +950,6 @@ export const Modify = () => {
                         )}
                     </div>
                 </div>
-
-                {/* Download */}
-                <Button variant="secondary" className="w-full bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 border-slate-200 dark:border-white/10 text-slate-900 dark:text-white" onClick={handleDownload}>
-                    Download High Res
-                </Button>
             </div>
           </div>
 
