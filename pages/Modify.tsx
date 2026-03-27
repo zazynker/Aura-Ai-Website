@@ -626,24 +626,28 @@ export const Modify = () => {
                 ) : (
                     // --- IMAGE PREVIEW STATE ---
                     <>
-                        {/* Top Action Buttons - Symmetrical */}
+                        {/* Top Action Buttons */}
                         {hasSelectedImage && !isGenerating && (
-                            <div className="absolute top-4 left-4 right-4 z-20 flex justify-between">
-                                <button
-                                    onClick={handleChangeImage}
-                                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/60 hover:bg-black/80 text-white text-sm font-medium transition-colors backdrop-blur-md border border-white/10"
-                                >
-                                    <Upload className="w-4 h-4" />
-                                    Change Image
-                                </button>
-                                <button 
-                                    onClick={handleDownload}
-                                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/60 hover:bg-black/80 text-white text-sm font-medium transition-colors backdrop-blur-md border border-white/10"
-                                >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                    Download
-                                </button>
-                            </div>
+                            <>
+                                <div className="absolute top-4 left-4 z-20">
+                                    <button
+                                        onClick={handleChangeImage}
+                                        className="px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white text-sm font-medium border border-slate-200 dark:border-white/10 shadow-sm"
+                                    >
+                                        <Upload className="w-4 h-4" />
+                                        Change Image
+                                    </button>
+                                </div>
+                                <div className="absolute top-4 right-4 z-20">
+                                    <button
+                                        onClick={handleDownload}
+                                        className="px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white text-sm font-medium border border-slate-200 dark:border-white/10 shadow-sm"
+                                    >
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                        Download
+                                    </button>
+                                </div>
+                            </>
                         )}
 
                         {/* Progress Overlay */}
@@ -778,8 +782,8 @@ export const Modify = () => {
                                     onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
                                     className="w-full flex items-center justify-between"
                                 >
-                                    <span className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
-                                        <Settings2 className="w-3.5 h-3.5" />
+                                    <span className="text-sm text-slate-700 dark:text-slate-300 font-semibold flex items-center gap-2">
+                                        <Settings2 className="w-4 h-4 text-purple-500" />
                                         Advanced options
                                     </span>
                                     <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${showAdvancedOptions ? 'rotate-180' : ''}`} />
