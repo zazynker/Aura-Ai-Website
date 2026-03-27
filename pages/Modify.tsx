@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Type, Clock, Heart, ExternalLink } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Type, Clock, Heart, ExternalLink, ChevronDown, Settings2 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { mockTemplates } from '../data/mockData';
 import { Button } from '../components/ui/Button';
@@ -64,7 +64,13 @@ export const Modify = () => {
 
   // UI State
   const [showLightbox, setShowLightbox] = useState(false);
-  const [activeTool, setActiveTool] = useState<string | null>(null);
+  // Replace Product is DEFAULT OPEN when image is selected
+  const [activeTool, setActiveTool] = useState<string | null>(hasSelectedImage ? 'replace' : null);
+  
+  // Replace Product Advanced Options
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [autoBlend, setAutoBlend] = useState(true); // Default ON
+  const [productSizePercent, setProductSizePercent] = useState<string>(''); // Empty = no adjustment
   
   // Inputs
   const [prompt, setPrompt] = useState('');
@@ -109,6 +115,13 @@ export const Modify = () => {
       navigate('/login');
     }
   }, [user]);
+
+  // Auto-open Replace tool when image is selected
+  useEffect(() => {
+    if (hasSelectedImage && activeTool === null) {
+      setActiveTool('replace');
+    }
+  }, [hasSelectedImage]);
 
   // Clear navigation state after using it (so refresh doesn't re-apply)
   useEffect(() => {
@@ -258,14 +271,32 @@ export const Modify = () => {
           reader.readAsDataURL(uploadedFile);
         });
         
-        // Zero-prompt: use default or combine with material description
+        // Build the prompt based on options
+        let promptParts: string[] = [];
+        
+        // Base replacement instruction
         if (promptText && promptText.trim()) {
-          // User provided material description - use it to improve accuracy
-          fullPrompt = `Replace the product in Image 1 with ${promptText.trim()} from Image 2`;
+          // User provided material description
+          promptParts.push(`Replace the product in Image 1 with ${promptText.trim()} from Image 2`);
         } else {
-          // No description - use simple default prompt
-          fullPrompt = `Replace the product in Image 1 with the product from Image 2`;
+          // No description - use simple default
+          promptParts.push(`Replace the product in Image 1 with the product from Image 2`);
         }
+        
+        // Add size adjustment if specified
+        if (productSizePercent && productSizePercent.trim()) {
+          const percent = parseInt(productSizePercent);
+          if (percent > 0 && percent < 100) {
+            promptParts.push(`Scale the product to approximately ${percent}% of the original product's size in the template`);
+          }
+        }
+        
+        // Add blend instruction if enabled
+        if (autoBlend) {
+          promptParts.push(`Blend the light, shadow and color of the product naturally with the background`);
+        }
+        
+        fullPrompt = promptParts.join('. ') + '.';
       } else {
         // This shouldn't happen due to validation above, but just in case
         addToast('error', 'Please upload a product image');
@@ -290,6 +321,8 @@ export const Modify = () => {
     console.log('Has base image:', !!baseImageUrl);
     console.log('Has product image:', !!productImageUrl);
     console.log('Output count:', outputCount);
+    console.log('Auto Blend:', autoBlend);
+    console.log('Size Percent:', productSizePercent);
 
     // Start progress animation
     const progressInterval = setInterval(() => {
@@ -366,7 +399,7 @@ export const Modify = () => {
 
   // --- UI Components ---
   const ImageCountSelector = () => (
-      <div className="space-y-2 mb-4">
+      <div className="space-y-2">
           <div className="flex items-center justify-between">
             <label className="text-xs text-slate-500 dark:text-slate-400 font-medium ml-1 flex items-center gap-2">
                 <Layers className="w-3 h-3" /> Variations
@@ -388,29 +421,6 @@ export const Modify = () => {
                   </button>
               ))}
           </div>
-      </div>
-  );
-
-  const QualitySelector = () => (
-      <div className="space-y-2 mb-4">
-         <label className="text-xs text-slate-500 dark:text-slate-400 font-medium ml-1 flex items-center gap-2">
-            <Sparkles className="w-3 h-3" /> Quality
-         </label>
-         <div className="flex bg-slate-100 dark:bg-slate-950 p-1 rounded-lg border border-slate-200 dark:border-white/5">
-            {['Standard', 'High', 'Ultra'].map(q => (
-                <button
-                    key={q}
-                    onClick={() => setQuality(q as any)}
-                    className={`flex-1 py-1.5 text-[10px] font-medium rounded-md transition-all ${
-                        quality === q 
-                        ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm border border-slate-200 dark:border-white/10' 
-                        : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-300'
-                    }`}
-                >
-                    {q}
-                </button>
-            ))}
-         </div>
       </div>
   );
 
@@ -698,64 +708,138 @@ export const Modify = () => {
                     </div>
                 )}
 
-                {/* 1. REPLACE PRODUCT Tool */}
+                {/* 1. REPLACE PRODUCT Tool - DEFAULT OPEN */}
                 <div className={`glass-panel rounded-2xl p-1 transition-all duration-300 ${activeTool === 'replace' ? 'ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
                         onClick={() => setActiveTool(activeTool === 'replace' ? null : 'replace')}
                         className="w-full p-4 flex items-center justify-between text-left disabled:opacity-50"
                     >
-                        <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3"><Upload className="w-5 h-5 text-purple-500 dark:text-purple-400" /> Replace Product</span>
-                        {activeTool === 'replace' ? <X className="w-4 h-4 text-slate-400"/> : <ArrowLeft className="w-4 h-4 -rotate-90 text-slate-400"/>}
+                        <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
+                            <Sparkles className="w-5 h-5 text-purple-500 dark:text-purple-400" /> 
+                            Quick Replace
+                        </span>
+                        {activeTool === 'replace' ? <X className="w-4 h-4 text-slate-400"/> : <ChevronDown className="w-4 h-4 text-slate-400"/>}
                     </button>
                     
                     {activeTool === 'replace' && (
                         <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
-                            {/* Product Upload - FIRST (required) */}
-                            <div className="border-2 border-dashed border-slate-200 dark:border-white/10 rounded-xl p-4 transition-colors hover:border-purple-500/30 hover:bg-white dark:hover:bg-white/5 relative group">
-                                <input type="file" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" accept="image/png, image/jpeg" />
+                            {/* Product Upload */}
+                            <div className="border-2 border-dashed border-slate-200 dark:border-white/10 rounded-xl p-3 transition-colors hover:border-purple-500/30 hover:bg-white dark:hover:bg-white/5 relative group">
+                                <input type="file" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" accept="image/png, image/jpeg, image/webp" />
                                 {!uploadedFile ? (
-                                    <div className="flex flex-col items-center gap-2 py-4">
+                                    <div className="flex flex-col items-center gap-2 py-3">
                                         <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10 transition-colors">
                                         <Upload className="w-5 h-5 text-slate-400 group-hover:text-purple-400" />
                                         </div>
-                                        <p className="text-xs text-slate-500 dark:text-slate-400 text-center">Upload your product image (white background)</p>
+                                        <div className="text-center">
+                                            <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Your product photo</p>
+                                            <p className="text-[10px] text-slate-400 mt-0.5">White background works best</p>
+                                        </div>
                                     </div>
                                 ) : (
                                     <div className="flex items-center gap-3">
-                                        <div className="w-12 h-12 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden border border-slate-200 dark:border-white/10"><img src={URL.createObjectURL(uploadedFile)} className="w-full h-full object-cover" alt="upload" /></div>
+                                        <div className="w-12 h-12 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden border border-slate-200 dark:border-white/10">
+                                            <img src={URL.createObjectURL(uploadedFile)} className="w-full h-full object-cover" alt="upload" />
+                                        </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{uploadedFile.name}</p>
                                             <p className="text-xs text-slate-500">{(uploadedFile.size / 1024).toFixed(0)} KB</p>
                                         </div>
-                                        <button onClick={(e) => { e.preventDefault(); setUploadedFile(null); }} className="p-2 hover:bg-red-500/10 rounded-full z-20 group/del"><Trash2 className="w-4 h-4 text-slate-500 group-hover/del:text-red-400"/></button>
+                                        <button onClick={(e) => { e.preventDefault(); setUploadedFile(null); }} className="p-2 hover:bg-red-500/10 rounded-full z-20 group/del">
+                                            <Trash2 className="w-4 h-4 text-slate-500 group-hover/del:text-red-400"/>
+                                        </button>
                                     </div>
                                 )}
                             </div>
 
-                            {/* Material Description - OPTIONAL */}
-                            <div className="space-y-2">
-                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium ml-1">
-                                    Describe your product <span className="text-slate-400 dark:text-slate-500">(optional)</span>
-                                </label>
-                                <textarea 
-                                    value={prompt}
-                                    onChange={(e) => setPrompt(e.target.value)}
-                                    placeholder="e.g., frosted glass bottle with white dropper and gold cap"
-                                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl p-3 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-20"
-                                />
-                                <p className="text-[10px] text-slate-400 dark:text-slate-500 ml-1">
-                                    Adding material details can improve generation accuracy
-                                </p>
+                            {/* Variations */}
+                            <ImageCountSelector />
+
+                            {/* Advanced Options - Collapsible */}
+                            <div className="border-t border-slate-200 dark:border-white/5 pt-3">
+                                <button 
+                                    onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                                    className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 transition-colors"
+                                >
+                                    <span className="flex items-center gap-2">
+                                        <Settings2 className="w-3.5 h-3.5" />
+                                        Advanced options
+                                    </span>
+                                    <ChevronDown className={`w-4 h-4 transition-transform ${showAdvancedOptions ? 'rotate-180' : ''}`} />
+                                </button>
+                                
+                                {showAdvancedOptions && (
+                                    <div className="mt-3 space-y-4 animate-in slide-in-from-top-2">
+                                        {/* Product Description */}
+                                        <div className="space-y-1.5">
+                                            <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                                                Describe your product
+                                            </label>
+                                            <textarea 
+                                                value={prompt}
+                                                onChange={(e) => setPrompt(e.target.value)}
+                                                placeholder="e.g., frosted glass bottle with white dropper and gold cap"
+                                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-16"
+                                            />
+                                        </div>
+
+                                        {/* Auto Blend Toggle */}
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <p className="text-xs font-medium text-slate-700 dark:text-slate-300">Auto Blend</p>
+                                                <p className="text-[10px] text-slate-400">Match lighting & shadows</p>
+                                            </div>
+                                            <button
+                                                onClick={() => setAutoBlend(!autoBlend)}
+                                                className={`relative w-11 h-6 rounded-full transition-colors ${
+                                                    autoBlend ? 'bg-purple-600' : 'bg-slate-300 dark:bg-slate-600'
+                                                }`}
+                                            >
+                                                <div className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                                                    autoBlend ? 'translate-x-6' : 'translate-x-1'
+                                                }`} />
+                                            </button>
+                                        </div>
+
+                                        {/* Size Adjustment */}
+                                        <div className="space-y-1.5">
+                                            <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                                                Resize product <span className="text-slate-400">(optional)</span>
+                                            </label>
+                                            <div className="flex items-center gap-2">
+                                                <input 
+                                                    type="number"
+                                                    value={productSizePercent}
+                                                    onChange={(e) => setProductSizePercent(e.target.value)}
+                                                    placeholder="e.g., 50"
+                                                    min="1"
+                                                    max="200"
+                                                    className="w-20 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg px-2.5 py-1.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:outline-none"
+                                                />
+                                                <span className="text-xs text-slate-500">% of template product size</span>
+                                            </div>
+                                            <p className="text-[10px] text-slate-400">
+                                                If your product is smaller than the one in template, enter a smaller percentage
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                             
-                            <div className="pt-2 border-t border-slate-200 dark:border-white/5">
-                                <ImageCountSelector />
-                            </div>
-                            
-                            <Button variant="gradient" className="w-full" onClick={() => runGeneration('Replace', prompt)} disabled={isGenerating || !uploadedFile}>
-                            {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                            {uploadedFile ? 'Generate Magic' : 'Upload product first'}
+                            {/* Generate Button */}
+                            <Button 
+                                variant="gradient" 
+                                className="w-full" 
+                                onClick={() => runGeneration('Replace', prompt)} 
+                                disabled={isGenerating || !uploadedFile}
+                            >
+                                {isGenerating ? (
+                                    <Loader2 className="w-4 h-4 animate-spin mr-2"/>
+                                ) : (
+                                    <Sparkles className="w-4 h-4 mr-2" />
+                                )}
+                                {uploadedFile ? 'Generate Magic' : 'Upload product first'}
                             </Button>
                         </div>
                     )}
@@ -788,15 +872,15 @@ export const Modify = () => {
                     <div className={`col-span-1 glass-panel rounded-xl transition-all duration-300 ${activeTool === 'modify' ? 'col-span-2 ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                         <button disabled={!hasSelectedImage} onClick={() => setActiveTool(activeTool === 'modify' ? null : 'modify')} className="w-full p-4 flex flex-col items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50">
                             <Edit2 className={`w-6 h-6 transition-colors ${activeTool === 'modify' ? 'text-purple-500 dark:text-purple-400' : 'text-slate-400'}`} />
-                            <span className="text-xs font-medium text-slate-500 dark:text-slate-300">Modify Content</span>
+                            <span className="text-xs font-medium text-slate-500 dark:text-slate-300">Modify</span>
                         </button>
                         {activeTool === 'modify' && (
                             <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
                                 <textarea 
                                     value={modifyPrompt}
                                     onChange={(e) => setModifyPrompt(e.target.value)}
-                                    rows={5}
-                                    placeholder="E.g. add flowers, make it winter..." 
+                                    rows={4}
+                                    placeholder="Describe what you want to change..." 
                                     className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-purple-500/50 resize-none"
                                 />
                                 <ImageCountSelector />
@@ -809,22 +893,19 @@ export const Modify = () => {
                     <div className={`col-span-1 glass-panel rounded-xl transition-all duration-300 ${activeTool === 'ratio' ? 'col-span-2 ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                         <button disabled={!hasSelectedImage} onClick={() => setActiveTool(activeTool === 'ratio' ? null : 'ratio')} className="w-full p-4 flex flex-col items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50">
                             <Layers className={`w-6 h-6 transition-colors ${activeTool === 'ratio' ? 'text-pink-500 dark:text-pink-400' : 'text-slate-400'}`} />
-                            <span className="text-xs font-medium text-slate-500 dark:text-slate-300">Change Ratio</span>
+                            <span className="text-xs font-medium text-slate-500 dark:text-slate-300">Ratio</span>
                         </button>
                         {activeTool === 'ratio' && (
                             <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
-                                <div className="grid grid-cols-4 gap-2">
+                                <div className="grid grid-cols-5 gap-2">
                                     {ratioOptions.map(r => (
                                         <button 
                                             key={r.label} 
                                             onClick={() => setSelectedRatio(r.name)} 
                                             className="flex flex-col items-center gap-1 group"
                                         >
-                                            <div className={`w-full ${r.aspect} border-2 rounded transition-all duration-300 ${selectedRatio === r.name ? 'border-transparent bg-gradient-to-br from-purple-500 to-pink-500' : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 group-hover:border-pink-500'}`}></div>
-                                            <div className="text-center">
-                                                <span className={`block text-[10px] font-bold ${selectedRatio === r.name ? 'text-pink-500 dark:text-pink-400' : 'text-slate-500 dark:text-slate-300'}`}>{r.label}</span>
-                                                <span className="block text-[8px] text-slate-400 dark:text-slate-500 uppercase">{r.name}</span>
-                                            </div>
+                                            <div className={`w-full ${r.aspect} max-h-12 border-2 rounded transition-all duration-300 ${selectedRatio === r.name ? 'border-transparent bg-gradient-to-br from-purple-500 to-pink-500' : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 group-hover:border-pink-500'}`}></div>
+                                            <span className={`text-[10px] font-medium ${selectedRatio === r.name ? 'text-pink-500 dark:text-pink-400' : 'text-slate-500 dark:text-slate-400'}`}>{r.label}</span>
                                         </button>
                                     ))}
                                 </div>
@@ -842,7 +923,7 @@ export const Modify = () => {
                         </button>
                         {activeTool === 'enhance' && (
                             <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
-                                <p className="text-xs text-slate-500 dark:text-slate-400">Upscale resolution and improve lighting details.</p>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Upscale resolution and improve details.</p>
                                 <ImageCountSelector />
                                 <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Enhance', 'High Resolution Upscale')}>Enhance Image</Button>
                             </div>
