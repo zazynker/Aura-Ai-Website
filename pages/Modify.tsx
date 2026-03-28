@@ -312,6 +312,46 @@ export const Modify = () => {
     let baseImageUrl: string | undefined = currentImage || undefined;  // The scene/model image
     let productImageUrl: string | undefined = undefined;  // The product to insert
     
+    // === FIX: If baseImageUrl is a local URL (blob: or data:), we need to upload it first ===
+    if (baseImageUrl && (baseImageUrl.startsWith('blob:') || baseImageUrl.startsWith('data:'))) {
+      console.log('Base image is local URL (blob/data), need to upload first...');
+      try {
+        setIsUploading(true);
+        
+        let file: File;
+        if (baseImageUrl.startsWith('blob:')) {
+          // Fetch blob and convert to File
+          const response = await fetch(baseImageUrl);
+          const blob = await response.blob();
+          file = new File([blob], `upload_${Date.now()}.png`, { type: blob.type || 'image/png' });
+        } else {
+          // Convert base64 data URL to File
+          const response = await fetch(baseImageUrl);
+          const blob = await response.blob();
+          const mimeMatch = baseImageUrl.match(/^data:([^;]+);/);
+          const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+          const ext = mimeType.split('/')[1] || 'png';
+          file = new File([blob], `upload_${Date.now()}.${ext}`, { type: mimeType });
+        }
+        
+        const uploadedUrl = await uploadFileToSupabase(file);
+        if (!uploadedUrl) {
+          setIsGenerating(false);
+          setIsUploading(false);
+          return; // Error already shown
+        }
+        baseImageUrl = uploadedUrl;
+        console.log('Uploaded base image to Supabase:', uploadedUrl);
+        setIsUploading(false);
+      } catch (err) {
+        console.error('Failed to upload base image:', err);
+        addToast('error', 'Failed to upload image. Please try again.');
+        setIsGenerating(false);
+        setIsUploading(false);
+        return;
+      }
+    }
+    
     if (toolName === 'Replace') {
       // For Replace: send BOTH the scene image AND the product image
       // Order in API: scene image FIRST, product image SECOND (matches Google AI Studio)
