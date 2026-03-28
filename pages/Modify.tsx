@@ -88,6 +88,8 @@ export const Modify = () => {
   const [modifyPrompt, setModifyPrompt] = useState('');
   const [modifyReferenceFile, setModifyReferenceFile] = useState<File | null>(null);
   const [selectedRatio, setSelectedRatio] = useState('Square');
+  const [ratioPrompt, setRatioPrompt] = useState(''); // Prompt for expanded areas in ratio change
+  const [selectedResolution, setSelectedResolution] = useState('2K'); // Default to 2K
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
   // --- Logic: History ---
@@ -377,8 +379,32 @@ export const Modify = () => {
       }
     } else if (toolName === 'Enhance') {
       fullPrompt = 'Enhance this image: improve quality, lighting and colors';
+    } else if (toolName === 'Upscale') {
+      // promptText contains the target resolution (1K, 2K, 4K)
+      const resolutionMap: Record<string, string> = {
+        '1K': '1024x1024',
+        '2K': '2048x2048', 
+        '4K': '4096x4096'
+      };
+      const targetRes = resolutionMap[promptText] || '2048x2048';
+      fullPrompt = `Recreate this exact image at ${targetRes} resolution. Maintain all visual elements, composition, colors, lighting, and details exactly as they appear. Output at ${promptText} quality.`;
     } else if (toolName === 'Ratio') {
-      fullPrompt = `Edit this image: Extend or crop this image to fit a ${promptText} aspect ratio while maintaining the visual style and content.`;
+      // promptText contains the ratio name (e.g., "Square", "Portrait")
+      const ratioMap: Record<string, string> = {
+        'Square': '1:1',
+        'Portrait': '3:4',
+        'Story': '9:16',
+        'Landscape': '16:9',
+        'Pinterest': '2:3'
+      };
+      const targetRatio = ratioMap[promptText] || '1:1';
+      
+      // Build prompt with optional user description for expanded areas
+      if (ratioPrompt && ratioPrompt.trim()) {
+        fullPrompt = `Extend this image to fit a ${targetRatio} aspect ratio. For the newly expanded areas, fill with: ${ratioPrompt.trim()}. Maintain the original content and visual style seamlessly.`;
+      } else {
+        fullPrompt = `Extend this image to fit a ${targetRatio} aspect ratio. Seamlessly continue the existing background, style, and atmosphere into the expanded areas. Maintain the original content exactly as it appears.`;
+      }
     } else {
       fullPrompt = promptText || `Apply ${toolName} effect to this image.`;
     }
@@ -398,12 +424,19 @@ export const Modify = () => {
     }, 300);
 
     try {
+      // Determine image size based on tool
+      let targetImageSize: '512' | '1K' | '2K' | '4K' = '1K'; // Default
+      if (toolName === 'Upscale') {
+        targetImageSize = promptText as '1K' | '2K' | '4K';
+      }
+      
       // Call the real Gemini API with the selected number of images
       const result = await generateImages({
         prompt: fullPrompt,
         imageUrl: baseImageUrl,           // The scene/model image
         productImageUrl: productImageUrl, // The product to insert (for Replace)
         numberOfImages: outputCount,      // Generate multiple images in parallel
+        imageSize: targetImageSize,       // Resolution setting
       });
 
       clearInterval(progressInterval);
@@ -418,6 +451,7 @@ export const Modify = () => {
 
       console.log('=== Generation Successful ===');
       console.log('Generated images:', result.images.length);
+      console.log('Image size:', result.imageSize);
       setProgress(100);
 
       // Process the generated images
@@ -1125,33 +1159,58 @@ export const Modify = () => {
                     </button>
                     {activeTool === 'ratio' && (
                         <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
-                            <div className="grid grid-cols-5 gap-3">
-                                {ratioOptions.map(r => (
-                                    <button 
-                                        key={r.label} 
-                                        onClick={() => setSelectedRatio(r.name)} 
-                                        className="flex flex-col items-center gap-1.5 group"
-                                    >
-                                        <div className="h-10 flex items-end justify-center">
-                                            <div 
-                                                style={{ width: r.width, height: r.height }}
-                                                className={`border-2 rounded transition-all duration-300 ${selectedRatio === r.name ? 'border-transparent bg-gradient-to-br from-purple-500 to-pink-500' : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 group-hover:border-pink-500'}`}
-                                            />
-                                        </div>
-                                        <span className={`text-[10px] font-medium ${selectedRatio === r.name ? 'text-pink-500 dark:text-pink-400' : 'text-slate-500 dark:text-slate-400'}`}>{r.label}</span>
-                                    </button>
-                                ))}
+                            {/* Ratio Selector */}
+                            <div className="space-y-2">
+                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Target aspect ratio</label>
+                                <div className="grid grid-cols-5 gap-3">
+                                    {ratioOptions.map(r => (
+                                        <button 
+                                            key={r.label} 
+                                            onClick={() => setSelectedRatio(r.name)} 
+                                            className="flex flex-col items-center gap-1.5 group"
+                                        >
+                                            <div className="h-10 flex items-end justify-center">
+                                                <div 
+                                                    style={{ width: r.width, height: r.height }}
+                                                    className={`border-2 rounded transition-all duration-300 ${selectedRatio === r.name ? 'border-transparent bg-gradient-to-br from-purple-500 to-pink-500' : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 group-hover:border-pink-500'}`}
+                                                />
+                                            </div>
+                                            <span className={`text-[10px] font-medium ${selectedRatio === r.name ? 'text-pink-500 dark:text-pink-400' : 'text-slate-500 dark:text-slate-400'}`}>{r.label}</span>
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
+
+                            {/* Expanded Area Description */}
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-1.5">
+                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                                        Describe expanded area
+                                    </label>
+                                    <span className="text-xs text-slate-400">(optional)</span>
+                                    <div className="relative group/tip">
+                                        <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Tell AI what to fill in the new areas</div>
+                                    </div>
+                                </div>
+                                <textarea 
+                                    value={ratioPrompt}
+                                    onChange={(e) => setRatioPrompt(e.target.value)}
+                                    placeholder="e.g., continue the same background style, blue sky with clouds, wooden floor extending..."
+                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-16"
+                                />
+                            </div>
+
                             <ImageCountSelector />
-                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Ratio', selectedRatio)}>
-                                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
+                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || isUploading} onClick={() => runGeneration('Ratio', selectedRatio)}>
+                                {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
                                 Update Ratio
                             </Button>
                         </div>
                     )}
                 </div>
 
-                {/* 4. ENHANCE Tool */}
+                {/* 4. ENHANCE / UPSCALE Tool */}
                 <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'enhance' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
@@ -1160,17 +1219,55 @@ export const Modify = () => {
                     >
                         <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
                             <Wand2 className="w-5 h-5 text-pink-500 dark:text-pink-400" /> 
-                            Enhance
+                            Upscale
                         </span>
                         <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeTool === 'enhance' ? 'rotate-180' : ''}`}/>
                     </button>
                     {activeTool === 'enhance' && (
                         <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Upscale resolution and improve details.</p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                                Regenerate image at higher resolution. AI will recreate the image with more detail.
+                            </p>
+                            
+                            {/* Resolution Selector */}
+                            <div className="space-y-2">
+                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Target Resolution</label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {[
+                                        { label: '1K', size: '1024×1024', value: '1K' },
+                                        { label: '2K', size: '2048×2048', value: '2K' },
+                                        { label: '4K', size: '4096×4096', value: '4K', isPro: true },
+                                    ].map(res => (
+                                        <button
+                                            key={res.value}
+                                            onClick={() => setSelectedResolution(res.value)}
+                                            className={`relative py-2.5 text-xs font-medium rounded-lg border transition-all ${
+                                                selectedResolution === res.value
+                                                    ? 'bg-pink-600 border-pink-500 text-white shadow-lg shadow-pink-900/20'
+                                                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
+                                            }`}
+                                        >
+                                            <div>{res.label}</div>
+                                            <div className={`text-[9px] ${selectedResolution === res.value ? 'text-pink-200' : 'text-slate-400'}`}>
+                                                {res.size}
+                                            </div>
+                                            {res.isPro && (
+                                                <div className="absolute -top-1.5 -right-1.5 px-1 py-0.5 rounded bg-gradient-to-r from-purple-600 to-pink-600 text-[7px] font-bold text-white">
+                                                    2×
+                                                </div>
+                                            )}
+                                        </button>
+                                    ))}
+                                </div>
+                                <p className="text-[10px] text-slate-400">
+                                    Max: 4096×4096 (4K) • 4K uses 2× credits
+                                </p>
+                            </div>
+
                             <ImageCountSelector />
-                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Enhance', 'High Resolution Upscale')}>
-                                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                                Enhance Image
+                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || isUploading} onClick={() => runGeneration('Upscale', selectedResolution)}>
+                                {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
+                                Upscale to {selectedResolution}
                             </Button>
                         </div>
                     )}

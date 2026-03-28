@@ -17,7 +17,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     try {
-        const { prompt, imageUrl, productImageUrl, numberOfImages = 4 } = req.body;
+        const { 
+            prompt, 
+            imageUrl, 
+            productImageUrl, 
+            numberOfImages = 4,
+            imageSize = '1K',  // Default to 1K, options: "512", "1K", "2K", "4K"
+            aspectRatio       // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
+        } = req.body;
 
         if (!prompt) {
             return res.status(400).json({ error: 'Prompt is required' });
@@ -28,6 +35,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('Has base image:', !!imageUrl);
         console.log('Has product image:', !!productImageUrl);
         console.log('Number of images requested:', numberOfImages);
+        console.log('Image size:', imageSize);
+        console.log('Aspect ratio:', aspectRatio || 'default');
 
         // Build the request content parts
         // IMPORTANT: Order matters! Scene/base image FIRST, then product image, then prompt
@@ -65,8 +74,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Add the text prompt LAST
         parts.push({ text: prompt });
 
+        // Build imageConfig for resolution and aspect ratio
+        const imageConfig: any = {};
+        if (imageSize && ['512', '1K', '2K', '4K'].includes(imageSize)) {
+            imageConfig.image_size = imageSize;
+        }
+        if (aspectRatio) {
+            imageConfig.aspect_ratio = aspectRatio;
+        }
+
         // Build the full request body
-        const requestBody = {
+        const requestBody: any = {
             contents: [{
                 parts: parts
             }],
@@ -81,6 +99,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
             ]
         };
+
+        // Add imageConfig if we have any settings
+        if (Object.keys(imageConfig).length > 0) {
+            requestBody.generationConfig.imageConfig = imageConfig;
+            console.log('ImageConfig:', imageConfig);
+        }
 
         console.log('Sending request to Gemini API...');
         console.log('Request parts count:', parts.length);
@@ -161,6 +185,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
         
         console.log('Total images generated:', images.length, 'out of', numToGenerate, 'requested');
+        console.log('Image size setting:', imageSize);
 
         if (images.length === 0) {
             return res.status(500).json({
@@ -175,7 +200,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             success: true,
             images: images,
             text: '',
-            count: images.length
+            count: images.length,
+            imageSize: imageSize
         });
 
     } catch (err) {
