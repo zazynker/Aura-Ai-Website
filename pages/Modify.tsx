@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Type, Clock, Heart, ExternalLink, ChevronDown, Settings2 } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { mockTemplates } from '../data/mockData';
 import { Button } from '../components/ui/Button';
@@ -83,8 +83,8 @@ export const Modify = () => {
     return saved ? JSON.parse(saved) : [];
   });
   const [showDescribeHistory, setShowDescribeHistory] = useState(false);
-  const [textPrompt, setTextPrompt] = useState('');
   const [modifyPrompt, setModifyPrompt] = useState('');
+  const [modifyReferenceFile, setModifyReferenceFile] = useState<File | null>(null);
   const [selectedRatio, setSelectedRatio] = useState('Square');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
@@ -332,7 +332,19 @@ export const Modify = () => {
     } else if (toolName === 'Add Text') {
       fullPrompt = `Add the text "${promptText}" to this image`;
     } else if (toolName === 'Modify') {
-      fullPrompt = promptText;  // Use user's prompt directly, simple and clean
+      // Modify can optionally have a reference image
+      if (modifyReferenceFile) {
+        // Convert reference file to base64
+        const reader = new FileReader();
+        productImageUrl = await new Promise<string>((resolve) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(modifyReferenceFile);
+        });
+        fullPrompt = `Modify Image 1 based on the style/reference from Image 2: ${promptText}`;
+      } else {
+        // Text-only modify
+        fullPrompt = promptText;
+      }
     } else if (toolName === 'Enhance') {
       fullPrompt = 'Enhance this image: improve quality, lighting and colors';
     } else if (toolName === 'Ratio') {
@@ -865,19 +877,15 @@ export const Modify = () => {
                                                 <input 
                                                     type="number"
                                                     value={productSizePercent}
-                                                    onChange={(e) => {
+                                                    onChange={(e) => setProductSizePercent(e.target.value)}
+                                                    onBlur={(e) => {
                                                         const val = e.target.value;
-                                                        if (val === '') {
-                                                            setProductSizePercent('');
-                                                        } else {
-                                                            const num = parseInt(val);
-                                                            if (num >= 10 && num <= 300) {
-                                                                setProductSizePercent(val);
-                                                            } else if (num < 10) {
-                                                                setProductSizePercent('10');
-                                                            } else if (num > 300) {
-                                                                setProductSizePercent('300');
-                                                            }
+                                                        if (val === '') return;
+                                                        const num = parseInt(val);
+                                                        if (isNaN(num) || num < 10) {
+                                                            setProductSizePercent('10');
+                                                        } else if (num > 300) {
+                                                            setProductSizePercent('300');
                                                         }
                                                     }}
                                                     placeholder="100"
@@ -906,34 +914,24 @@ export const Modify = () => {
                                 )}
                                 {uploadedFile ? 'Generate Magic' : 'Upload product first'}
                             </Button>
+
+                            {/* More Control CTA */}
+                            <div className="pt-3 border-t border-slate-200 dark:border-white/5">
+                                <button 
+                                    onClick={() => setActiveTool('modify')}
+                                    className="w-full flex items-center justify-center gap-2 py-2 text-xs text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-colors"
+                                >
+                                    <Wand2 className="w-3.5 h-3.5" />
+                                    Need more control? Try Modify with reference image →
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>
 
                 {/* 2. Interactive Tool Grid */}
                 <div className="grid grid-cols-2 gap-3">
-                    {/* ADD TEXT Tool */}
-                    <div className={`col-span-1 glass-panel rounded-xl transition-all duration-300 ${activeTool === 'text' ? 'col-span-2 ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
-                        <button disabled={!hasSelectedImage} onClick={() => setActiveTool(activeTool === 'text' ? null : 'text')} className="w-full p-4 flex flex-col items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50">
-                            <Type className={`w-6 h-6 transition-colors ${activeTool === 'text' ? 'text-purple-500 dark:text-purple-400' : 'text-slate-400'}`} />
-                            <span className="text-xs font-medium text-slate-500 dark:text-slate-300">Add Text</span>
-                        </button>
-                        {activeTool === 'text' && (
-                            <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
-                                <textarea 
-                                    value={textPrompt}
-                                    onChange={(e) => setTextPrompt(e.target.value)}
-                                    rows={3}
-                                    placeholder="Type the text you want to add to the image..." 
-                                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl p-3 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:outline-none focus:border-purple-500/50 resize-none"
-                                />
-                                <ImageCountSelector />
-                                <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Add Text', textPrompt)}>✨ Generate with Text</Button>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* MODIFY Tool */}
+                    {/* MODIFY Tool - Enhanced with reference image */}
                     <div className={`col-span-1 glass-panel rounded-xl transition-all duration-300 ${activeTool === 'modify' ? 'col-span-2 ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                         <button disabled={!hasSelectedImage} onClick={() => setActiveTool(activeTool === 'modify' ? null : 'modify')} className="w-full p-4 flex flex-col items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50">
                             <Edit2 className={`w-6 h-6 transition-colors ${activeTool === 'modify' ? 'text-purple-500 dark:text-purple-400' : 'text-slate-400'}`} />
@@ -941,15 +939,71 @@ export const Modify = () => {
                         </button>
                         {activeTool === 'modify' && (
                             <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
-                                <textarea 
-                                    value={modifyPrompt}
-                                    onChange={(e) => setModifyPrompt(e.target.value)}
-                                    rows={4}
-                                    placeholder="Describe what you want to change..." 
-                                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl px-3 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-purple-500/50 resize-none"
-                                />
+                                {/* Tip */}
+                                <p className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 px-3 py-2 rounded-lg">
+                                    💡 Describe changes in text, or upload a reference image for AI to follow.
+                                </p>
+
+                                {/* Prompt */}
+                                <div className="space-y-1.5">
+                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Describe the changes</label>
+                                    <textarea 
+                                        value={modifyPrompt}
+                                        onChange={(e) => setModifyPrompt(e.target.value)}
+                                        rows={3}
+                                        placeholder="e.g., Add soft morning light, change background to beach..." 
+                                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
+                                    />
+                                </div>
+
+                                {/* Reference Image Upload (Optional) */}
+                                <div className="space-y-1.5">
+                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
+                                        Reference image
+                                        <span className="text-slate-400">(optional)</span>
+                                    </label>
+                                    <div className="border border-dashed border-slate-200 dark:border-white/10 rounded-lg p-2 transition-colors hover:border-purple-500/30 relative group">
+                                        <input 
+                                            type="file" 
+                                            onChange={(e) => {
+                                                if (e.target.files && e.target.files[0]) {
+                                                    setModifyReferenceFile(e.target.files[0]);
+                                                }
+                                            }} 
+                                            className="absolute inset-0 opacity-0 cursor-pointer z-10" 
+                                            accept="image/png, image/jpeg, image/webp" 
+                                        />
+                                        {!modifyReferenceFile ? (
+                                            <div className="flex items-center gap-3 py-1">
+                                                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10">
+                                                    <Upload className="w-4 h-4 text-slate-400 group-hover:text-purple-400" />
+                                                </div>
+                                                <p className="text-xs text-slate-500">Upload a style or scene reference</p>
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                                    <img src={URL.createObjectURL(modifyReferenceFile)} className="w-full h-full object-cover" alt="ref" />
+                                                </div>
+                                                <div className="flex-1 min-w-0">
+                                                    <p className="text-xs font-medium text-slate-900 dark:text-white truncate">{modifyReferenceFile.name}</p>
+                                                </div>
+                                                <button 
+                                                    onClick={(e) => { e.preventDefault(); setModifyReferenceFile(null); }} 
+                                                    className="p-1.5 hover:bg-red-500/10 rounded-full z-20"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-400"/>
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
                                 <ImageCountSelector />
-                                <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Modify', modifyPrompt)}>Generate Changes</Button>
+                                <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || !modifyPrompt.trim()} onClick={() => runGeneration('Modify', modifyPrompt)}>
+                                    {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
+                                    Generate Changes
+                                </Button>
                             </div>
                         )}
                     </div>
