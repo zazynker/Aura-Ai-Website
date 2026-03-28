@@ -381,13 +381,8 @@ export const Modify = () => {
       fullPrompt = 'Enhance this image: improve quality, lighting and colors';
     } else if (toolName === 'Upscale') {
       // promptText contains the target resolution (1K, 2K, 4K)
-      const resolutionMap: Record<string, string> = {
-        '1K': '1024x1024',
-        '2K': '2048x2048', 
-        '4K': '4096x4096'
-      };
-      const targetRes = resolutionMap[promptText] || '2048x2048';
-      fullPrompt = `Recreate this exact image at ${targetRes} resolution. Maintain all visual elements, composition, colors, lighting, and details exactly as they appear. Output at ${promptText} quality.`;
+      // Important: We need to maintain the original aspect ratio
+      fullPrompt = `Upscale this image to higher resolution. Recreate every detail exactly as it appears - same composition, same colors, same lighting, same content. Do not change the aspect ratio. Only increase the quality and resolution.`;
     } else if (toolName === 'Ratio') {
       // promptText contains the ratio name (e.g., "Square", "Portrait")
       const ratioMap: Record<string, string> = {
@@ -426,8 +421,31 @@ export const Modify = () => {
     try {
       // Determine image size based on tool
       let targetImageSize: '512' | '1K' | '2K' | '4K' = '1K'; // Default
+      let targetAspectRatio: string | undefined = undefined;
+      
       if (toolName === 'Upscale') {
         targetImageSize = promptText as '1K' | '2K' | '4K';
+        
+        // Get current image dimensions directly from the DOM to ensure accuracy
+        const mainImg = document.querySelector('img[alt="Main preview"]') as HTMLImageElement;
+        const imgWidth = mainImg?.naturalWidth || imageDimensions.width;
+        const imgHeight = mainImg?.naturalHeight || imageDimensions.height;
+        
+        if (imgWidth > 0 && imgHeight > 0) {
+          const ratio = imgWidth / imgHeight;
+          // Map to closest supported Gemini ratio
+          // Supported: 1:1, 1:4, 1:8, 2:3, 3:2, 3:4, 4:1, 4:3, 4:5, 5:4, 8:1, 9:16, 16:9, 21:9
+          if (ratio >= 2.2) targetAspectRatio = '21:9';       // ~2.33
+          else if (ratio >= 1.7) targetAspectRatio = '16:9';  // ~1.78
+          else if (ratio >= 1.4) targetAspectRatio = '3:2';   // 1.5
+          else if (ratio >= 1.2) targetAspectRatio = '4:3';   // ~1.33
+          else if (ratio >= 0.95) targetAspectRatio = '1:1';  // 1.0
+          else if (ratio >= 0.8) targetAspectRatio = '4:5';   // 0.8
+          else if (ratio >= 0.7) targetAspectRatio = '3:4';   // ~0.75
+          else if (ratio >= 0.6) targetAspectRatio = '2:3';   // ~0.67
+          else targetAspectRatio = '9:16';                     // ~0.56
+          console.log('Upscale - Original dimensions:', imgWidth, 'x', imgHeight, 'Ratio:', ratio.toFixed(2), '→', targetAspectRatio);
+        }
       }
       
       // Call the real Gemini API with the selected number of images
@@ -437,6 +455,7 @@ export const Modify = () => {
         productImageUrl: productImageUrl, // The product to insert (for Replace)
         numberOfImages: outputCount,      // Generate multiple images in parallel
         imageSize: targetImageSize,       // Resolution setting
+        aspectRatio: targetAspectRatio,   // Keep original aspect ratio for Upscale
       });
 
       clearInterval(progressInterval);

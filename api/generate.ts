@@ -75,12 +75,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         parts.push({ text: prompt });
 
         // Build imageConfig for resolution and aspect ratio
+        // Note: Gemini API uses camelCase for these parameters
         const imageConfig: any = {};
         if (imageSize && ['512', '1K', '2K', '4K'].includes(imageSize)) {
-            imageConfig.image_size = imageSize;
+            imageConfig.imageSize = imageSize;  // camelCase
         }
         if (aspectRatio) {
-            imageConfig.aspect_ratio = aspectRatio;
+            imageConfig.aspectRatio = aspectRatio;  // camelCase
+            console.log('Setting aspectRatio:', aspectRatio);
         }
 
         // Build the full request body
