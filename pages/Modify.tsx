@@ -463,11 +463,11 @@ export const Modify = () => {
   );
 
   const ratioOptions = [
-    { label: '1:1', name: 'Square', aspect: 'aspect-square' },
-    { label: '3:4', name: 'Portrait', aspect: 'aspect-[3/4]' },
-    { label: '9:16', name: 'Story', aspect: 'aspect-[9/16]' },
-    { label: '16:9', name: 'Landscape', aspect: 'aspect-[16/9]' },
-    { label: '2:3', name: 'Pinterest', aspect: 'aspect-[2/3]' },
+    { label: '1:1', name: 'Square', width: 32, height: 32 },
+    { label: '3:4', name: 'Portrait', width: 24, height: 32 },
+    { label: '9:16', name: 'Story', width: 18, height: 32 },
+    { label: '16:9', name: 'Landscape', width: 32, height: 18 },
+    { label: '2:3', name: 'Pinterest', width: 22, height: 32 },
   ];
 
   return (
@@ -949,14 +949,15 @@ export const Modify = () => {
                     </button>
                     {activeTool === 'modify' && (
                         <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
-                            {/* Tip */}
-                            <p className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 px-3 py-2 rounded-lg">
-                                💡 Describe changes in text, or upload a reference image for AI to follow.
-                            </p>
-
                             {/* Prompt */}
                             <div className="space-y-1.5">
-                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Describe the changes</label>
+                                <div className="flex items-center gap-1.5">
+                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Describe the changes</label>
+                                    <div className="relative group/tip">
+                                        <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Text-only or combine with reference image</div>
+                                    </div>
+                                </div>
                                 <textarea 
                                     value={modifyPrompt}
                                     onChange={(e) => setModifyPrompt(e.target.value)}
@@ -968,10 +969,14 @@ export const Modify = () => {
 
                             {/* Reference Image Upload (Optional) */}
                             <div className="space-y-1.5">
-                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
-                                    Reference image
-                                    <span className="text-slate-400">(optional)</span>
-                                </label>
+                                <div className="flex items-center gap-1.5">
+                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Reference image</label>
+                                    <span className="text-xs text-slate-400">(optional)</span>
+                                    <div className="relative group/tip">
+                                        <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">AI will follow this style or scene</div>
+                                    </div>
+                                </div>
                                 <div className="border border-dashed border-slate-200 dark:border-white/10 rounded-lg p-2 transition-colors hover:border-purple-500/30 relative group">
                                     <input 
                                         type="file" 
@@ -979,7 +984,7 @@ export const Modify = () => {
                                             if (e.target.files && e.target.files[0]) {
                                                 setModifyReferenceFile(e.target.files[0]);
                                             }
-                                        }} 
+                                        }}
                                         className="absolute inset-0 opacity-0 cursor-pointer z-10" 
                                         accept="image/png, image/jpeg, image/webp" 
                                     />
@@ -1033,14 +1038,19 @@ export const Modify = () => {
                     </button>
                     {activeTool === 'ratio' && (
                         <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
-                            <div className="grid grid-cols-5 gap-2">
+                            <div className="grid grid-cols-5 gap-3">
                                 {ratioOptions.map(r => (
                                     <button 
                                         key={r.label} 
                                         onClick={() => setSelectedRatio(r.name)} 
-                                        className="flex flex-col items-center gap-1 group"
+                                        className="flex flex-col items-center gap-1.5 group"
                                     >
-                                        <div className={`w-full ${r.aspect} max-h-12 border-2 rounded transition-all duration-300 ${selectedRatio === r.name ? 'border-transparent bg-gradient-to-br from-purple-500 to-pink-500' : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 group-hover:border-pink-500'}`}></div>
+                                        <div className="h-10 flex items-end justify-center">
+                                            <div 
+                                                style={{ width: r.width, height: r.height }}
+                                                className={`border-2 rounded transition-all duration-300 ${selectedRatio === r.name ? 'border-transparent bg-gradient-to-br from-purple-500 to-pink-500' : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 group-hover:border-pink-500'}`}
+                                            />
+                                        </div>
                                         <span className={`text-[10px] font-medium ${selectedRatio === r.name ? 'text-pink-500 dark:text-pink-400' : 'text-slate-500 dark:text-slate-400'}`}>{r.label}</span>
                                     </button>
                                 ))}
