@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Template } from '../types';
 import { generateImages } from '../utils/generateService';
+import { uploadUserImage, validateFile } from '../utils/uploadService';
 
 export const Modify = () => {
   const navigate = useNavigate();
@@ -57,6 +58,7 @@ export const Modify = () => {
   
   // Generation Process State
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [generatedResults, setGeneratedResults] = useState<string[]>(session?.generatedResults || []);
   const [showResults, setShowResults] = useState(session?.showResults || false);
@@ -238,6 +240,32 @@ export const Modify = () => {
     }
   };
 
+  // --- Helper: Upload file to Supabase and get URL ---
+  const uploadFileToSupabase = async (file: File): Promise<string | null> => {
+    // Validate file first
+    const validationError = validateFile(file);
+    if (validationError) {
+      addToast('error', validationError.message);
+      return null;
+    }
+
+    setIsUploading(true);
+    try {
+      const result = await uploadUserImage(user!.id, file);
+      if (!result.success) {
+        addToast('error', result.error || 'Failed to upload image. Please try again.');
+        return null;
+      }
+      return result.url || null;
+    } catch (err) {
+      console.error('Upload error:', err);
+      addToast('error', 'Failed to upload image. Please check your connection.');
+      return null;
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   // --- Logic: Generation (Using Real Gemini API) ---
   const saveDescribeToHistory = (text: string) => {
     if (!text.trim()) return;
@@ -286,12 +314,13 @@ export const Modify = () => {
       // For Replace: send BOTH the scene image AND the product image
       // Order in API: scene image FIRST, product image SECOND (matches Google AI Studio)
       if (uploadedFile) {
-        // Convert uploaded product file to base64 data URL
-        const reader = new FileReader();
-        productImageUrl = await new Promise<string>((resolve) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(uploadedFile);
-        });
+        // === KEY FIX: Upload to Supabase first, then use URL ===
+        const uploadedUrl = await uploadFileToSupabase(uploadedFile);
+        if (!uploadedUrl) {
+          setIsGenerating(false);
+          return; // Error already shown by uploadFileToSupabase
+        }
+        productImageUrl = uploadedUrl;
         
         // Build the prompt based on options
         let promptParts: string[] = [];
@@ -334,12 +363,13 @@ export const Modify = () => {
     } else if (toolName === 'Modify') {
       // Modify can optionally have a reference image
       if (modifyReferenceFile) {
-        // Convert reference file to base64
-        const reader = new FileReader();
-        productImageUrl = await new Promise<string>((resolve) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(modifyReferenceFile);
-        });
+        // === KEY FIX: Upload reference image to Supabase first ===
+        const uploadedUrl = await uploadFileToSupabase(modifyReferenceFile);
+        if (!uploadedUrl) {
+          setIsGenerating(false);
+          return; // Error already shown by uploadFileToSupabase
+        }
+        productImageUrl = uploadedUrl;
         fullPrompt = `Modify Image 1 based on the style/reference from Image 2: ${promptText}`;
       } else {
         // Text-only modify
@@ -427,7 +457,14 @@ export const Modify = () => {
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      setUploadedFile(e.target.files[0]);
+      const file = e.target.files[0];
+      // Validate file immediately on selection
+      const validationError = validateFile(file);
+      if (validationError) {
+        addToast('error', validationError.message);
+        return;
+      }
+      setUploadedFile(file);
     }
   };
 
@@ -612,8 +649,11 @@ export const Modify = () => {
                                 </div>
                             </div>
 
-                            {/* 2. From History */}
-                            <button onClick={() => { setImagePickerTab('all'); setShowImagePicker(true); }} className="group h-40 rounded-2xl border border-slate-200 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
+                            {/* 2. History */}
+                            <div 
+                                onClick={() => { setImagePickerTab('all'); setShowImagePicker(true); }} 
+                                className="h-40 rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3 cursor-pointer group"
+                            >
                                 <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <Clock className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
                                 </div>
@@ -621,69 +661,65 @@ export const Modify = () => {
                                     <p className="text-sm font-semibold text-slate-900 dark:text-white">History</p>
                                     <p className="text-[10px] text-slate-500 mt-1">{generations.length} items</p>
                                 </div>
-                            </button>
+                            </div>
 
-                            {/* 3. From Collections */}
-                            <button onClick={() => { setImagePickerTab('collection'); setShowImagePicker(true); }} className="group h-40 rounded-2xl border border-slate-200 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
+                            {/* 3. Collections */}
+                            <div 
+                                onClick={() => { setImagePickerTab('collection'); setShowImagePicker(true); }} 
+                                className="h-40 rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3 cursor-pointer group"
+                            >
                                 <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <Heart className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
                                 </div>
                                 <div>
-                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">Collection</p>
-                                    <p className="text-[10px] text-slate-500 mt-1">{collections.length} packs</p>
+                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">Collections</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">{collections.length} collections</p>
                                 </div>
-                            </button>
+                            </div>
                          </div>
                     </div>
                 ) : (
-                    // --- IMAGE PREVIEW STATE ---
+                    // --- IMAGE SELECTED STATE ---
                     <>
-                        {/* Top Action Buttons */}
-                        {hasSelectedImage && !isGenerating && (
-                            <>
-                                <div className="absolute top-4 left-4 z-20">
-                                    <button
-                                        onClick={handleChangeImage}
-                                        className="px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white text-sm font-medium border border-slate-200 dark:border-white/10 shadow-sm"
-                                    >
-                                        <Upload className="w-4 h-4" />
-                                        Change Image
-                                    </button>
-                                </div>
-                                <div className="absolute top-4 right-4 z-20">
-                                    <button
-                                        onClick={handleDownload}
-                                        className="px-3 py-2 rounded-xl glass-panel flex items-center gap-2 hover:bg-white dark:hover:bg-white/20 transition-all bg-white/80 dark:bg-black/40 text-slate-700 dark:text-white text-sm font-medium border border-slate-200 dark:border-white/10 shadow-sm"
-                                    >
-                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                        Download
-                                    </button>
-                                </div>
-                            </>
-                        )}
-
-                        {/* Progress Overlay */}
-                        {isGenerating && (
-                        <div className="absolute inset-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-                            <div className="w-64 space-y-4">
-                                <div className="flex justify-between text-xs font-medium uppercase tracking-wider text-slate-900 dark:text-white">
-                                    <span className="flex items-center gap-2"><Sparkles className="w-3 h-3 animate-pulse text-purple-500 dark:text-purple-400"/> Generating {outputCount} images</span>
-                                    <span>{Math.round(progress)}%</span>
-                                </div>
-                                <div className="h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden border border-slate-300 dark:border-white/5">
-                                    <div 
-                                        className="h-full bg-gradient-to-r from-purple-600 via-pink-500 to-purple-600 transition-all duration-75 ease-linear"
-                                        style={{ width: `${progress}%` }}
-                                    />
-                                </div>
-                                <p className="text-center text-xs text-slate-500 dark:text-slate-400 animate-pulse">Creating {outputCount} variations...</p>
-                            </div>
+                        {/* Toolbar */}
+                        <div className="absolute top-4 left-4 right-4 z-30 flex items-center justify-between">
+                            <button 
+                                onClick={handleChangeImage}
+                                className="glass-panel px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-white/10"
+                            >
+                                <Upload className="w-4 h-4" /> Change Image
+                            </button>
+                            <a 
+                                href={currentImage}
+                                download={`lazora-${Date.now()}.png`}
+                                onClick={handleDownload}
+                                className="glass-panel px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-white/10"
+                            >
+                                <ArrowLeft className="w-4 h-4 rotate-[-90deg]" /> Download
+                            </a>
                         </div>
+
+                        {/* Loading Overlay */}
+                        {(isGenerating || isUploading) && (
+                            <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+                                <div className="relative w-24 h-24">
+                                    <Loader2 className="w-24 h-24 text-purple-500 animate-spin" />
+                                    <Sparkles className="absolute inset-0 m-auto w-10 h-10 text-white animate-pulse" />
+                                </div>
+                                <p className="text-white font-semibold text-lg">
+                                    {isUploading ? 'Uploading image...' : 'Generating your magic...'}
+                                </p>
+                                {isGenerating && (
+                                    <div className="w-48 h-2 bg-white/20 rounded-full overflow-hidden">
+                                        <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300" style={{ width: `${progress}%` }}/>
+                                    </div>
+                                )}
+                            </div>
                         )}
 
                         <img 
                             src={currentImage} 
-                            className="max-h-full max-w-full object-contain transition-all duration-500"
+                            className="max-w-full max-h-full object-contain shadow-2xl"
                             alt="Main preview"
                             onLoad={(e) => {
                                 const img = e.currentTarget;
@@ -766,7 +802,7 @@ export const Modify = () => {
                                         </div>
                                         <div className="text-center">
                                             <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Your product photo</p>
-                                            <p className="text-[10px] text-slate-400 mt-0.5">White background works best</p>
+                                            <p className="text-[10px] text-slate-400 mt-0.5">PNG, JPG, WebP • Max 10MB</p>
                                         </div>
                                     </div>
                                 ) : (
@@ -776,7 +812,7 @@ export const Modify = () => {
                                         </div>
                                         <div className="flex-1 min-w-0">
                                             <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{uploadedFile.name}</p>
-                                            <p className="text-xs text-slate-500">{(uploadedFile.size / 1024).toFixed(0)} KB</p>
+                                            <p className="text-xs text-slate-500">{(uploadedFile.size / 1024 / 1024).toFixed(2)} MB</p>
                                         </div>
                                         <button onClick={(e) => { e.preventDefault(); setUploadedFile(null); }} className="p-2 hover:bg-red-500/10 rounded-full z-20 group/del">
                                             <Trash2 className="w-4 h-4 text-slate-500 group-hover/del:text-red-400"/>
@@ -905,14 +941,14 @@ export const Modify = () => {
                                 variant="gradient" 
                                 className="w-full" 
                                 onClick={() => runGeneration('Replace', prompt)} 
-                                disabled={isGenerating || !uploadedFile}
+                                disabled={isGenerating || isUploading || !uploadedFile}
                             >
-                                {isGenerating ? (
+                                {isGenerating || isUploading ? (
                                     <Loader2 className="w-4 h-4 animate-spin mr-2"/>
                                 ) : (
                                     <Sparkles className="w-4 h-4 mr-2" />
                                 )}
-                                {uploadedFile ? 'Generate Magic' : 'Upload product first'}
+                                {isUploading ? 'Uploading...' : uploadedFile ? 'Generate Magic' : 'Upload product first'}
                             </Button>
 
                             {/* More Control CTA - Only show when Advanced options is open */}
@@ -949,59 +985,71 @@ export const Modify = () => {
                     </button>
                     {activeTool === 'modify' && (
                         <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
-                            {/* Prompt */}
-                            <div className="space-y-1.5">
+                            {/* Describe Changes */}
+                            <div className="space-y-2">
                                 <div className="flex items-center gap-1.5">
-                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Describe the changes</label>
+                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                                        Describe the changes
+                                    </label>
                                     <div className="relative group/tip">
                                         <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
-                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Text-only or combine with reference image</div>
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Describe what you want to change</div>
                                     </div>
                                 </div>
                                 <textarea 
                                     value={modifyPrompt}
                                     onChange={(e) => setModifyPrompt(e.target.value)}
-                                    rows={3}
-                                    placeholder="e.g., Add soft morning light, change background to beach..." 
-                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
+                                    placeholder="replace the man who hold the kid with the woman in the upload photo"
+                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-20"
                                 />
                             </div>
 
-                            {/* Reference Image Upload (Optional) */}
-                            <div className="space-y-1.5">
+                            {/* Reference Image (Optional) */}
+                            <div className="space-y-2">
                                 <div className="flex items-center gap-1.5">
-                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Reference image</label>
-                                    <span className="text-xs text-slate-400">(optional)</span>
+                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">
+                                        Reference image (optional)
+                                    </label>
                                     <div className="relative group/tip">
                                         <svg className="w-3.5 h-3.5 text-amber-500 cursor-help" fill="currentColor" viewBox="0 0 20 20"><path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z"/></svg>
-                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">AI will follow this style or scene</div>
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Upload an image for AI to reference</div>
                                     </div>
                                 </div>
-                                <div className="border border-dashed border-slate-200 dark:border-white/10 rounded-lg p-2 transition-colors hover:border-purple-500/30 relative group">
+                                <div className="border-2 border-dashed border-slate-200 dark:border-white/10 rounded-xl p-2 transition-colors hover:border-purple-500/30 hover:bg-white dark:hover:bg-white/5 relative group">
                                     <input 
                                         type="file" 
                                         onChange={(e) => {
                                             if (e.target.files && e.target.files[0]) {
-                                                setModifyReferenceFile(e.target.files[0]);
+                                                const file = e.target.files[0];
+                                                const validationError = validateFile(file);
+                                                if (validationError) {
+                                                    addToast('error', validationError.message);
+                                                    return;
+                                                }
+                                                setModifyReferenceFile(file);
                                             }
-                                        }}
+                                        }} 
                                         className="absolute inset-0 opacity-0 cursor-pointer z-10" 
                                         accept="image/png, image/jpeg, image/webp" 
                                     />
                                     {!modifyReferenceFile ? (
-                                        <div className="flex items-center gap-3 py-1">
-                                            <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10">
+                                        <div className="flex items-center gap-2 py-1">
+                                            <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10 transition-colors">
                                                 <Upload className="w-4 h-4 text-slate-400 group-hover:text-purple-400" />
                                             </div>
-                                            <p className="text-xs text-slate-500">Upload a style or scene reference</p>
+                                            <div>
+                                                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Click to upload reference</p>
+                                                <p className="text-[10px] text-slate-400">PNG, JPG, WebP • Max 10MB</p>
+                                            </div>
                                         </div>
                                     ) : (
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                                                <img src={URL.createObjectURL(modifyReferenceFile)} className="w-full h-full object-cover" alt="ref" />
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden border border-slate-200 dark:border-white/10">
+                                                <img src={URL.createObjectURL(modifyReferenceFile)} className="w-full h-full object-cover" alt="reference" />
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <p className="text-xs font-medium text-slate-900 dark:text-white truncate">{modifyReferenceFile.name}</p>
+                                                <p className="text-[10px] text-slate-500">{(modifyReferenceFile.size / 1024 / 1024).toFixed(2)} MB</p>
                                             </div>
                                             <button 
                                                 onClick={(e) => { e.preventDefault(); setModifyReferenceFile(null); }} 
@@ -1015,9 +1063,9 @@ export const Modify = () => {
                             </div>
 
                             <ImageCountSelector />
-                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || !modifyPrompt.trim()} onClick={() => runGeneration('Modify', modifyPrompt)}>
-                                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                                Generate Changes
+                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || isUploading || !modifyPrompt.trim()} onClick={() => runGeneration('Modify', modifyPrompt)}>
+                                {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
+                                {isUploading ? 'Uploading...' : 'Generate Changes'}
                             </Button>
                         </div>
                     )}
