@@ -456,15 +456,34 @@ export const Modify = () => {
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    console.log('=== Product image input onChange triggered ===');
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      // Validate file immediately on selection
-      const validationError = validateFile(file);
-      if (validationError) {
-        addToast('error', validationError.message);
+      console.log('File selected:', file.name, 'Size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
+      
+      // 检查文件大小 (10MB)
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        const errorMsg = `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB. Please compress your image first.`;
+        console.error('Validation failed:', errorMsg);
+        addToast('error', errorMsg);
+        e.target.value = ''; // 清空 input
         return;
       }
+      
+      // 检查文件类型
+      const validTypes = ['image/png', 'image/jpeg', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+        const errorMsg = 'Invalid file type. Please upload PNG, JPG, or WebP images only.';
+        console.error('Validation failed:', errorMsg);
+        addToast('error', errorMsg);
+        e.target.value = '';
+        return;
+      }
+      
+      console.log('Validation passed, setting product file');
       setUploadedFile(file);
+      addToast('success', 'Product image ready');
     }
   };
 
@@ -1019,14 +1038,34 @@ export const Modify = () => {
                                     <input 
                                         type="file" 
                                         onChange={(e) => {
+                                            console.log('=== Reference image input onChange triggered ===');
                                             if (e.target.files && e.target.files[0]) {
                                                 const file = e.target.files[0];
-                                                const validationError = validateFile(file);
-                                                if (validationError) {
-                                                    addToast('error', validationError.message);
+                                                console.log('File selected:', file.name, 'Size:', (file.size / 1024 / 1024).toFixed(2), 'MB');
+                                                
+                                                // 检查文件大小 (10MB)
+                                                const maxSize = 10 * 1024 * 1024;
+                                                if (file.size > maxSize) {
+                                                    const errorMsg = `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB. Please compress your image first.`;
+                                                    console.error('Validation failed:', errorMsg);
+                                                    addToast('error', errorMsg);
+                                                    e.target.value = ''; // 清空 input
                                                     return;
                                                 }
+                                                
+                                                // 检查文件类型
+                                                const validTypes = ['image/png', 'image/jpeg', 'image/webp'];
+                                                if (!validTypes.includes(file.type)) {
+                                                    const errorMsg = 'Invalid file type. Please upload PNG, JPG, or WebP images only.';
+                                                    console.error('Validation failed:', errorMsg);
+                                                    addToast('error', errorMsg);
+                                                    e.target.value = '';
+                                                    return;
+                                                }
+                                                
+                                                console.log('Validation passed, setting reference file');
                                                 setModifyReferenceFile(file);
+                                                addToast('success', 'Reference image uploaded successfully');
                                             }
                                         }} 
                                         className="absolute inset-0 opacity-0 cursor-pointer z-10" 
