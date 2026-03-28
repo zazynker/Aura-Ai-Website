@@ -915,139 +915,168 @@ export const Modify = () => {
                                 {uploadedFile ? 'Generate Magic' : 'Upload product first'}
                             </Button>
 
-                            {/* More Control CTA */}
-                            <div className="pt-3 border-t border-slate-200 dark:border-white/5">
-                                <button 
-                                    onClick={() => setActiveTool('modify')}
-                                    className="w-full flex items-center justify-center gap-2 py-2 text-xs text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-colors"
-                                >
-                                    <Wand2 className="w-3.5 h-3.5" />
-                                    Need more control? Try Modify with reference image →
-                                </button>
-                            </div>
+                            {/* More Control CTA - Only show when Advanced options is open */}
+                            {showAdvancedOptions && (
+                                <div className="pt-3 border-t border-slate-200 dark:border-white/5">
+                                    <button 
+                                        onClick={() => setActiveTool('modify')}
+                                        className="w-full flex flex-col items-center justify-center gap-0.5 py-2 text-xs text-purple-600 dark:text-purple-400 hover:text-purple-700 dark:hover:text-purple-300 transition-colors"
+                                    >
+                                        <span className="flex items-center gap-1.5">
+                                            <Wand2 className="w-3.5 h-3.5" />
+                                            Need more control?
+                                        </span>
+                                        <span>Try Modify with reference image →</span>
+                                    </button>
+                                </div>
+                            )}
                         </div>
                     )}
                 </div>
 
-                {/* 2. Interactive Tool Grid */}
-                <div className="grid grid-cols-2 gap-3">
-                    {/* MODIFY Tool - Enhanced with reference image */}
-                    <div className={`col-span-1 glass-panel rounded-xl transition-all duration-300 ${activeTool === 'modify' ? 'col-span-2 ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
-                        <button disabled={!hasSelectedImage} onClick={() => setActiveTool(activeTool === 'modify' ? null : 'modify')} className="w-full p-4 flex flex-col items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50">
-                            <Edit2 className={`w-6 h-6 transition-colors ${activeTool === 'modify' ? 'text-purple-500 dark:text-purple-400' : 'text-slate-400'}`} />
-                            <span className="text-xs font-medium text-slate-500 dark:text-slate-300">Modify</span>
-                        </button>
-                        {activeTool === 'modify' && (
-                            <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
-                                {/* Tip */}
-                                <p className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 px-3 py-2 rounded-lg">
-                                    💡 Describe changes in text, or upload a reference image for AI to follow.
-                                </p>
+                {/* 2. MODIFY Tool */}
+                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'modify' ? 'ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                    <button 
+                        disabled={!hasSelectedImage}
+                        onClick={() => setActiveTool(activeTool === 'modify' ? null : 'modify')}
+                        className="w-full p-4 flex items-center justify-between text-left disabled:opacity-50"
+                    >
+                        <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
+                            <Edit2 className="w-5 h-5 text-purple-500 dark:text-purple-400" /> 
+                            Modify Content
+                        </span>
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeTool === 'modify' ? 'rotate-180' : ''}`}/>
+                    </button>
+                    {activeTool === 'modify' && (
+                        <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
+                            {/* Tip */}
+                            <p className="text-xs text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 px-3 py-2 rounded-lg">
+                                💡 Describe changes in text, or upload a reference image for AI to follow.
+                            </p>
 
-                                {/* Prompt */}
-                                <div className="space-y-1.5">
-                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Describe the changes</label>
-                                    <textarea 
-                                        value={modifyPrompt}
-                                        onChange={(e) => setModifyPrompt(e.target.value)}
-                                        rows={3}
-                                        placeholder="e.g., Add soft morning light, change background to beach..." 
-                                        className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
+                            {/* Prompt */}
+                            <div className="space-y-1.5">
+                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Describe the changes</label>
+                                <textarea 
+                                    value={modifyPrompt}
+                                    onChange={(e) => setModifyPrompt(e.target.value)}
+                                    rows={3}
+                                    placeholder="e.g., Add soft morning light, change background to beach..." 
+                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none"
+                                />
+                            </div>
+
+                            {/* Reference Image Upload (Optional) */}
+                            <div className="space-y-1.5">
+                                <label className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
+                                    Reference image
+                                    <span className="text-slate-400">(optional)</span>
+                                </label>
+                                <div className="border border-dashed border-slate-200 dark:border-white/10 rounded-lg p-2 transition-colors hover:border-purple-500/30 relative group">
+                                    <input 
+                                        type="file" 
+                                        onChange={(e) => {
+                                            if (e.target.files && e.target.files[0]) {
+                                                setModifyReferenceFile(e.target.files[0]);
+                                            }
+                                        }} 
+                                        className="absolute inset-0 opacity-0 cursor-pointer z-10" 
+                                        accept="image/png, image/jpeg, image/webp" 
                                     />
-                                </div>
-
-                                {/* Reference Image Upload (Optional) */}
-                                <div className="space-y-1.5">
-                                    <label className="text-xs text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1.5">
-                                        Reference image
-                                        <span className="text-slate-400">(optional)</span>
-                                    </label>
-                                    <div className="border border-dashed border-slate-200 dark:border-white/10 rounded-lg p-2 transition-colors hover:border-purple-500/30 relative group">
-                                        <input 
-                                            type="file" 
-                                            onChange={(e) => {
-                                                if (e.target.files && e.target.files[0]) {
-                                                    setModifyReferenceFile(e.target.files[0]);
-                                                }
-                                            }} 
-                                            className="absolute inset-0 opacity-0 cursor-pointer z-10" 
-                                            accept="image/png, image/jpeg, image/webp" 
-                                        />
-                                        {!modifyReferenceFile ? (
-                                            <div className="flex items-center gap-3 py-1">
-                                                <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10">
-                                                    <Upload className="w-4 h-4 text-slate-400 group-hover:text-purple-400" />
-                                                </div>
-                                                <p className="text-xs text-slate-500">Upload a style or scene reference</p>
+                                    {!modifyReferenceFile ? (
+                                        <div className="flex items-center gap-3 py-1">
+                                            <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10">
+                                                <Upload className="w-4 h-4 text-slate-400 group-hover:text-purple-400" />
                                             </div>
-                                        ) : (
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                                                    <img src={URL.createObjectURL(modifyReferenceFile)} className="w-full h-full object-cover" alt="ref" />
-                                                </div>
-                                                <div className="flex-1 min-w-0">
-                                                    <p className="text-xs font-medium text-slate-900 dark:text-white truncate">{modifyReferenceFile.name}</p>
-                                                </div>
-                                                <button 
-                                                    onClick={(e) => { e.preventDefault(); setModifyReferenceFile(null); }} 
-                                                    className="p-1.5 hover:bg-red-500/10 rounded-full z-20"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-400"/>
-                                                </button>
+                                            <p className="text-xs text-slate-500">Upload a style or scene reference</p>
+                                        </div>
+                                    ) : (
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden">
+                                                <img src={URL.createObjectURL(modifyReferenceFile)} className="w-full h-full object-cover" alt="ref" />
                                             </div>
-                                        )}
-                                    </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-xs font-medium text-slate-900 dark:text-white truncate">{modifyReferenceFile.name}</p>
+                                            </div>
+                                            <button 
+                                                onClick={(e) => { e.preventDefault(); setModifyReferenceFile(null); }} 
+                                                className="p-1.5 hover:bg-red-500/10 rounded-full z-20"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-400"/>
+                                            </button>
+                                        </div>
+                                    )}
                                 </div>
-
-                                <ImageCountSelector />
-                                <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || !modifyPrompt.trim()} onClick={() => runGeneration('Modify', modifyPrompt)}>
-                                    {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                                    Generate Changes
-                                </Button>
                             </div>
-                        )}
-                    </div>
 
-                    {/* RATIO Tool */}
-                    <div className={`col-span-1 glass-panel rounded-xl transition-all duration-300 ${activeTool === 'ratio' ? 'col-span-2 ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
-                        <button disabled={!hasSelectedImage} onClick={() => setActiveTool(activeTool === 'ratio' ? null : 'ratio')} className="w-full p-4 flex flex-col items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50">
-                            <Layers className={`w-6 h-6 transition-colors ${activeTool === 'ratio' ? 'text-pink-500 dark:text-pink-400' : 'text-slate-400'}`} />
-                            <span className="text-xs font-medium text-slate-500 dark:text-slate-300">Ratio</span>
-                        </button>
-                        {activeTool === 'ratio' && (
-                            <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
-                                <div className="grid grid-cols-5 gap-2">
-                                    {ratioOptions.map(r => (
-                                        <button 
-                                            key={r.label} 
-                                            onClick={() => setSelectedRatio(r.name)} 
-                                            className="flex flex-col items-center gap-1 group"
-                                        >
-                                            <div className={`w-full ${r.aspect} max-h-12 border-2 rounded transition-all duration-300 ${selectedRatio === r.name ? 'border-transparent bg-gradient-to-br from-purple-500 to-pink-500' : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 group-hover:border-pink-500'}`}></div>
-                                            <span className={`text-[10px] font-medium ${selectedRatio === r.name ? 'text-pink-500 dark:text-pink-400' : 'text-slate-500 dark:text-slate-400'}`}>{r.label}</span>
-                                        </button>
-                                    ))}
-                                </div>
-                                <ImageCountSelector />
-                                <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Ratio', selectedRatio)}>Update Ratio</Button>
-                            </div>
-                        )}
-                    </div>
+                            <ImageCountSelector />
+                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || !modifyPrompt.trim()} onClick={() => runGeneration('Modify', modifyPrompt)}>
+                                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
+                                Generate Changes
+                            </Button>
+                        </div>
+                    )}
+                </div>
 
-                    {/* ENHANCE Tool */}
-                    <div className={`col-span-1 glass-panel rounded-xl transition-all duration-300 ${activeTool === 'enhance' ? 'col-span-2 ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
-                        <button disabled={!hasSelectedImage} onClick={() => setActiveTool(activeTool === 'enhance' ? null : 'enhance')} className="w-full p-4 flex flex-col items-center justify-center gap-2 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors disabled:opacity-50">
-                            <Wand2 className={`w-6 h-6 transition-colors ${activeTool === 'enhance' ? 'text-pink-500 dark:text-pink-400' : 'text-slate-400'}`} />
-                            <span className="text-xs font-medium text-slate-500 dark:text-slate-300">Enhance</span>
-                        </button>
-                        {activeTool === 'enhance' && (
-                            <div className="px-4 pb-4 pt-0 animate-in slide-in-from-top-2 space-y-4 border-t border-slate-200 dark:border-white/5 mt-2 pt-4">
-                                <p className="text-xs text-slate-500 dark:text-slate-400">Upscale resolution and improve details.</p>
-                                <ImageCountSelector />
-                                <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Enhance', 'High Resolution Upscale')}>Enhance Image</Button>
+                {/* 3. RATIO Tool */}
+                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'ratio' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                    <button 
+                        disabled={!hasSelectedImage}
+                        onClick={() => setActiveTool(activeTool === 'ratio' ? null : 'ratio')}
+                        className="w-full p-4 flex items-center justify-between text-left disabled:opacity-50"
+                    >
+                        <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
+                            <Layers className="w-5 h-5 text-pink-500 dark:text-pink-400" /> 
+                            Change Ratio
+                        </span>
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeTool === 'ratio' ? 'rotate-180' : ''}`}/>
+                    </button>
+                    {activeTool === 'ratio' && (
+                        <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
+                            <div className="grid grid-cols-5 gap-2">
+                                {ratioOptions.map(r => (
+                                    <button 
+                                        key={r.label} 
+                                        onClick={() => setSelectedRatio(r.name)} 
+                                        className="flex flex-col items-center gap-1 group"
+                                    >
+                                        <div className={`w-full ${r.aspect} max-h-12 border-2 rounded transition-all duration-300 ${selectedRatio === r.name ? 'border-transparent bg-gradient-to-br from-purple-500 to-pink-500' : 'border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 group-hover:border-pink-500'}`}></div>
+                                        <span className={`text-[10px] font-medium ${selectedRatio === r.name ? 'text-pink-500 dark:text-pink-400' : 'text-slate-500 dark:text-slate-400'}`}>{r.label}</span>
+                                    </button>
+                                ))}
                             </div>
-                        )}
-                    </div>
+                            <ImageCountSelector />
+                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Ratio', selectedRatio)}>
+                                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
+                                Update Ratio
+                            </Button>
+                        </div>
+                    )}
+                </div>
+
+                {/* 4. ENHANCE Tool */}
+                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'enhance' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                    <button 
+                        disabled={!hasSelectedImage}
+                        onClick={() => setActiveTool(activeTool === 'enhance' ? null : 'enhance')}
+                        className="w-full p-4 flex items-center justify-between text-left disabled:opacity-50"
+                    >
+                        <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
+                            <Wand2 className="w-5 h-5 text-pink-500 dark:text-pink-400" /> 
+                            Enhance
+                        </span>
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeTool === 'enhance' ? 'rotate-180' : ''}`}/>
+                    </button>
+                    {activeTool === 'enhance' && (
+                        <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Upscale resolution and improve details.</p>
+                            <ImageCountSelector />
+                            <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating} onClick={() => runGeneration('Enhance', 'High Resolution Upscale')}>
+                                {isGenerating ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
+                                Enhance Image
+                            </Button>
+                        </div>
+                    )}
                 </div>
             </div>
           </div>
