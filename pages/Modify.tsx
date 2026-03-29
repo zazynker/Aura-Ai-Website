@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2 } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { mockTemplates } from '../data/mockData';
 import { Button } from '../components/ui/Button';
@@ -91,6 +91,14 @@ export const Modify = () => {
   const [ratioPrompt, setRatioPrompt] = useState(''); // Prompt for expanded areas in ratio change
   const [selectedResolution, setSelectedResolution] = useState('2K'); // Default to 2K
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+
+  // Text to Image State
+  const [t2iPrompt, setT2iPrompt] = useState('');
+  const [t2iFiles, setT2iFiles] = useState<File[]>([]);
+  const [t2iRatio, setT2iRatio] = useState('1:1');
+  const [t2iSize, setT2iSize] = useState('1K');
+  const [t2iOutputCount, setT2iOutputCount] = useState(4);
+  const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | null>(null);
 
   // --- Logic: History ---
   const history = useMemo(() => {
@@ -548,6 +556,124 @@ export const Modify = () => {
     }
   };
 
+  // --- Text to Image Generation ---
+  const runTextToImage = async () => {
+    if (!user) { navigate('/login'); return; }
+    if (user.credits < t2iOutputCount) { 
+      addToast('error', 'Not enough credits'); 
+      navigate('/pricing'); 
+      return; 
+    }
+
+    if (!t2iPrompt.trim()) {
+      addToast('error', 'Please enter a prompt');
+      return;
+    }
+
+    setIsGenerating(true);
+    setShowResults(false);
+    setProgress(0);
+
+    // Progress animation
+    const progressInterval = setInterval(() => {
+      setProgress(prev => Math.min(prev + Math.random() * 8, 90));
+    }, 500);
+
+    try {
+      // Upload reference images if any
+      let referenceImageUrls: string[] = [];
+      if (t2iFiles.length > 0) {
+        setIsUploading(true);
+        for (const file of t2iFiles) {
+          const result = await uploadUserImage(user.id, file);
+          if (result.url) {
+            referenceImageUrls.push(result.url);
+          }
+        }
+        setIsUploading(false);
+      }
+
+      // Build the prompt
+      let fullPrompt = t2iPrompt.trim();
+      if (referenceImageUrls.length > 0) {
+        fullPrompt = `Generate an image based on this description: ${t2iPrompt.trim()}. Use the provided reference images for style, composition, or content guidance.`;
+      }
+
+      console.log('=== Text to Image Generation ===');
+      console.log('Prompt:', fullPrompt);
+      console.log('Reference images:', referenceImageUrls.length);
+      console.log('Ratio:', t2iRatio);
+      console.log('Size:', t2iSize);
+      console.log('Output count:', t2iOutputCount);
+
+      // Call API - for T2I, we pass reference images as the base image if available
+      const result = await generateImages({
+        prompt: fullPrompt,
+        imageUrl: referenceImageUrls[0], // First reference as base
+        productImageUrl: referenceImageUrls[1], // Second reference if available
+        numberOfImages: t2iOutputCount,
+        imageSize: t2iSize as '1K' | '2K' | '4K',
+        aspectRatio: t2iRatio,
+      });
+
+      clearInterval(progressInterval);
+
+      if (!result.success || !result.images || result.images.length === 0) {
+        console.error('T2I generation failed:', result.error);
+        setIsGenerating(false);
+        setProgress(0);
+        addToast('error', result.error || 'Generation failed. Please try again.');
+        return;
+      }
+
+      console.log('=== T2I Generation Successful ===');
+      console.log('Generated images:', result.images.length);
+      setProgress(100);
+
+      const newImages = result.images;
+      const sourceId = 'text2img_' + Date.now();
+      const sourceName = 'Text to Image';
+
+      // Update source
+      setCurrentImageSource({ templateId: sourceId, templateName: sourceName });
+      setOriginalUploadedImage(newImages[0]);
+
+      // Create Generation records
+      const newGenerations: Generation[] = newImages.map(imgUrl => ({
+        id: `gen_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        userId: user?.id || '',
+        templateId: sourceId,
+        templateName: sourceName,
+        imageUrl: imgUrl,
+        createdAt: Date.now(),
+        creditsUsed: 1,
+        prompt: t2iPrompt || 'Text to Image',
+        isOriginal: false
+      }));
+
+      addGenerations(newGenerations);
+
+      setTimeout(() => {
+        setIsGenerating(false);
+        setGeneratedResults(newImages);
+        setCurrentImage(newImages[0]);
+        setHasSelectedImage(true);
+        setActiveTool(null); // Close T2I panel after success
+        setShowResults(true);
+        setProgress(0);
+        addToast('success', `Generated ${newImages.length} image(s)!`);
+      }, 300);
+
+    } catch (err) {
+      console.error('T2I generation exception:', err);
+      clearInterval(progressInterval);
+      setIsGenerating(false);
+      setIsUploading(false);
+      setProgress(0);
+      addToast('error', err instanceof Error ? err.message : 'Generation failed. Please try again.');
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     console.log('=== Product image input onChange triggered ===');
     if (e.target.files && e.target.files[0]) {
@@ -650,8 +776,17 @@ export const Modify = () => {
                 </div>
 
                 <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-4 uppercase tracking-wider pl-1 flex items-center gap-2 truncate">
-                    <Layers className="w-4 h-4 shrink-0" /> 
-                    {historyTab === 'current' ? 'Session' : 'All History'}
+                    {activeTool === 'text2img' ? (
+                        <>
+                            <Type className="w-4 h-4 shrink-0 text-orange-500" /> 
+                            Text to Image
+                        </>
+                    ) : (
+                        <>
+                            <Layers className="w-4 h-4 shrink-0" /> 
+                            {historyTab === 'current' ? 'Session' : 'All History'}
+                        </>
+                    )}
                 </h3>
                 
                 {historyTab === 'current' ? (
@@ -736,7 +871,238 @@ export const Modify = () => {
 
             {/* CENTER COLUMN: Preview */}
             <div className="flex-1 glass-panel rounded-2xl relative overflow-hidden flex items-center justify-center bg-slate-100 dark:bg-slate-800/50 mt-8 md:mt-0">
-                {!hasSelectedImage ? (
+                {activeTool === 'text2img' ? (
+                    // --- TEXT TO IMAGE STATE ---
+                    <>
+                        <div className="h-full w-full animate-in zoom-in-95 duration-300">
+                            <div className="min-h-full w-full flex items-center justify-center p-4 sm:p-8">
+                                <div className="w-full max-w-2xl space-y-6">
+                                    <div className="text-center space-y-2">
+                                        <h2 className="text-3xl font-bold text-slate-900 dark:text-white flex items-center justify-center gap-3">
+                                            <Sparkles className="w-8 h-8 text-orange-500" />
+                                            Text to Image
+                                        </h2>
+                                        <p className="text-slate-500 dark:text-slate-400">Generate a completely new image from your imagination</p>
+                                    </div>
+
+                                    <div className="glass-panel rounded-2xl bg-white dark:bg-slate-900 flex flex-col border border-slate-200 dark:border-white/10 shadow-sm p-4">
+                                        {/* Top section: Upload + Prompt */}
+                                        <div className="flex flex-col md:flex-row mb-4">
+                                            {/* Left: Upload (max 3) */}
+                                            <div className="flex gap-2 mb-4 md:mb-0 md:mr-4 shrink-0 group/stack relative">
+                                                {t2iFiles.length === 0 ? (
+                                                    <div className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-200 dark:border-white/10 flex items-center justify-center hover:border-orange-500/50 hover:bg-orange-50/50 dark:hover:bg-orange-900/20 transition-colors relative cursor-pointer bg-slate-50/50 dark:bg-slate-950/50">
+                                                        <input 
+                                                            type="file" 
+                                                            multiple
+                                                            accept="image/*"
+                                                            onChange={(e) => {
+                                                                if (e.target.files) {
+                                                                    const newFiles = Array.from(e.target.files);
+                                                                    setT2iFiles(prev => [...prev, ...newFiles].slice(0, 3));
+                                                                }
+                                                            }}
+                                                            className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                                        />
+                                                        <Plus className="w-6 h-6 text-slate-400 group-hover:text-orange-500" />
+                                                    </div>
+                                                ) : (
+                                                    <div className="flex relative">
+                                                        {/* First image container */}
+                                                        <div className="relative z-30 shrink-0">
+                                                            <div className="w-24 h-24 rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-sm">
+                                                                <img src={URL.createObjectURL(t2iFiles[0])} className="w-full h-full object-cover" alt="reference" />
+                                                                <button 
+                                                                    onClick={(e) => {
+                                                                        e.preventDefault();
+                                                                        setT2iFiles(prev => prev.filter((_, i) => i !== 0));
+                                                                    }}
+                                                                    className="absolute top-1 right-1 p-1 bg-black/50 hover:bg-red-500 text-white rounded-full opacity-0 group-hover/stack:opacity-100 transition-opacity z-40"
+                                                                >
+                                                                    <X className="w-3 h-3" />
+                                                                </button>
+                                                            </div>
+                                                            {/* Add button */}
+                                                            {t2iFiles.length < 3 && (
+                                                                <div className="absolute -bottom-2 -right-2 w-7 h-7 bg-white dark:bg-slate-800 rounded-full shadow-md border border-slate-200 dark:border-white/10 flex items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 z-50 transition-transform hover:scale-110">
+                                                                    <input 
+                                                                        type="file" 
+                                                                        multiple
+                                                                        accept="image/*"
+                                                                        onChange={(e) => {
+                                                                            if (e.target.files) {
+                                                                                const newFiles = Array.from(e.target.files);
+                                                                                setT2iFiles(prev => [...prev, ...newFiles].slice(0, 3));
+                                                                            }
+                                                                        }}
+                                                                        className="absolute inset-0 opacity-0 cursor-pointer z-10"
+                                                                    />
+                                                                    <Plus className="w-4 h-4 text-slate-600 dark:text-slate-300" />
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        
+                                                        {/* Stacked images */}
+                                                        {t2iFiles.slice(1).map((file, idx) => {
+                                                            const actualIdx = idx + 1;
+                                                            return (
+                                                                <div 
+                                                                    key={actualIdx} 
+                                                                    className={`w-24 h-24 rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-sm transition-all duration-300 ease-out absolute top-0 left-0 shrink-0
+                                                                        ${actualIdx === 1 ? 'z-20 translate-x-2 translate-y-2 group-hover/stack:relative group-hover/stack:translate-x-0 group-hover/stack:translate-y-0 group-hover/stack:ml-2' : ''}
+                                                                        ${actualIdx === 2 ? 'z-10 translate-x-4 translate-y-4 group-hover/stack:relative group-hover/stack:translate-x-0 group-hover/stack:translate-y-0 group-hover/stack:ml-2' : ''}
+                                                                    `}
+                                                                >
+                                                                    <img src={URL.createObjectURL(file)} className="w-full h-full object-cover" alt="reference" />
+                                                                    <button 
+                                                                        onClick={(e) => {
+                                                                            e.preventDefault();
+                                                                            setT2iFiles(prev => prev.filter((_, i) => i !== actualIdx));
+                                                                        }}
+                                                                        className="absolute top-1 right-1 p-1 bg-black/50 hover:bg-red-500 text-white rounded-full opacity-0 group-hover/stack:opacity-100 transition-opacity z-40"
+                                                                    >
+                                                                        <X className="w-3 h-3" />
+                                                                    </button>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Right: Prompt */}
+                                            <div className="flex-1">
+                                                <textarea 
+                                                    value={t2iPrompt}
+                                                    onChange={(e) => setT2iPrompt(e.target.value)}
+                                                    placeholder="Describe the image you want to generate in detail..."
+                                                    className="w-full h-full min-h-[96px] bg-transparent border-none focus:ring-0 focus:outline-none text-slate-900 dark:text-white resize-none placeholder-slate-400 p-2"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Bottom section: Settings & Generate */}
+                                        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 relative">
+                                            {/* Invisible overlay to close dropdowns */}
+                                            {openDropdown && (
+                                                <div 
+                                                    className="fixed inset-0 z-40" 
+                                                    onClick={() => setOpenDropdown(null)}
+                                                />
+                                            )}
+                                            <div className="flex flex-wrap items-center gap-3 relative z-50">
+                                                {/* Quantity Dropdown */}
+                                                <div className="relative">
+                                                    <button 
+                                                        onClick={() => setOpenDropdown(openDropdown === 'count' ? null : 'count')}
+                                                        className="flex items-center gap-2 px-3 h-9 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-white/5 shadow-sm text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                                                    >
+                                                        <span>Variations: {t2iOutputCount}</span>
+                                                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${openDropdown === 'count' ? 'rotate-180' : ''}`} />
+                                                    </button>
+                                                    {openDropdown === 'count' && (
+                                                        <div className="absolute top-full left-0 mt-2 w-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-xl shadow-xl z-50 animate-in fade-in slide-in-from-top-2 p-1">
+                                                            <div className="flex flex-col max-h-48 overflow-y-auto rounded-lg custom-scrollbar">
+                                                                {[1, 2, 3, 4].map(num => (
+                                                                    <button
+                                                                        key={num}
+                                                                        onClick={() => { setT2iOutputCount(num); setOpenDropdown(null); }}
+                                                                        className={`px-3 py-2 text-sm text-left rounded-md transition-colors ${t2iOutputCount === num ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 font-medium' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
+                                                                    >
+                                                                        {num} Image{num > 1 ? 's' : ''}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Ratio Dropdown */}
+                                                <div className="relative">
+                                                    <button 
+                                                        onClick={() => setOpenDropdown(openDropdown === 'ratio' ? null : 'ratio')}
+                                                        className="flex items-center gap-2 px-3 h-9 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-white/5 shadow-sm text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                                                    >
+                                                        <span>Ratio: {t2iRatio}</span>
+                                                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${openDropdown === 'ratio' ? 'rotate-180' : ''}`} />
+                                                    </button>
+                                                    {openDropdown === 'ratio' && (
+                                                        <div className="absolute top-full left-0 mt-2 w-40 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-xl shadow-xl z-50 animate-in fade-in slide-in-from-top-2 p-1">
+                                                            <div className="grid grid-cols-2 gap-1">
+                                                                {['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2'].map(ratio => (
+                                                                    <button
+                                                                        key={ratio}
+                                                                        onClick={() => { setT2iRatio(ratio); setOpenDropdown(null); }}
+                                                                        className={`px-3 py-2 text-sm text-center rounded-md transition-colors ${ratio === '1:1' ? 'col-span-2' : ''} ${t2iRatio === ratio ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 font-medium' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
+                                                                    >
+                                                                        {ratio}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+
+                                                {/* Size Dropdown */}
+                                                <div className="relative">
+                                                    <button 
+                                                        onClick={() => setOpenDropdown(openDropdown === 'size' ? null : 'size')}
+                                                        className="flex items-center gap-2 px-3 h-9 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-white/5 shadow-sm text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+                                                    >
+                                                        <span>Size: {t2iSize}</span>
+                                                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${openDropdown === 'size' ? 'rotate-180' : ''}`} />
+                                                    </button>
+                                                    {openDropdown === 'size' && (
+                                                        <div className="absolute top-full left-0 mt-2 w-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-xl shadow-xl z-50 animate-in fade-in slide-in-from-top-2 p-1">
+                                                            <div className="flex flex-col max-h-48 overflow-y-auto rounded-lg custom-scrollbar">
+                                                                {['1K', '2K', '4K'].map(size => (
+                                                                    <button
+                                                                        key={size}
+                                                                        onClick={() => { setT2iSize(size); setOpenDropdown(null); }}
+                                                                        className={`px-3 py-2 text-sm text-left rounded-md transition-colors ${t2iSize === size ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 font-medium' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
+                                                                    >
+                                                                        {size}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <button 
+                                                className="w-full sm:w-auto h-10 px-6 rounded-xl shadow-lg shadow-orange-900/20 shrink-0 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white border-none flex items-center justify-center gap-2 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                                                onClick={runTextToImage} 
+                                                disabled={isGenerating || isUploading || !t2iPrompt.trim()}
+                                            >
+                                                {isGenerating || isUploading ? <Loader2 className="w-5 h-5 animate-spin"/> : <ArrowUp className="w-5 h-5" />}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                            
+                        {/* Progress Overlay for T2I */}
+                        {(isGenerating || isUploading) && (
+                            <div className="absolute inset-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
+                                <div className="w-64 space-y-4">
+                                    <div className="flex justify-between text-xs font-medium uppercase tracking-wider text-slate-900 dark:text-white">
+                                        <span className="flex items-center gap-2"><Sparkles className="w-3 h-3 animate-pulse text-orange-500 dark:text-orange-400"/> {isUploading ? 'Uploading' : 'Generating'}</span>
+                                        <span>{Math.round(progress)}%</span>
+                                    </div>
+                                    <div className="h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden border border-slate-300 dark:border-white/5">
+                                        <div 
+                                            className="h-full bg-gradient-to-r from-orange-600 via-amber-500 to-orange-600 transition-all duration-75 ease-linear"
+                                            style={{ width: `${progress}%` }}
+                                        />
+                                    </div>
+                                    <p className="text-center text-xs text-slate-500 dark:text-slate-400 animate-pulse">Creating {t2iOutputCount} variation{t2iOutputCount > 1 ? 's' : ''}...</p>
+                                </div>
+                            </div>
+                        )}
+                    </>
+                ) : !hasSelectedImage ? (
                     // --- NO IMAGE STATE ---
                     <div className="flex flex-col items-center justify-center gap-6 p-8 text-center">
                          <div className="w-20 h-20 rounded-full bg-slate-200 dark:bg-white/5 flex items-center justify-center">
@@ -1328,6 +1694,38 @@ export const Modify = () => {
                                 {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
                                 Upscale to {selectedResolution}
                             </Button>
+                        </div>
+                    )}
+                </div>
+
+                {/* 5. TEXT TO IMAGE Tool */}
+                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'text2img' ? 'ring-1 ring-orange-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                    <button 
+                        onClick={() => {
+                            setActiveTool(activeTool === 'text2img' ? null : 'text2img');
+                            if (activeTool !== 'text2img') {
+                                setT2iOutputCount(4); // Default to 4 when activating
+                            }
+                        }}
+                        className="w-full p-4 flex items-center justify-between text-left"
+                    >
+                        <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
+                            <Type className="w-5 h-5 text-orange-500 dark:text-orange-400" /> 
+                            Text to Image
+                        </span>
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeTool === 'text2img' ? 'rotate-180' : ''}`}/>
+                    </button>
+                    {activeTool === 'text2img' && (
+                        <div className="px-4 pb-4 space-y-3 animate-in slide-in-from-top-2">
+                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                                Use the central area to configure and generate your new image from text.
+                            </p>
+                            <div className="flex items-center gap-2 p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800/30">
+                                <Sparkles className="w-4 h-4 text-orange-500 shrink-0" />
+                                <p className="text-xs text-orange-700 dark:text-orange-300">
+                                    No base image needed. Describe your vision and AI will create it.
+                                </p>
+                            </div>
                         </div>
                     )}
                 </div>
