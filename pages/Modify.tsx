@@ -739,10 +739,12 @@ export const Modify = () => {
 
   const ratioOptions = [
     { label: '1:1', name: 'Square', width: 32, height: 32 },
+    { label: '4:3', name: 'Standard', width: 32, height: 24 },
     { label: '3:4', name: 'Portrait', width: 24, height: 32 },
-    { label: '9:16', name: 'Story', width: 18, height: 32 },
+    { label: '3:2', name: 'Photo', width: 32, height: 21 },
+    { label: '2:3', name: 'Pinterest', width: 21, height: 32 },
     { label: '16:9', name: 'Landscape', width: 32, height: 18 },
-    { label: '2:3', name: 'Pinterest', width: 22, height: 32 },
+    { label: '9:16', name: 'Story', width: 18, height: 32 },
   ];
 
   return (
@@ -1083,22 +1085,21 @@ export const Modify = () => {
                             </div>
                         </div>
                             
-                        {/* Progress Overlay for T2I */}
+                        {/* Progress Overlay for T2I - Pink spinning style */}
                         {(isGenerating || isUploading) && (
-                            <div className="absolute inset-0 z-30 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md flex flex-col items-center justify-center animate-in fade-in duration-300">
-                                <div className="w-64 space-y-4">
-                                    <div className="flex justify-between text-xs font-medium uppercase tracking-wider text-slate-900 dark:text-white">
-                                        <span className="flex items-center gap-2"><Sparkles className="w-3 h-3 animate-pulse text-orange-500 dark:text-orange-400"/> {isUploading ? 'Uploading' : 'Generating'}</span>
-                                        <span>{Math.round(progress)}%</span>
-                                    </div>
-                                    <div className="h-2 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden border border-slate-300 dark:border-white/5">
-                                        <div 
-                                            className="h-full bg-gradient-to-r from-orange-600 via-amber-500 to-orange-600 transition-all duration-75 ease-linear"
-                                            style={{ width: `${progress}%` }}
-                                        />
-                                    </div>
-                                    <p className="text-center text-xs text-slate-500 dark:text-slate-400 animate-pulse">Creating {t2iOutputCount} variation{t2iOutputCount > 1 ? 's' : ''}...</p>
+                            <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center gap-4">
+                                <div className="relative w-24 h-24">
+                                    <Loader2 className="w-24 h-24 text-purple-500 animate-spin" />
+                                    <Sparkles className="absolute inset-0 m-auto w-10 h-10 text-white animate-pulse" />
                                 </div>
+                                <p className="text-white font-semibold text-lg">
+                                    {isUploading ? 'Uploading images...' : 'Generating your magic...'}
+                                </p>
+                                {isGenerating && (
+                                    <div className="w-48 h-2 bg-white/20 rounded-full overflow-hidden">
+                                        <div className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300" style={{ width: `${progress}%` }}/>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </>
@@ -1587,7 +1588,7 @@ export const Modify = () => {
                             {/* Ratio Selector */}
                             <div className="space-y-2">
                                 <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Target aspect ratio</label>
-                                <div className="grid grid-cols-5 gap-3">
+                                <div className="grid grid-cols-7 gap-2">
                                     {ratioOptions.map(r => (
                                         <button 
                                             key={r.label} 
@@ -1621,8 +1622,8 @@ export const Modify = () => {
                                 <textarea 
                                     value={ratioPrompt}
                                     onChange={(e) => setRatioPrompt(e.target.value)}
-                                    placeholder="e.g., continue the same background style, blue sky with clouds, wooden floor extending..."
-                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-16"
+                                    placeholder="Continue the same background style, blue sky with clouds, wooden floor extending..."
+                                    className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-20"
                                 />
                             </div>
 
