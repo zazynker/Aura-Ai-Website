@@ -74,6 +74,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Add the text prompt LAST
         parts.push({ text: prompt });
 
+        // Determine if this is a pure text-to-image request (no input images)
+        const isPureTextToImage = !imageUrl && !productImageUrl;
+
         // Build imageConfig for resolution and aspect ratio
         // Note: Gemini API uses camelCase for these parameters
         const imageConfig: any = {};
@@ -86,12 +89,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Build the full request body
+        // For pure text-to-image, we need both TEXT and IMAGE in responseModalities
         const requestBody: any = {
             contents: [{
                 parts: parts
             }],
             generationConfig: {
-                responseModalities: ["Image"],
+                // Pure text-to-image requires both TEXT and IMAGE modalities
+                // Image editing (with input images) can use just IMAGE
+                responseModalities: isPureTextToImage ? ["TEXT", "IMAGE"] : ["IMAGE"],
                 temperature: 1,
             },
             safetySettings: [
@@ -101,6 +107,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
             ]
         };
+
+        console.log('Is pure text-to-image:', isPureTextToImage);
+        console.log('Response modalities:', requestBody.generationConfig.responseModalities);
 
         // Add imageConfig if we have any settings
         if (Object.keys(imageConfig).length > 0) {
