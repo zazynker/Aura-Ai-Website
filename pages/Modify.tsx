@@ -75,11 +75,8 @@ export const Modify = () => {
   const [productSizePercent, setProductSizePercent] = useState<string>(''); // Empty = no adjustment
   
   // Inputs
-  const [prompt, setPrompt] = useState(() => {
-    // 从localStorage读取上次的describe
-    const saved = localStorage.getItem('lazora_describe_prompt');
-    return saved || '';
-  });
+  // prompt 初始为空，但保留 describeHistory（Recent 记录）
+  const [prompt, setPrompt] = useState('');
   const [describeHistory, setDescribeHistory] = useState<string[]>(() => {
     const saved = localStorage.getItem('lazora_describe_history');
     return saved ? JSON.parse(saved) : [];
@@ -282,7 +279,7 @@ export const Modify = () => {
     const newHistory = [text, ...describeHistory.filter(h => h !== text)].slice(0, 3);
     setDescribeHistory(newHistory);
     localStorage.setItem('lazora_describe_history', JSON.stringify(newHistory));
-    localStorage.setItem('lazora_describe_prompt', text);
+    // 不再保存当前 prompt，只保存 history
   };
 
   const runGeneration = async (toolName: string, promptText: string) => {
@@ -872,7 +869,7 @@ export const Modify = () => {
             </div>
 
             {/* CENTER COLUMN: Preview */}
-            <div className="flex-1 glass-panel rounded-2xl relative overflow-hidden flex items-center justify-center bg-slate-100 dark:bg-slate-800/50 mt-8 md:mt-0">
+            <div className={`flex-1 glass-panel rounded-2xl relative overflow-hidden flex items-center justify-center mt-8 md:mt-0 ${activeTool === 'text2img' ? 'bg-white dark:bg-slate-900' : 'bg-slate-100 dark:bg-slate-800/50'}`}>
                 {activeTool === 'text2img' ? (
                     // --- TEXT TO IMAGE STATE ---
                     <>
@@ -887,7 +884,7 @@ export const Modify = () => {
                                         <p className="text-slate-500 dark:text-slate-400">Generate a completely new image from your imagination</p>
                                     </div>
 
-                                    <div className="glass-panel rounded-2xl bg-white dark:bg-slate-900 flex flex-col border border-slate-200 dark:border-white/10 shadow-sm p-4">
+                                    <div className="rounded-2xl bg-white dark:bg-slate-900 flex flex-col border border-slate-200 dark:border-white/10 shadow-sm p-4">
                                         {/* Top section: Upload + Prompt */}
                                         <div className="flex flex-col md:flex-row mb-4">
                                             {/* Left: Upload (max 3) */}
@@ -1494,7 +1491,7 @@ export const Modify = () => {
                                         <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 invisible group-hover/tip:opacity-100 group-hover/tip:visible transition-all whitespace-nowrap z-50">Upload an image for AI to reference</div>
                                     </div>
                                 </div>
-                                <div className="border-2 border-dashed border-slate-200 dark:border-white/10 rounded-xl p-2 transition-colors hover:border-purple-500/30 hover:bg-white dark:hover:bg-white/5 relative group">
+                                <div className="border-2 border-dashed border-slate-200 dark:border-white/10 rounded-xl p-3 transition-colors hover:border-purple-500/30 hover:bg-white dark:hover:bg-white/5 relative group">
                                     <input 
                                         type="file" 
                                         onChange={(e) => {
@@ -1532,29 +1529,29 @@ export const Modify = () => {
                                         accept="image/png, image/jpeg, image/webp" 
                                     />
                                     {!modifyReferenceFile ? (
-                                        <div className="flex items-center gap-2 py-1">
-                                            <div className="w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10 transition-colors">
-                                                <Upload className="w-4 h-4 text-slate-400 group-hover:text-purple-400" />
+                                        <div className="flex flex-col items-center gap-2 py-3">
+                                            <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:bg-purple-500/10 transition-colors">
+                                                <Upload className="w-5 h-5 text-slate-400 group-hover:text-purple-400" />
                                             </div>
-                                            <div>
-                                                <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Click to upload reference</p>
-                                                <p className="text-[10px] text-slate-400">PNG, JPG, WebP • Max 10MB</p>
+                                            <div className="text-center">
+                                                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Click to upload reference</p>
+                                                <p className="text-[10px] text-slate-400 mt-0.5">PNG, JPG, WebP • Max 10MB</p>
                                             </div>
                                         </div>
                                     ) : (
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-10 h-10 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden border border-slate-200 dark:border-white/10">
+                                        <div className="flex items-center gap-3">
+                                            <div className="w-12 h-12 rounded-lg bg-slate-100 dark:bg-slate-800 overflow-hidden border border-slate-200 dark:border-white/10">
                                                 <img src={URL.createObjectURL(modifyReferenceFile)} className="w-full h-full object-cover" alt="reference" />
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <p className="text-xs font-medium text-slate-900 dark:text-white truncate">{modifyReferenceFile.name}</p>
-                                                <p className="text-[10px] text-slate-500">{(modifyReferenceFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                                                <p className="text-sm font-medium text-slate-900 dark:text-white truncate">{modifyReferenceFile.name}</p>
+                                                <p className="text-xs text-slate-500">{(modifyReferenceFile.size / 1024 / 1024).toFixed(2)} MB</p>
                                             </div>
                                             <button 
                                                 onClick={(e) => { e.preventDefault(); setModifyReferenceFile(null); }} 
-                                                className="p-1.5 hover:bg-red-500/10 rounded-full z-20"
+                                                className="p-2 hover:bg-red-500/10 rounded-full z-20 group/del"
                                             >
-                                                <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-400"/>
+                                                <Trash2 className="w-4 h-4 text-slate-500 group-hover/del:text-red-400"/>
                                             </button>
                                         </div>
                                     )}
@@ -1678,15 +1675,15 @@ export const Modify = () => {
                                                 {res.size}
                                             </div>
                                             {res.isPro && (
-                                                <div className="absolute -top-1.5 -right-1.5 px-1 py-0.5 rounded bg-gradient-to-r from-purple-600 to-pink-600 text-[7px] font-bold text-white">
-                                                    2×
+                                                <div className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded bg-gradient-to-r from-purple-600 to-pink-600 text-[7px] font-bold text-white">
+                                                    PRO
                                                 </div>
                                             )}
                                         </button>
                                     ))}
                                 </div>
                                 <p className="text-[10px] text-slate-400">
-                                    Max: 4096×4096 (4K) • 4K uses 2× credits
+                                    Max: 4096×4096 (4K)
                                 </p>
                             </div>
 
@@ -1719,14 +1716,8 @@ export const Modify = () => {
                     {activeTool === 'text2img' && (
                         <div className="px-4 pb-4 space-y-3 animate-in slide-in-from-top-2">
                             <p className="text-sm text-slate-500 dark:text-slate-400">
-                                Use the central area to configure and generate your new image from text.
+                                Describe what you want to create. Add reference images if needed.
                             </p>
-                            <div className="flex items-center gap-2 p-2 bg-orange-50 dark:bg-orange-900/20 rounded-lg border border-orange-200 dark:border-orange-800/30">
-                                <Sparkles className="w-4 h-4 text-orange-500 shrink-0" />
-                                <p className="text-xs text-orange-700 dark:text-orange-300">
-                                    No base image needed. Describe your vision and AI will create it.
-                                </p>
-                            </div>
                         </div>
                     )}
                 </div>
