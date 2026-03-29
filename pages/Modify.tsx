@@ -869,7 +869,7 @@ export const Modify = () => {
             </div>
 
             {/* CENTER COLUMN: Preview */}
-            <div className={`flex-1 glass-panel rounded-2xl relative overflow-hidden flex items-center justify-center mt-8 md:mt-0 ${activeTool === 'text2img' ? 'bg-white dark:bg-slate-900' : 'bg-slate-100 dark:bg-slate-800/50'}`}>
+            <div className="flex-1 glass-panel rounded-2xl relative overflow-hidden flex items-center justify-center mt-8 md:mt-0 bg-white dark:bg-slate-900">
                 {activeTool === 'text2img' ? (
                     // --- TEXT TO IMAGE STATE ---
                     <>
