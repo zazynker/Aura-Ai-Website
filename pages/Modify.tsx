@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { mockTemplates } from '../data/mockData';
 import { Button } from '../components/ui/Button';
@@ -1171,7 +1171,7 @@ export const Modify = () => {
                                 onClick={handleDownload}
                                 className="glass-panel px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-white/10"
                             >
-                                <ArrowLeft className="w-4 h-4 rotate-[-90deg]" /> Download
+                                <Download className="w-4 h-4" /> Download
                             </a>
                         </div>
 
@@ -1648,10 +1648,6 @@ export const Modify = () => {
                     </button>
                     {activeTool === 'enhance' && (
                         <div className="px-4 pb-4 space-y-4 animate-in slide-in-from-top-2">
-                            <p className="text-xs text-slate-500 dark:text-slate-400">
-                                Regenerate image at higher resolution. AI will recreate the image with more detail.
-                            </p>
-                            
                             {/* Resolution Selector */}
                             <div className="space-y-2">
                                 <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Target Resolution</label>
