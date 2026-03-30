@@ -306,17 +306,14 @@ const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) =
       const sourceId = currentImageSource?.templateId || template!.id;
       const sourceName = currentImageSource?.templateName || template!.name;
 
-      const newGenerations: Generation[] = newImages.map(imgUrl => ({
-          id: `gen_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          userId: user?.id || '',
-          templateId: sourceId,
-          templateName: sourceName,
-          imageUrl: imgUrl,
-          createdAt: Date.now(),
-          creditsUsed: 1,
-          prompt: promptText || toolName || 'AI Generation',
-          isOriginal: false
-      }));
+      const newGenerations = newImages.map(imgUrl => ({
+        userId: user?.id || '',
+        templateId: sourceId,
+        templateName: sourceName,
+        imageUrl: imgUrl,
+        creditsUsed: 1,
+        prompt: promptText || toolName || 'AI Generation',
+    }));
 
       addGenerations(newGenerations);
 

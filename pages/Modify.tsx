@@ -219,14 +219,8 @@ export const Modify = () => {
   };
 
   const handleGroupClick = (group: Generation[]) => {
-    // 默认显示组的第一张图片
-    setCurrentImage(group[0].imageUrl);
-    
-    // 只有多张图片时才弹出选择面板
-    if (group.length > 1) {
-      setSelectedGroup(group);
-      setShowResults(true);
-    }
+    setSelectedGroup(group);
+    setShowResults(true);
   };
 
   // --- Logic: Image Selection ---
@@ -585,18 +579,14 @@ export const Modify = () => {
         displayPrompt = `Upscale to ${promptText}`;
       }
 
-      const newGenerations: Generation[] = newImages.map(imgUrl => ({
-          id: `gen_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-          userId: user?.id || '',
-          templateId: currentImageSource.templateId,
-          templateName: currentImageSource.templateName,
-          imageUrl: imgUrl,
-          createdAt: Date.now(),
-          creditsUsed: 1,
-          prompt: displayPrompt,
-          isOriginal: false,
-          groupId
-      }));
+      const newGenerations = newImages.map(imgUrl => ({
+        userId: user?.id || '',
+        templateId: currentImageSource.templateId,
+        templateName: currentImageSource.templateName,
+        imageUrl: imgUrl,
+        creditsUsed: 1,
+        prompt: displayPrompt,
+    }));
 
       addGenerations(newGenerations);
 
@@ -703,18 +693,14 @@ export const Modify = () => {
       setOriginalUploadedImage(newImages[0]);
 
       // Create Generation records
-      const newGenerations: Generation[] = newImages.map(imgUrl => ({
-        id: `gen_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      const newGenerations = newImages.map(imgUrl => ({
         userId: user?.id || '',
         templateId: sourceId,
         templateName: sourceName,
         imageUrl: imgUrl,
-        createdAt: Date.now(),
         creditsUsed: 1,
         prompt: t2iPrompt || 'Text to Image',
-        isOriginal: false,
-        groupId
-      }));
+    }));
 
       addGenerations(newGenerations);
 
@@ -943,64 +929,24 @@ export const Modify = () => {
                     <>
                     {generations.length > 0 ? (
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                            {groupGenerations([...generations].sort((a, b) => b.createdAt - a.createdAt)).map((item, idx) => {
-                                if (Array.isArray(item)) {
-                                    // 分组显示
-                                    const group = item;
-                                    const isSelected = group.some(g => currentImage === g.imageUrl);
-                                    return (
-                                        <div 
-                                            key={`all_group_${idx}`} 
-                                            onClick={() => handleGroupClick(group)}
-                                            className="relative aspect-square cursor-pointer group shrink-0"
-                                        >
-                                            {/* 堆叠效果 */}
-                                            <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
-                                            <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
-                                            <div className={`absolute inset-0 rounded-xl overflow-hidden border-2 transition-all z-10 ${
-                                                isSelected
-                                                ? 'border-purple-500 ring-2 ring-purple-500/20' 
-                                                : 'border-transparent group-hover:border-purple-500/50'
-                                            }`}>
-                                                <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="history group" />
-                                                {/* 数量徽章 */}
-                                                <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
-                                                    <Layers className="w-3 h-3" /> {group.length}
-                                                </div>
-                                                {/* Hover 显示 prompt */}
-                                                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                } else {
-                                    // 单张显示
-                                    const gen = item;
-                                    return (
-                                        <div
-                                            key={gen.id}
-                                            onClick={() => handleAllHistoryClick(gen)}
-                                            className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${
-                                            currentImage === gen.imageUrl
-                                                ? 'border-purple-500 ring-2 ring-purple-500/20'
-                                                : 'border-transparent hover:border-purple-500/50'
-                                            }`}
-                                        >
-                                            <img
-                                            src={gen.imageUrl}
-                                            className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                                            alt="History item"
-                                            loading="lazy"
-                                            />
-                                            {/* Hover 显示 prompt */}
-                                            <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <p className="text-[10px] text-white truncate">{gen.prompt}</p>
-                                            </div>
-                                        </div>
-                                    );
-                                }
-                            })}
+                            {[...generations].sort((a, b) => b.createdAt - a.createdAt).map((gen) => (
+                                <div
+                                    key={gen.id}
+                                    onClick={() => handleAllHistoryClick(gen)}
+                                    className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${
+                                    currentImage === gen.imageUrl
+                                        ? 'border-purple-500 ring-2 ring-purple-500/20'
+                                        : 'border-transparent hover:border-purple-500/50'
+                                    }`}
+                                >
+                                    <img
+                                    src={gen.imageUrl}
+                                    className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                                    alt="History item"
+                                    loading="lazy"
+                                    />
+                                </div>
+                            ))}
                         </div>
                     ) : (
                         <div className="flex-1 flex flex-col items-center justify-center text-center px-4 gap-4">
