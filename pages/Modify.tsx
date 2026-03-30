@@ -219,8 +219,14 @@ export const Modify = () => {
   };
 
   const handleGroupClick = (group: Generation[]) => {
-    setSelectedGroup(group);
-    setShowResults(true);
+    // 默认显示组的第一张图片
+    setCurrentImage(group[0].imageUrl);
+    
+    // 只有多张图片时才弹出选择面板
+    if (group.length > 1) {
+      setSelectedGroup(group);
+      setShowResults(true);
+    }
   };
 
   // --- Logic: Image Selection ---
