@@ -267,11 +267,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // --- Generations (Database-backed) ---
 
   const addGeneration = async (gen: Omit<Generation, 'id' | 'createdAt'>) => {
-    if (!data.user) return;
+    console.log('=== addGeneration called ===');
+    console.log('Input gen:', gen);
+    
+    if (!data.user) {
+      console.log('No user, returning');
+      return;
+    }
     const genWithUser = { ...gen, userId: data.user.id };
 
     // If it's a base64 image, only keep in session state (can't save to DB)
     if (isBase64DataUrl(gen.imageUrl)) {
+      console.log('Base64 image detected, saving to session only');
       const sessionGen: Generation = {
         ...genWithUser,
         id: `session_${generateId()}`,
@@ -288,6 +295,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
+    console.log('Regular URL, saving to database...');
     // Save to database
     const { data: savedGen, error } = await saveGenerationToDb(genWithUser);
     
@@ -298,6 +306,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
 
     if (savedGen) {
+      console.log('Saved successfully:', savedGen);
       // Add to local state immediately (at the beginning)
       setDbGenerations(prev => [savedGen, ...prev]);
       
@@ -311,12 +320,26 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   };
 
   const addGenerations = async (gens: Omit<Generation, 'id' | 'createdAt'>[]) => {
-    if (!data.user) return;
+    console.log('=== addGenerations called ===');
+    console.log('Input gens:', gens);
+    
+    if (!data.user) {
+      console.log('No user, returning');
+      return;
+    }
+    
     const gensWithUser = gens.map(g => ({ ...g, userId: data.user!.id }));
+    console.log('Gens with user:', gensWithUser);
 
     // Separate base64 images (session-only) from regular URLs (save to DB)
     const base64Gens = gensWithUser.filter(g => isBase64DataUrl(g.imageUrl));
     const regularGens = gensWithUser.filter(g => !isBase64DataUrl(g.imageUrl));
+    
+    console.log('Base64 gens (session only):', base64Gens.length);
+    console.log('Regular gens (to save to DB):', regularGens.length);
+    if (regularGens.length > 0) {
+      console.log('Regular gens URLs:', regularGens.map(g => g.imageUrl.substring(0, 100)));
+    }
 
     // Add base64 images to session state only
     if (base64Gens.length > 0) {
@@ -330,14 +353,18 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     // Save regular URLs to database
     if (regularGens.length > 0) {
+      console.log('Calling saveGenerationsToDb...');
       const { data: savedGens, error } = await saveGenerationsToDb(regularGens);
       
       if (error) {
         console.error('Failed to save generations:', error);
         addToast('error', 'Failed to save to history');
       } else if (savedGens.length > 0) {
+        console.log('Saved successfully, adding to state:', savedGens);
         setDbGenerations(prev => [...savedGens, ...prev]);
       }
+    } else {
+      console.log('No regular gens to save to DB');
     }
 
     // Calculate total credits used and deduct
