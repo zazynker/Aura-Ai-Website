@@ -1,18 +1,37 @@
-
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, Clock, FolderHeart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, Plus, ArrowLeft, ExternalLink, Search } from 'lucide-react';
+import { LayoutGrid, Clock, FolderHeart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, Plus, ArrowLeft, ExternalLink, Search, Layers } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Collection, Template } from '../types';
 import { mockTemplates } from '../data/mockData';
 
+// 将同一批生成的图片分组
+const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => {
+    const groups: { [key: string]: Generation[] } = {};
+    const result: (Generation | Generation[])[] = [];
+    
+    gens.forEach(gen => {
+        if (gen.groupId) {
+            if (!groups[gen.groupId]) {
+                groups[gen.groupId] = [];
+                result.push(groups[gen.groupId]);
+            }
+            groups[gen.groupId].push(gen);
+        } else {
+            result.push(gen);
+        }
+    });
+    return result;
+};
+
 export const Dashboard = () => {
   const navigate = useNavigate();
   const { user, generations, deleteGeneration, addToast, collections, createCollection, deleteCollection, removeFromCollection } = useStore();
   const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'collections'>('overview');
   const [selectedImage, setSelectedImage] = useState<Generation | null>(null);
+  const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
 
   // Filter and Search State
   const [sourceFilter, setSourceFilter] = useState<'all' | 'templates' | 'modify'>('all');
@@ -283,14 +302,39 @@ export const Dashboard = () => {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                   {/* Show top 8 recent images */}
-                   {recentGenerations.slice(0, 8).map(gen => (
-                     <GenerationCard 
-                        key={gen.id} 
-                        gen={gen} 
-                        onClick={() => navigateToEdit(gen)} 
-                     />
-                   ))}
+                   {/* Show top 8 recent items (grouped) */}
+                   {groupGenerations(recentGenerations).slice(0, 8).map((item, idx) => {
+                     if (Array.isArray(item)) {
+                       const group = item;
+                       return (
+                         <div 
+                           key={`overview_group_${idx}`}
+                           onClick={() => { setSelectedGroup(group); setSelectedImage(group[0]); }}
+                           className="relative aspect-square cursor-pointer group"
+                         >
+                           <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
+                           <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
+                           <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
+                             <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
+                             <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
+                               <Layers className="w-3 h-3" /> {group.length}
+                             </div>
+                             <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                               <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
+                             </div>
+                           </div>
+                         </div>
+                       );
+                     } else {
+                       return (
+                         <GenerationCard 
+                           key={item.id} 
+                           gen={item} 
+                           onClick={() => navigateToEdit(item)} 
+                         />
+                       );
+                     }
+                   })}
                 </div>
               )}
             </div>
@@ -361,14 +405,39 @@ export const Dashboard = () => {
 
              {/* Grid */}
              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-               {filteredGenerations.map(gen => (
-                 <GenerationCard 
-                    key={gen.id} 
-                    gen={gen} 
-                    aspect="aspect-[4/5]" 
-                    onClick={() => setSelectedImage(gen)} 
-                 />
-               ))}
+               {groupGenerations(filteredGenerations).map((item, idx) => {
+                 if (Array.isArray(item)) {
+                   const group = item;
+                   return (
+                     <div 
+                       key={`history_group_${idx}`}
+                       onClick={() => { setSelectedGroup(group); setSelectedImage(group[0]); }}
+                       className="relative aspect-[4/5] cursor-pointer group"
+                     >
+                       <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
+                       <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
+                       <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
+                         <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
+                         <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
+                           <Layers className="w-3 h-3" /> {group.length}
+                         </div>
+                         <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                           <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
+                         </div>
+                       </div>
+                     </div>
+                   );
+                 } else {
+                   return (
+                     <GenerationCard 
+                       key={item.id} 
+                       gen={item} 
+                       aspect="aspect-[4/5]" 
+                       onClick={() => setSelectedImage(item)} 
+                     />
+                   );
+                 }
+               })}
              </div>
 
              {/* Empty State */}
@@ -523,11 +592,11 @@ export const Dashboard = () => {
 
       {/* Lightbox Modal for Dashboard */}
       {selectedImage && (
-        <div className="fixed inset-0 z-[60] bg-slate-900/95 dark:bg-black/95 backdrop-blur-xl flex items-center justify-center animate-in fade-in duration-200" onClick={() => setSelectedImage(null)}>
+        <div className="fixed inset-0 z-[60] bg-slate-900/95 dark:bg-black/95 backdrop-blur-xl flex items-center justify-center animate-in fade-in duration-200" onClick={() => { setSelectedImage(null); setSelectedGroup(null); }}>
            <div className="absolute top-6 right-6 flex gap-4 z-50">
               <button 
                 className="p-3 rounded-full bg-white/10 hover:bg-white text-white hover:text-black transition-colors backdrop-blur-md border border-white/10"
-                onClick={(e) => { e.stopPropagation(); navigateToEdit(selectedImage); setSelectedImage(null); }}
+                onClick={(e) => { e.stopPropagation(); navigateToEdit(selectedImage); setSelectedImage(null); setSelectedGroup(null); }}
                 title="Edit Template"
               >
                   <Edit className="w-5 h-5" />
@@ -539,20 +608,42 @@ export const Dashboard = () => {
               >
                   <Trash2 className="w-5 h-5" />
               </button>
-              <button className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors backdrop-blur-md border border-white/10" onClick={() => setSelectedImage(null)}>
+              <button className="p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors backdrop-blur-md border border-white/10" onClick={() => { setSelectedImage(null); setSelectedGroup(null); }}>
                   <X className="w-5 h-5" />
               </button>
            </div>
            
            <div className="max-w-6xl w-full p-4 flex flex-col md:flex-row gap-8 items-center justify-center" onClick={e => e.stopPropagation()}>
-               <div className="relative flex-1 flex items-center justify-center max-h-[80vh]">
-                    <img src={selectedImage.imageUrl} className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl" />
+               <div className="relative flex-1 flex flex-col items-center justify-center max-h-[80vh]">
+                    <img src={selectedImage.imageUrl} className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl" />
+                    
+                    {/* Group thumbnails */}
+                    {selectedGroup && selectedGroup.length > 1 && (
+                      <div className="flex gap-2 mt-4 p-2 bg-black/40 backdrop-blur-md rounded-xl">
+                        {selectedGroup.map((gen, idx) => (
+                          <div
+                            key={gen.id}
+                            onClick={() => setSelectedImage(gen)}
+                            className={`w-16 h-16 rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
+                              selectedImage.id === gen.id 
+                                ? 'border-purple-500 ring-2 ring-purple-500/30' 
+                                : 'border-transparent hover:border-white/50'
+                            }`}
+                          >
+                            <img src={gen.imageUrl} className="w-full h-full object-cover" alt={`Variation ${idx + 1}`} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                </div>
                
                <div className="glass-panel p-6 rounded-2xl w-full md:w-80 flex flex-col gap-4 bg-white/90 dark:bg-slate-900/50 border border-slate-200 dark:border-white/10">
                   <div>
                     <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
                         <ImageIcon className="w-5 h-5 text-purple-600 dark:text-purple-400" /> Image Details
+                        {selectedGroup && selectedGroup.length > 1 && (
+                          <span className="text-xs font-normal text-slate-500 ml-auto">{selectedGroup.findIndex(g => g.id === selectedImage.id) + 1} / {selectedGroup.length}</span>
+                        )}
                     </h3>
                     
                     <div className="space-y-4">
