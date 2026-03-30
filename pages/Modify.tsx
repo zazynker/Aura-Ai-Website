@@ -457,10 +457,12 @@ export const Modify = () => {
       // promptText contains the ratio name (e.g., "Square", "Portrait")
       const ratioMap: Record<string, string> = {
         'Square': '1:1',
+        'Standard': '4:3',
         'Portrait': '3:4',
-        'Story': '9:16',
+        'Photo': '3:2',
+        'Pinterest': '2:3',
         'Landscape': '16:9',
-        'Pinterest': '2:3'
+        'Story': '9:16'
       };
       const targetRatio = ratioMap[promptText] || '1:1';
       
@@ -516,6 +518,19 @@ export const Modify = () => {
           else targetAspectRatio = '9:16';                     // ~0.56
           console.log('Upscale - Original dimensions:', imgWidth, 'x', imgHeight, 'Ratio:', ratio.toFixed(2), '→', targetAspectRatio);
         }
+      } else if (toolName === 'Ratio') {
+        // Set target aspect ratio for Ratio tool
+        const ratioMap: Record<string, string> = {
+          'Square': '1:1',
+          'Standard': '4:3',
+          'Portrait': '3:4',
+          'Photo': '3:2',
+          'Pinterest': '2:3',
+          'Landscape': '16:9',
+          'Story': '9:16'
+        };
+        targetAspectRatio = ratioMap[promptText] || '1:1';
+        console.log('Ratio tool - Target ratio:', targetAspectRatio);
       }
       
       // Call the real Gemini API with the selected number of images
@@ -525,7 +540,7 @@ export const Modify = () => {
         productImageUrl: productImageUrl, // The product to insert (for Replace)
         numberOfImages: outputCount,      // Generate multiple images in parallel
         imageSize: targetImageSize,       // Resolution setting
-        aspectRatio: targetAspectRatio,   // Keep original aspect ratio for Upscale
+        aspectRatio: targetAspectRatio,   // Target aspect ratio
       });
 
       clearInterval(progressInterval);
@@ -547,6 +562,23 @@ export const Modify = () => {
       const newImages = result.images;
       const groupId = `group_${Date.now()}`;
 
+      // 为 Ratio 工具生成更好的 prompt 显示
+      let displayPrompt = promptText || toolName || 'AI Generation';
+      if (toolName === 'Ratio') {
+        const ratioLabelMap: Record<string, string> = {
+          'Square': '1:1',
+          'Standard': '4:3',
+          'Portrait': '3:4',
+          'Photo': '3:2',
+          'Pinterest': '2:3',
+          'Landscape': '16:9',
+          'Story': '9:16'
+        };
+        displayPrompt = `Ratio: ${ratioLabelMap[promptText] || promptText}`;
+      } else if (toolName === 'Upscale') {
+        displayPrompt = `Upscale to ${promptText}`;
+      }
+
       const newGenerations: Generation[] = newImages.map(imgUrl => ({
           id: `gen_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
           userId: user?.id || '',
@@ -555,7 +587,7 @@ export const Modify = () => {
           imageUrl: imgUrl,
           createdAt: Date.now(),
           creditsUsed: 1,
-          prompt: promptText || toolName || 'AI Generation',
+          prompt: displayPrompt,
           isOriginal: false,
           groupId
       }));
