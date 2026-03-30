@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, Clock, FolderHeart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, Plus, ArrowLeft, ExternalLink, Search, Layers } from 'lucide-react';
+import { LayoutGrid, Clock, FolderHeart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, Plus, ArrowLeft, ExternalLink, Search, Layers, Loader2 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -28,7 +28,22 @@ const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => 
 
 export const Dashboard = () => {
   const navigate = useNavigate();
-  const { user, generations, deleteGeneration, addToast, collections, createCollection, deleteCollection, removeFromCollection } = useStore();
+  const { 
+    user, 
+    generations, 
+    deleteGeneration, 
+    addToast, 
+    collections, 
+    createCollection, 
+    deleteCollection, 
+    removeFromCollection,
+    // New: loading states for pagination
+    loadingGenerations,
+    hasMoreGenerations,
+    loadMoreGenerations,
+    refreshGenerations
+  } = useStore();
+  
   const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'collections'>('overview');
   const [selectedImage, setSelectedImage] = useState<Generation | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
@@ -44,6 +59,37 @@ export const Dashboard = () => {
 
   // Delete State
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Infinite scroll ref
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  // Infinite scroll observer
+  useEffect(() => {
+    if (activeTab !== 'history') return;
+    
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMoreGenerations && !loadingGenerations) {
+          loadMoreGenerations();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (loadMoreRef.current) {
+      observer.observe(loadMoreRef.current);
+    }
+
+    return () => observer.disconnect();
+  }, [activeTab, hasMoreGenerations, loadingGenerations, loadMoreGenerations]);
+
+  // Refresh generations when switching to history tab
+  useEffect(() => {
+    if (activeTab === 'history' && generations.length === 0) {
+      refreshGenerations();
+    }
+  }, [activeTab]);
 
   // Overview Data (Sorted by newest)
   const recentGenerations = useMemo(() => {
@@ -84,15 +130,16 @@ export const Dashboard = () => {
     setItemToDelete(id);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (itemToDelete) {
-      deleteGeneration(itemToDelete);
+      setIsDeleting(true);
+      await deleteGeneration(itemToDelete);
       // If the deleted image was open in lightbox, close it
       if (selectedImage?.id === itemToDelete) {
         setSelectedImage(null);
       }
-      addToast('success', 'Image deleted from history');
       setItemToDelete(null);
+      setIsDeleting(false);
     }
   };
 
@@ -295,7 +342,11 @@ export const Dashboard = () => {
                  <button onClick={() => setActiveTab('history')} className="text-sm text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300">View All</button>
               </div>
               
-              {recentGenerations.length === 0 ? (
+              {loadingGenerations && generations.length === 0 ? (
+                <div className="flex items-center justify-center py-20">
+                  <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+                </div>
+              ) : recentGenerations.length === 0 ? (
                 <div className="text-center py-16 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20 bg-white dark:bg-slate-900/20">
                   <p className="text-slate-500 mb-4">No images generated yet.</p>
                   <Button variant="ghost" className="text-purple-500 dark:text-purple-400" onClick={() => navigate('/')}>Start Creating</Button>
@@ -403,45 +454,63 @@ export const Dashboard = () => {
                 )}
              </div>
 
+             {/* Loading State (initial load) */}
+             {loadingGenerations && generations.length === 0 && (
+               <div className="flex items-center justify-center py-20">
+                 <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+               </div>
+             )}
+
              {/* Grid */}
-             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-               {groupGenerations(filteredGenerations).map((item, idx) => {
-                 if (Array.isArray(item)) {
-                   const group = item;
-                   return (
-                     <div 
-                       key={`history_group_${idx}`}
-                       onClick={() => { setSelectedGroup(group); setSelectedImage(group[0]); }}
-                       className="relative aspect-[4/5] cursor-pointer group"
-                     >
-                       <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
-                       <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
-                       <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
-                         <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
-                         <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
-                           <Layers className="w-3 h-3" /> {group.length}
-                         </div>
-                         <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                           <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
+             {generations.length > 0 && (
+               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                 {groupGenerations(filteredGenerations).map((item, idx) => {
+                   if (Array.isArray(item)) {
+                     const group = item;
+                     return (
+                       <div 
+                         key={`history_group_${idx}`}
+                         onClick={() => { setSelectedGroup(group); setSelectedImage(group[0]); }}
+                         className="relative aspect-[4/5] cursor-pointer group"
+                       >
+                         <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
+                         <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
+                         <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
+                           <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
+                           <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
+                             <Layers className="w-3 h-3" /> {group.length}
+                           </div>
+                           <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                             <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
+                           </div>
                          </div>
                        </div>
-                     </div>
-                   );
-                 } else {
-                   return (
-                     <GenerationCard 
-                       key={item.id} 
-                       gen={item} 
-                       aspect="aspect-[4/5]" 
-                       onClick={() => setSelectedImage(item)} 
-                     />
-                   );
-                 }
-               })}
-             </div>
+                     );
+                   } else {
+                     return (
+                       <GenerationCard 
+                         key={item.id} 
+                         gen={item} 
+                         aspect="aspect-[4/5]" 
+                         onClick={() => setSelectedImage(item)} 
+                       />
+                     );
+                   }
+                 })}
+               </div>
+             )}
+
+             {/* Load More Trigger (Infinite Scroll) */}
+             {hasMoreGenerations && (
+               <div ref={loadMoreRef} className="flex justify-center py-8">
+                 {loadingGenerations && (
+                   <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+                 )}
+               </div>
+             )}
 
              {/* Empty State */}
-             {filteredGenerations.length === 0 && (
+             {!loadingGenerations && filteredGenerations.length === 0 && (
                 <div className="col-span-full text-center py-20 text-slate-500 dark:text-slate-400">
                    {generations.length === 0 ? (
                       <div>
@@ -584,8 +653,11 @@ export const Dashboard = () => {
                   </p>
               </div>
               <div className="flex gap-3">
-                  <Button variant="secondary" className="flex-1" onClick={() => setItemToDelete(null)}>Cancel</Button>
-                  <Button variant="danger" className="flex-1" onClick={confirmDelete}>Delete Permanently</Button>
+                  <Button variant="secondary" className="flex-1" onClick={() => setItemToDelete(null)} disabled={isDeleting}>Cancel</Button>
+                  <Button variant="danger" className="flex-1" onClick={confirmDelete} disabled={isDeleting}>
+                    {isDeleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                    Delete Permanently
+                  </Button>
               </div>
           </div>
       </Modal>

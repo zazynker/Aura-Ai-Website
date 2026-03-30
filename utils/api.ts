@@ -112,3 +112,154 @@ export async function fetchCategories(): Promise<string[]> {
     return ['All'];
   }
 }
+// ============================================
+// Generations API (用户生成历史)
+// ============================================
+
+interface DbGeneration {
+  id: string;
+  user_id: string;
+  template_id: string;
+  template_name: string | null;
+  image_url: string;
+  prompt: string;
+  credits_used: number;
+  created_at: string;
+}
+
+// 数据库格式 -> 前端格式
+const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
+  id: db.id,
+  userId: db.user_id,
+  templateId: db.template_id,
+  templateName: db.template_name || undefined,
+  imageUrl: db.image_url,
+  prompt: db.prompt,
+  creditsUsed: db.credits_used,
+  createdAt: new Date(db.created_at).getTime(),
+});
+
+/**
+ * 获取用户的生成历史（带分页）
+ */
+export async function fetchUserGenerations(
+  page: number = 1,
+  limit: number = 20
+): Promise<{ data: import('../types').Generation[]; hasMore: boolean; error: string | null }> {
+  try {
+    const offset = (page - 1) * limit;
+    
+    const { data, error, count } = await supabase
+      .from('generations')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (error) {
+      console.error('Error fetching generations:', error);
+      return { data: [], hasMore: false, error: error.message };
+    }
+
+    const generations = (data as DbGeneration[]).map(dbToGeneration);
+    const hasMore = count ? offset + limit < count : false;
+
+    return { data: generations, hasMore, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: [], hasMore: false, error: 'Failed to fetch generations' };
+  }
+}
+
+/**
+ * 保存新的生成记录到数据库
+ */
+export async function saveGenerationToDb(
+  generation: Omit<import('../types').Generation, 'id' | 'createdAt'>
+): Promise<{ data: import('../types').Generation | null; error: string | null }> {
+  try {
+    const dbData = {
+      user_id: generation.userId,
+      template_id: generation.templateId,
+      template_name: generation.templateName || null,
+      image_url: generation.imageUrl,
+      prompt: generation.prompt,
+      credits_used: generation.creditsUsed,
+    };
+
+    const { data, error } = await supabase
+      .from('generations')
+      .insert(dbData)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error saving generation:', error);
+      return { data: null, error: error.message };
+    }
+
+    return { data: dbToGeneration(data as DbGeneration), error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to save generation' };
+  }
+}
+
+/**
+ * 批量保存生成记录
+ */
+export async function saveGenerationsToDb(
+  generations: Omit<import('../types').Generation, 'id' | 'createdAt'>[]
+): Promise<{ data: import('../types').Generation[]; error: string | null }> {
+  try {
+    const dbData = generations.map(gen => ({
+      user_id: gen.userId,
+      template_id: gen.templateId,
+      template_name: gen.templateName || null,
+      image_url: gen.imageUrl,
+      prompt: gen.prompt,
+      credits_used: gen.creditsUsed,
+    }));
+
+    const { data, error } = await supabase
+      .from('generations')
+      .insert(dbData)
+      .select();
+
+    if (error) {
+      console.error('Error saving generations:', error);
+      return { data: [], error: error.message };
+    }
+
+    return { 
+      data: (data as DbGeneration[]).map(dbToGeneration), 
+      error: null 
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: [], error: 'Failed to save generations' };
+  }
+}
+
+/**
+ * 删除生成记录
+ */
+export async function deleteGenerationFromDb(
+  generationId: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { error } = await supabase
+      .from('generations')
+      .delete()
+      .eq('id', generationId);
+
+    if (error) {
+      console.error('Error deleting generation:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, error: 'Failed to delete generation' };
+  }
+}

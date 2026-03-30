@@ -1,4 +1,10 @@
-import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { 
+  fetchUserGenerations, 
+  saveGenerationToDb, 
+  saveGenerationsToDb, 
+  deleteGenerationFromDb 
+} from '../utils/api';
+import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
@@ -12,20 +18,6 @@ const isBase64DataUrl = (str: string): boolean => {
   return str?.startsWith('data:image/') && str.includes('base64');
 };
 
-// Helper: Clean generation for storage (remove base64 images to prevent quota exceeded)
-const cleanGenerationForStorage = (gen: Generation): Generation => {
-  // If imageUrl is a base64 data URL, don't store it (it's too large)
-  // We'll mark it as a session-only image
-  if (isBase64DataUrl(gen.imageUrl)) {
-    return {
-      ...gen,
-      imageUrl: '', // Don't store base64 in localStorage
-      isSessionOnly: true, // Mark as session-only
-    };
-  }
-  return gen;
-};
-
 interface StoreContextType {
   user: User | null;
   toasts: ToastMessage[];
@@ -34,6 +26,9 @@ interface StoreContextType {
   collections: Collection[];
   theme: 'light' | 'dark';
   authLoading: boolean;
+  // Generations loading state
+  loadingGenerations: boolean;
+  hasMoreGenerations: boolean;
   toggleTheme: () => void;
   logout: () => Promise<void>;
   updateUser: (updates: Partial<User>) => void;
@@ -41,9 +36,11 @@ interface StoreContextType {
   removeToast: (id: string) => void;
   saveBrowsingState: (updates: Partial<LocalStorageData['browsing']>) => void;
   saveModifySession: (session: ModifySession | null) => void;
-  addGeneration: (gen: Generation) => void;
-  addGenerations: (gens: Generation[]) => void;
-  deleteGeneration: (id: string) => void;
+  addGeneration: (gen: Omit<Generation, 'id' | 'createdAt'>) => Promise<void>;
+  addGenerations: (gens: Omit<Generation, 'id' | 'createdAt'>[]) => Promise<void>;
+  deleteGeneration: (id: string) => Promise<void>;
+  loadMoreGenerations: () => Promise<void>;
+  refreshGenerations: () => Promise<void>;
   // Collection Methods
   createCollection: (name: string) => void;
   deleteCollection: (id: string) => void;
@@ -58,12 +55,52 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   
-  // Session-only generations (not persisted to localStorage)
+  // Database generations state
+  const [dbGenerations, setDbGenerations] = useState<Generation[]>([]);
+  const [generationsPage, setGenerationsPage] = useState(1);
+  const [hasMoreGenerations, setHasMoreGenerations] = useState(true);
+  const [loadingGenerations, setLoadingGenerations] = useState(false);
+  
+  // Session-only generations (base64 images not saved to DB)
   const [sessionGenerations, setSessionGenerations] = useState<Generation[]>([]);
+
+  // --- Load Generations from Database ---
+  
+  const loadGenerations = useCallback(async (page: number = 1, reset: boolean = false) => {
+    if (loadingGenerations) return;
+    setLoadingGenerations(true);
+    
+    try {
+      const { data: generations, hasMore, error } = await fetchUserGenerations(page, 20);
+      
+      if (error) {
+        console.error('Failed to load generations:', error);
+      } else {
+        setDbGenerations(prev => reset ? generations : [...prev, ...generations]);
+        setHasMoreGenerations(hasMore);
+        setGenerationsPage(page);
+      }
+    } catch (err) {
+      console.error('Error loading generations:', err);
+    }
+    
+    setLoadingGenerations(false);
+  }, [loadingGenerations]);
+
+  const loadMoreGenerations = useCallback(async () => {
+    if (!hasMoreGenerations || loadingGenerations) return;
+    await loadGenerations(generationsPage + 1, false);
+  }, [hasMoreGenerations, loadingGenerations, generationsPage, loadGenerations]);
+
+  const refreshGenerations = useCallback(async () => {
+    setGenerationsPage(1);
+    setHasMoreGenerations(true);
+    await loadGenerations(1, true);
+  }, [loadGenerations]);
 
   // --- Supabase Auth ---
 
-  const syncUserFromSession = (session: Session) => {
+  const syncUserFromSession = async (session: Session) => {
     const supaUser = session.user;
     const newUser: User = {
       id: supaUser.id,
@@ -100,6 +137,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return { ...prev, user: mergedUser, collections: newCollections };
     });
     setData(getStorage());
+    
+    // Load user's generations from database
+    await loadGenerations(1, true);
   };
 
   useEffect(() => {
@@ -124,7 +164,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             browsing: { ...prev.browsing, modifySession: null }
           }));
           setData(getStorage());
-          setSessionGenerations([]); // Clear session generations on logout
+          setSessionGenerations([]);
+          setDbGenerations([]);
+          setGenerationsPage(1);
+          setHasMoreGenerations(true);
         }
       }
     );
@@ -179,7 +222,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       browsing: { ...prev.browsing, modifySession: null }
     }));
     setData(getStorage());
-    setSessionGenerations([]); // Clear session generations
+    setSessionGenerations([]);
+    setDbGenerations([]);
     addToast('info', 'Logged out successfully');
   };
 
@@ -220,16 +264,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setData(getStorage());
   };
 
-  // --- Generations ---
+  // --- Generations (Database-backed) ---
 
-  const addGeneration = (gen: Generation) => {
+  const addGeneration = async (gen: Omit<Generation, 'id' | 'createdAt'>) => {
     if (!data.user) return;
     const genWithUser = { ...gen, userId: data.user.id };
 
-    // If it's a base64 image, only keep in session state (don't persist)
+    // If it's a base64 image, only keep in session state (can't save to DB)
     if (isBase64DataUrl(gen.imageUrl)) {
-      setSessionGenerations(prev => [genWithUser, ...prev]);
-      // Still deduct credits
+      const sessionGen: Generation = {
+        ...genWithUser,
+        id: `session_${generateId()}`,
+        createdAt: Date.now(),
+      };
+      setSessionGenerations(prev => [sessionGen, ...prev]);
+      
+      // Deduct credits locally
       updateStorage((prev) => ({
         ...prev,
         user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
@@ -238,50 +288,88 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
-    // For regular URLs, persist to localStorage
-    updateStorage((prev) => ({
-      ...prev,
-      generations: [genWithUser, ...prev.generations],
-      user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
-    }));
-    setData(getStorage());
+    // Save to database
+    const { data: savedGen, error } = await saveGenerationToDb(genWithUser);
+    
+    if (error) {
+      console.error('Failed to save generation:', error);
+      addToast('error', 'Failed to save to history');
+      return;
+    }
+
+    if (savedGen) {
+      // Add to local state immediately (at the beginning)
+      setDbGenerations(prev => [savedGen, ...prev]);
+      
+      // Deduct credits locally
+      updateStorage((prev) => ({
+        ...prev,
+        user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
+      }));
+      setData(getStorage());
+    }
   };
 
-  const addGenerations = (gens: Generation[]) => {
+  const addGenerations = async (gens: Omit<Generation, 'id' | 'createdAt'>[]) => {
     if (!data.user) return;
     const gensWithUser = gens.map(g => ({ ...g, userId: data.user!.id }));
 
-    // Separate base64 images (session-only) from regular URLs (persist)
+    // Separate base64 images (session-only) from regular URLs (save to DB)
     const base64Gens = gensWithUser.filter(g => isBase64DataUrl(g.imageUrl));
     const regularGens = gensWithUser.filter(g => !isBase64DataUrl(g.imageUrl));
 
     // Add base64 images to session state only
     if (base64Gens.length > 0) {
-      setSessionGenerations(prev => [...base64Gens, ...prev]);
+      const sessionGens: Generation[] = base64Gens.map(g => ({
+        ...g,
+        id: `session_${generateId()}`,
+        createdAt: Date.now(),
+      }));
+      setSessionGenerations(prev => [...sessionGens, ...prev]);
     }
 
-    // Calculate total credits used
-    const totalCredits = gens.reduce((acc, g) => acc + g.creditsUsed, 0);
+    // Save regular URLs to database
+    if (regularGens.length > 0) {
+      const { data: savedGens, error } = await saveGenerationsToDb(regularGens);
+      
+      if (error) {
+        console.error('Failed to save generations:', error);
+        addToast('error', 'Failed to save to history');
+      } else if (savedGens.length > 0) {
+        setDbGenerations(prev => [...savedGens, ...prev]);
+      }
+    }
 
-    // Update storage with only regular URLs and deduct credits
+    // Calculate total credits used and deduct
+    const totalCredits = gens.reduce((acc, g) => acc + g.creditsUsed, 0);
     updateStorage((prev) => ({
       ...prev,
-      generations: [...regularGens, ...prev.generations],
       user: prev.user ? { ...prev.user, credits: prev.user.credits - totalCredits } : null
     }));
     setData(getStorage());
   };
 
-  const deleteGeneration = (id: string) => {
-    // Try to delete from session generations first
-    setSessionGenerations(prev => prev.filter(g => g.id !== id));
+  const deleteGeneration = async (id: string) => {
+    // Check if it's a session-only generation
+    if (id.startsWith('session_')) {
+      setSessionGenerations(prev => prev.filter(g => g.id !== id));
+      addToast('success', 'Image deleted');
+      return;
+    }
+
+    // Delete from database
+    const { success, error } = await deleteGenerationFromDb(id);
     
-    // Also try to delete from persisted generations
-    updateStorage((prev) => ({
-      ...prev,
-      generations: prev.generations.filter(g => g.id !== id)
-    }));
-    setData(getStorage());
+    if (error) {
+      console.error('Failed to delete generation:', error);
+      addToast('error', 'Failed to delete');
+      return;
+    }
+
+    if (success) {
+      setDbGenerations(prev => prev.filter(g => g.id !== id));
+      addToast('success', 'Image deleted');
+    }
   };
 
   // --- Collections ---
@@ -337,10 +425,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     addToast('info', 'Removed from collection');
   };
 
-  // Combine persisted generations with session-only generations
-  // Filter to only show current user's data
+  // Combine database generations with session-only generations
   const userGenerations = data.user
-    ? [...sessionGenerations.filter(g => g.userId === data.user!.id), ...data.generations.filter(g => g.userId === data.user!.id)]
+    ? [...sessionGenerations, ...dbGenerations]
     : [];
 
   const userCollections = data.user
@@ -357,6 +444,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         collections: userCollections,
         theme: data.theme,
         authLoading,
+        loadingGenerations,
+        hasMoreGenerations,
         toggleTheme,
         logout,
         updateUser,
@@ -367,6 +456,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         addGeneration,
         addGenerations,
         deleteGeneration,
+        loadMoreGenerations,
+        refreshGenerations,
         createCollection,
         deleteCollection,
         addToCollection,
