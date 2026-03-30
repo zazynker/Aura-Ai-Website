@@ -1,4 +1,3 @@
-
 export type Plan = 'Free' | 'Pro' | 'Enterprise';
 
 export interface User {
@@ -33,6 +32,7 @@ export interface Generation {
   prompt: string;
   isOriginal?: boolean;
   isSessionOnly?: boolean;
+  groupId?: string; // 同一批生成的图片共享同一个 groupId
 }
 
 export interface Collection {
