@@ -1,3 +1,4 @@
+import { uploadBase64Images } from '../utils/uploadService';
 import { 
   fetchUserGenerations, 
   saveGenerationToDb, 
@@ -328,46 +329,63 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
     
-    const gensWithUser = gens.map(g => ({ ...g, userId: data.user!.id }));
-    console.log('Gens with user:', gensWithUser);
-
-    // Separate base64 images (session-only) from regular URLs (save to DB)
-    const base64Gens = gensWithUser.filter(g => isBase64DataUrl(g.imageUrl));
-    const regularGens = gensWithUser.filter(g => !isBase64DataUrl(g.imageUrl));
+    const userId = data.user.id;
     
-    console.log('Base64 gens (session only):', base64Gens.length);
-    console.log('Regular gens (to save to DB):', regularGens.length);
-    if (regularGens.length > 0) {
-      console.log('Regular gens URLs:', regularGens.map(g => g.imageUrl.substring(0, 100)));
-    }
-
-    // Add base64 images to session state only
+    // 分离 base64 图片和普通 URL
+    const base64Gens = gens.filter(g => isBase64DataUrl(g.imageUrl));
+    const regularGens = gens.filter(g => !isBase64DataUrl(g.imageUrl));
+    
+    console.log('Base64 images to upload:', base64Gens.length);
+    console.log('Regular URLs:', regularGens.length);
+    
+    // 上传 base64 图片到 Storage
+    let uploadedGens: Omit<Generation, 'id' | 'createdAt'>[] = [];
     if (base64Gens.length > 0) {
-      const sessionGens: Generation[] = base64Gens.map(g => ({
-        ...g,
-        id: `session_${generateId()}`,
-        createdAt: Date.now(),
-      }));
-      setSessionGenerations(prev => [...sessionGens, ...prev]);
+      const base64Images = base64Gens.map(g => g.imageUrl);
+      const { urls, errors } = await uploadBase64Images(base64Images, userId);
+      
+      if (errors.length > 0) {
+        console.error('Some uploads failed:', errors);
+        addToast('error', `Failed to upload ${errors.length} image(s)`);
+      }
+      
+      // 将上传成功的图片与原始数据匹配
+      uploadedGens = base64Gens
+        .map((gen, index) => {
+          const url = urls[index];
+          if (url) {
+            return { ...gen, imageUrl: url, userId };
+          }
+          return null;
+        })
+        .filter((g): g is Omit<Generation, 'id' | 'createdAt'> => g !== null);
+      
+      console.log('Successfully uploaded and matched:', uploadedGens.length);
     }
-
-    // Save regular URLs to database
-    if (regularGens.length > 0) {
+    
+    // 合并上传后的图片和普通 URL 图片
+    const allGensToSave = [
+      ...uploadedGens,
+      ...regularGens.map(g => ({ ...g, userId }))
+    ];
+    
+    console.log('Total gens to save to DB:', allGensToSave.length);
+    
+    // 保存到数据库
+    if (allGensToSave.length > 0) {
       console.log('Calling saveGenerationsToDb...');
-      const { data: savedGens, error } = await saveGenerationsToDb(regularGens);
+      const { data: savedGens, error } = await saveGenerationsToDb(allGensToSave);
       
       if (error) {
         console.error('Failed to save generations:', error);
         addToast('error', 'Failed to save to history');
       } else if (savedGens.length > 0) {
-        console.log('Saved successfully, adding to state:', savedGens);
+        console.log('Saved to DB successfully:', savedGens.length);
         setDbGenerations(prev => [...savedGens, ...prev]);
       }
-    } else {
-      console.log('No regular gens to save to DB');
     }
 
-    // Calculate total credits used and deduct
+    // 扣除积分
     const totalCredits = gens.reduce((acc, g) => acc + g.creditsUsed, 0);
     updateStorage((prev) => ({
       ...prev,
