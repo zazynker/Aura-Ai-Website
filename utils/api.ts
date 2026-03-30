@@ -112,6 +112,7 @@ export async function fetchCategories(): Promise<string[]> {
     return ['All'];
   }
 }
+
 // ============================================
 // Generations API (用户生成历史)
 // ============================================
@@ -147,6 +148,8 @@ export async function fetchUserGenerations(
   limit: number = 20
 ): Promise<{ data: import('../types').Generation[]; hasMore: boolean; error: string | null }> {
   try {
+    console.log('=== fetchUserGenerations called ===', { page, limit });
+    
     const offset = (page - 1) * limit;
     
     const { data, error, count } = await supabase
@@ -156,10 +159,12 @@ export async function fetchUserGenerations(
       .range(offset, offset + limit - 1);
 
     if (error) {
-      console.error('Error fetching generations:', error);
+      console.error('=== fetchUserGenerations ERROR ===', error);
       return { data: [], hasMore: false, error: error.message };
     }
 
+    console.log('=== fetchUserGenerations SUCCESS ===', { count, dataLength: data?.length });
+    
     const generations = (data as DbGeneration[]).map(dbToGeneration);
     const hasMore = count ? offset + limit < count : false;
 
@@ -177,6 +182,9 @@ export async function saveGenerationToDb(
   generation: Omit<import('../types').Generation, 'id' | 'createdAt'>
 ): Promise<{ data: import('../types').Generation | null; error: string | null }> {
   try {
+    console.log('=== saveGenerationToDb called ===');
+    console.log('Input generation:', generation);
+    
     const dbData = {
       user_id: generation.userId,
       template_id: generation.templateId,
@@ -186,6 +194,8 @@ export async function saveGenerationToDb(
       credits_used: generation.creditsUsed,
     };
 
+    console.log('DB data to insert:', dbData);
+
     const { data, error } = await supabase
       .from('generations')
       .insert(dbData)
@@ -193,10 +203,11 @@ export async function saveGenerationToDb(
       .single();
 
     if (error) {
-      console.error('Error saving generation:', error);
+      console.error('=== saveGenerationToDb ERROR ===', error);
       return { data: null, error: error.message };
     }
 
+    console.log('=== saveGenerationToDb SUCCESS ===', data);
     return { data: dbToGeneration(data as DbGeneration), error: null };
   } catch (err) {
     console.error('Unexpected error:', err);
@@ -211,6 +222,9 @@ export async function saveGenerationsToDb(
   generations: Omit<import('../types').Generation, 'id' | 'createdAt'>[]
 ): Promise<{ data: import('../types').Generation[]; error: string | null }> {
   try {
+    console.log('=== saveGenerationsToDb called ===');
+    console.log('Input generations:', generations);
+    
     const dbData = generations.map(gen => ({
       user_id: gen.userId,
       template_id: gen.templateId,
@@ -220,16 +234,20 @@ export async function saveGenerationsToDb(
       credits_used: gen.creditsUsed,
     }));
 
+    console.log('DB data to insert:', dbData);
+
     const { data, error } = await supabase
       .from('generations')
       .insert(dbData)
       .select();
 
     if (error) {
-      console.error('Error saving generations:', error);
+      console.error('=== saveGenerationsToDb ERROR ===', error);
       return { data: [], error: error.message };
     }
 
+    console.log('=== saveGenerationsToDb SUCCESS ===', data);
+    
     return { 
       data: (data as DbGeneration[]).map(dbToGeneration), 
       error: null 
@@ -247,16 +265,19 @@ export async function deleteGenerationFromDb(
   generationId: string
 ): Promise<{ success: boolean; error: string | null }> {
   try {
+    console.log('=== deleteGenerationFromDb called ===', generationId);
+    
     const { error } = await supabase
       .from('generations')
       .delete()
       .eq('id', generationId);
 
     if (error) {
-      console.error('Error deleting generation:', error);
+      console.error('=== deleteGenerationFromDb ERROR ===', error);
       return { success: false, error: error.message };
     }
 
+    console.log('=== deleteGenerationFromDb SUCCESS ===');
     return { success: true, error: null };
   } catch (err) {
     console.error('Unexpected error:', err);
