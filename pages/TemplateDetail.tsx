@@ -296,7 +296,7 @@ const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) =
     }, intervalTime);
   };
 
-  const finalizeGeneration = (toolName: string, promptText: string) => {
+  const finalizeGeneration = async (toolName: string, promptText: string) => {
       setProgress(100);
       const newImages = Array.from({ length: outputCount }).map((_, i) => 
         `https://picsum.photos/1024/1024?random=${Date.now() + i}`
@@ -315,7 +315,7 @@ const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) =
         prompt: promptText || toolName || 'AI Generation',
     }));
 
-      addGenerations(newGenerations);
+    await addGenerations(newGenerations);
 
       setTimeout(() => {
           setIsGenerating(false);

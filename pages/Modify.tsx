@@ -588,7 +588,7 @@ export const Modify = () => {
         prompt: displayPrompt,
     }));
 
-      addGenerations(newGenerations);
+    await addGenerations(newGenerations);
 
       setTimeout(() => {
           setIsGenerating(false);
@@ -702,7 +702,7 @@ export const Modify = () => {
         prompt: t2iPrompt || 'Text to Image',
     }));
 
-      addGenerations(newGenerations);
+    await addGenerations(newGenerations);
 
       setTimeout(() => {
         setIsGenerating(false);
