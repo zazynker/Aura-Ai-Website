@@ -1,12 +1,15 @@
-import { uploadBase64Images } from '../utils/uploadService';
 import { 
   fetchUserGenerations, 
   saveGenerationToDb, 
   saveGenerationsToDb, 
-  deleteGenerationFromDb 
+  deleteGenerationFromDb,
+  fetchUserFavorites,
+  addFavoriteToDb,
+  removeFavoriteFromDb
 } from '../utils/api';
+import { uploadBase64Images } from '../utils/uploadService';
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
-import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
+import { User, LocalStorageData, ToastMessage, Generation, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
@@ -24,12 +27,14 @@ interface StoreContextType {
   toasts: ToastMessage[];
   browsing: LocalStorageData['browsing'];
   generations: Generation[];
-  collections: Collection[];
+  favoriteTemplateIds: string[];
   theme: 'light' | 'dark';
   authLoading: boolean;
   // Generations loading state
   loadingGenerations: boolean;
   hasMoreGenerations: boolean;
+  // Favorites loading state
+  loadingFavorites: boolean;
   toggleTheme: () => void;
   logout: () => Promise<void>;
   updateUser: (updates: Partial<User>) => void;
@@ -42,11 +47,9 @@ interface StoreContextType {
   deleteGeneration: (id: string) => Promise<void>;
   loadMoreGenerations: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
-  // Collection Methods
-  createCollection: (name: string) => void;
-  deleteCollection: (id: string) => void;
-  addToCollection: (collectionId: string, itemId: string) => void;
-  removeFromCollection: (collectionId: string, itemId: string) => void;
+  // Favorites Methods
+  toggleFavorite: (templateId: string) => Promise<void>;
+  isFavorite: (templateId: string) => boolean;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -64,6 +67,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   
   // Session-only generations (base64 images not saved to DB)
   const [sessionGenerations, setSessionGenerations] = useState<Generation[]>([]);
+  
+  // Favorites state (database-backed)
+  const [favoriteTemplateIds, setFavoriteTemplateIds] = useState<string[]>([]);
+  const [loadingFavorites, setLoadingFavorites] = useState(false);
 
   // --- Load Generations from Database ---
   
@@ -99,6 +106,27 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     await loadGenerations(1, true);
   }, [loadGenerations]);
 
+  // --- Load Favorites from Database ---
+  
+  const loadFavorites = useCallback(async () => {
+    if (loadingFavorites) return;
+    setLoadingFavorites(true);
+    
+    try {
+      const { data: favorites, error } = await fetchUserFavorites();
+      
+      if (error) {
+        console.error('Failed to load favorites:', error);
+      } else {
+        setFavoriteTemplateIds(favorites.map(f => f.templateId));
+      }
+    } catch (err) {
+      console.error('Error loading favorites:', err);
+    }
+    
+    setLoadingFavorites(false);
+  }, [loadingFavorites]);
+
   // --- Supabase Auth ---
 
   const syncUserFromSession = async (session: Session) => {
@@ -121,26 +149,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         ? { ...newUser, credits: existingUser.credits, plan: existingUser.plan }
         : newUser;
 
-      // 确保有 Favorites 集合
-      const hasFavorites = prev.collections.some(
-        c => c.userId === mergedUser.id && c.name === 'Favorites'
-      );
-      let newCollections = prev.collections;
-      if (!hasFavorites) {
-        newCollections = [...prev.collections, {
-          id: `col_${generateId()}`,
-          userId: mergedUser.id,
-          name: 'Favorites',
-          imageIds: []
-        }];
-      }
-
-      return { ...prev, user: mergedUser, collections: newCollections };
+      return { ...prev, user: mergedUser };
     });
     setData(getStorage());
     
-    // Load user's generations from database
-    await loadGenerations(1, true);
+    // Load user's data from database
+    await Promise.all([
+      loadGenerations(1, true),
+      loadFavorites()
+    ]);
   };
 
   useEffect(() => {
@@ -167,6 +184,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setData(getStorage());
           setSessionGenerations([]);
           setDbGenerations([]);
+          setFavoriteTemplateIds([]);
           setGenerationsPage(1);
           setHasMoreGenerations(true);
         }
@@ -225,6 +243,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setData(getStorage());
     setSessionGenerations([]);
     setDbGenerations([]);
+    setFavoriteTemplateIds([]);
     addToast('info', 'Logged out successfully');
   };
 
@@ -268,18 +287,11 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // --- Generations (Database-backed) ---
 
   const addGeneration = async (gen: Omit<Generation, 'id' | 'createdAt'>) => {
-    console.log('=== addGeneration called ===');
-    console.log('Input gen:', gen);
-    
-    if (!data.user) {
-      console.log('No user, returning');
-      return;
-    }
+    if (!data.user) return;
     const genWithUser = { ...gen, userId: data.user.id };
 
     // If it's a base64 image, only keep in session state (can't save to DB)
     if (isBase64DataUrl(gen.imageUrl)) {
-      console.log('Base64 image detected, saving to session only');
       const sessionGen: Generation = {
         ...genWithUser,
         id: `session_${generateId()}`,
@@ -296,7 +308,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
-    console.log('Regular URL, saving to database...');
     // Save to database
     const { data: savedGen, error } = await saveGenerationToDb(genWithUser);
     
@@ -307,7 +318,6 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
 
     if (savedGen) {
-      console.log('Saved successfully:', savedGen);
       // Add to local state immediately (at the beginning)
       setDbGenerations(prev => [savedGen, ...prev]);
       
@@ -417,66 +427,59 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  // --- Collections ---
-
-  const createCollection = (name: string) => {
-    if (!data.user) return;
-
-    const newCol: Collection = {
-      id: `col_${generateId()}`,
-      userId: data.user.id,
-      name,
-      imageIds: []
-    };
-    updateStorage((prev) => ({
-      ...prev,
-      collections: [...prev.collections, newCol]
-    }));
-    setData(getStorage());
-    addToast('success', `Collection "${name}" created`);
+  // --- Favorites (Database-backed) ---
+  
+  const isFavorite = (templateId: string): boolean => {
+    return favoriteTemplateIds.includes(templateId);
   };
 
-  const deleteCollection = (id: string) => {
-    updateStorage((prev) => ({
-      ...prev,
-      collections: prev.collections.filter(c => c.id !== id)
-    }));
-    setData(getStorage());
-    addToast('info', 'Collection deleted');
-  };
-
-  const addToCollection = (collectionId: string, itemId: string) => {
-    const current = getStorage();
-    const collection = current.collections.find(c => c.id === collectionId);
-    if (collection && collection.imageIds.includes(itemId)) {
-      addToast('info', 'Already in collection');
+  const toggleFavorite = async (templateId: string) => {
+    if (!data.user) {
+      addToast('info', 'Please login to save favorites');
       return;
     }
 
-    updateStorage((prev) => ({
-      ...prev,
-      collections: prev.collections.map(c => c.id === collectionId ? { ...c, imageIds: [itemId, ...c.imageIds] } : c)
-    }));
-    setData(getStorage());
-    addToast('success', 'Added to collection');
-  };
+    const isCurrentlyFavorite = isFavorite(templateId);
+    
+    // Optimistic update
+    if (isCurrentlyFavorite) {
+      setFavoriteTemplateIds(prev => prev.filter(id => id !== templateId));
+    } else {
+      setFavoriteTemplateIds(prev => [templateId, ...prev]);
+    }
 
-  const removeFromCollection = (collectionId: string, itemId: string) => {
-    updateStorage((prev) => ({
-      ...prev,
-      collections: prev.collections.map(c => c.id === collectionId ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) } : c)
-    }));
-    setData(getStorage());
-    addToast('info', 'Removed from collection');
+    try {
+      if (isCurrentlyFavorite) {
+        const { error } = await removeFavoriteFromDb(templateId);
+        if (error) {
+          // Revert on error
+          setFavoriteTemplateIds(prev => [templateId, ...prev]);
+          addToast('error', 'Failed to remove from favorites');
+        }
+      } else {
+        const { error } = await addFavoriteToDb(templateId);
+        if (error) {
+          // Revert on error
+          setFavoriteTemplateIds(prev => prev.filter(id => id !== templateId));
+          addToast('error', 'Failed to add to favorites');
+        } else {
+          addToast('success', 'Added to favorites');
+        }
+      }
+    } catch (err) {
+      console.error('Toggle favorite error:', err);
+      // Revert on error
+      if (isCurrentlyFavorite) {
+        setFavoriteTemplateIds(prev => [templateId, ...prev]);
+      } else {
+        setFavoriteTemplateIds(prev => prev.filter(id => id !== templateId));
+      }
+    }
   };
 
   // Combine database generations with session-only generations
   const userGenerations = data.user
     ? [...sessionGenerations, ...dbGenerations]
-    : [];
-
-  const userCollections = data.user
-    ? data.collections.filter(c => c.userId === data.user!.id)
     : [];
 
   return (
@@ -486,11 +489,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         toasts,
         browsing: data.browsing,
         generations: userGenerations,
-        collections: userCollections,
+        favoriteTemplateIds,
         theme: data.theme,
         authLoading,
         loadingGenerations,
         hasMoreGenerations,
+        loadingFavorites,
         toggleTheme,
         logout,
         updateUser,
@@ -503,10 +507,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         deleteGeneration,
         loadMoreGenerations,
         refreshGenerations,
-        createCollection,
-        deleteCollection,
-        addToCollection,
-        removeFromCollection,
+        toggleFavorite,
+        isFavorite,
       }}
     >
       {children}

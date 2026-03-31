@@ -284,3 +284,126 @@ export async function deleteGenerationFromDb(
     return { success: false, error: 'Failed to delete generation' };
   }
 }
+// ============================================
+// Favorites API (用户收藏)
+// ============================================
+
+export interface Favorite {
+  id: string;
+  userId: string;
+  templateId: string;
+  createdAt: number;
+}
+
+interface DbFavorite {
+  id: string;
+  user_id: string;
+  template_id: string;
+  created_at: string;
+}
+
+const dbToFavorite = (db: DbFavorite): Favorite => ({
+  id: db.id,
+  userId: db.user_id,
+  templateId: db.template_id,
+  createdAt: new Date(db.created_at).getTime(),
+});
+
+/**
+ * 获取用户的所有收藏
+ */
+export async function fetchUserFavorites(): Promise<{ 
+  data: Favorite[]; 
+  error: string | null 
+}> {
+  try {
+    console.log('=== fetchUserFavorites called ===');
+    
+    const { data, error } = await supabase
+      .from('favorites')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('Error fetching favorites:', error);
+      return { data: [], error: error.message };
+    }
+
+    console.log('Fetched favorites:', data?.length);
+    return { data: (data as DbFavorite[]).map(dbToFavorite), error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: [], error: 'Failed to fetch favorites' };
+  }
+}
+
+/**
+ * 添加收藏
+ */
+export async function addFavoriteToDb(
+  templateId: string
+): Promise<{ data: Favorite | null; error: string | null }> {
+  try {
+    console.log('=== addFavoriteToDb called ===', templateId);
+    
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { data: null, error: 'Not authenticated' };
+    }
+
+    const { data, error } = await supabase
+      .from('favorites')
+      .insert({ user_id: user.id, template_id: templateId })
+      .select()
+      .single();
+
+    if (error) {
+      // 如果是重复收藏，不算错误
+      if (error.code === '23505') {
+        console.log('Already favorited');
+        return { data: null, error: null };
+      }
+      console.error('Error adding favorite:', error);
+      return { data: null, error: error.message };
+    }
+
+    console.log('Added favorite:', data);
+    return { data: dbToFavorite(data as DbFavorite), error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to add favorite' };
+  }
+}
+
+/**
+ * 取消收藏
+ */
+export async function removeFavoriteFromDb(
+  templateId: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    console.log('=== removeFavoriteFromDb called ===', templateId);
+    
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { success: false, error: 'Not authenticated' };
+    }
+
+    const { error } = await supabase
+      .from('favorites')
+      .delete()
+      .eq('user_id', user.id)
+      .eq('template_id', templateId);
+
+    if (error) {
+      console.error('Error removing favorite:', error);
+      return { success: false, error: error.message };
+    }
+
+    console.log('Removed favorite');
+    return { success: true, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, error: 'Failed to remove favorite' };
+  }
+}
