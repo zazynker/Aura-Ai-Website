@@ -3,13 +3,15 @@ import {
   saveGenerationToDb, 
   saveGenerationsToDb, 
   deleteGenerationFromDb,
-  fetchUserFavorites,
-  addFavoriteToDb,
-  removeFavoriteFromDb
+  fetchUserCollections,
+  createCollectionInDb,
+  deleteCollectionFromDb,
+  addItemToCollectionInDb,
+  removeItemFromCollectionInDb
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
-import { User, LocalStorageData, ToastMessage, Generation, ModifySession } from '../types';
+import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
@@ -27,14 +29,14 @@ interface StoreContextType {
   toasts: ToastMessage[];
   browsing: LocalStorageData['browsing'];
   generations: Generation[];
-  favoriteTemplateIds: string[];
+  collections: Collection[];
   theme: 'light' | 'dark';
   authLoading: boolean;
   // Generations loading state
   loadingGenerations: boolean;
   hasMoreGenerations: boolean;
-  // Favorites loading state
-  loadingFavorites: boolean;
+  // Collections loading state
+  loadingCollections: boolean;
   toggleTheme: () => void;
   logout: () => Promise<void>;
   updateUser: (updates: Partial<User>) => void;
@@ -47,9 +49,11 @@ interface StoreContextType {
   deleteGeneration: (id: string) => Promise<void>;
   loadMoreGenerations: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
-  // Favorites Methods
-  toggleFavorite: (templateId: string) => Promise<void>;
-  isFavorite: (templateId: string) => boolean;
+  // Collection Methods (数据库持久化)
+  createCollection: (name: string) => Promise<void>;
+  deleteCollection: (id: string) => Promise<void>;
+  addToCollection: (collectionId: string, itemId: string) => Promise<void>;
+  removeFromCollection: (collectionId: string, itemId: string) => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -68,9 +72,9 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // Session-only generations (base64 images not saved to DB)
   const [sessionGenerations, setSessionGenerations] = useState<Generation[]>([]);
   
-  // Favorites state (database-backed)
-  const [favoriteTemplateIds, setFavoriteTemplateIds] = useState<string[]>([]);
-  const [loadingFavorites, setLoadingFavorites] = useState(false);
+  // Collections state (database-backed)
+  const [collections, setCollections] = useState<Collection[]>([]);
+  const [loadingCollections, setLoadingCollections] = useState(false);
 
   // --- Load Generations from Database ---
   
@@ -106,26 +110,38 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     await loadGenerations(1, true);
   }, [loadGenerations]);
 
-  // --- Load Favorites from Database ---
+  // --- Load Collections from Database ---
   
-  const loadFavorites = useCallback(async () => {
-    if (loadingFavorites) return;
-    setLoadingFavorites(true);
+  const loadCollections = useCallback(async () => {
+    if (loadingCollections) return;
+    setLoadingCollections(true);
     
     try {
-      const { data: favorites, error } = await fetchUserFavorites();
+      const { data: cols, error } = await fetchUserCollections();
       
       if (error) {
-        console.error('Failed to load favorites:', error);
+        console.error('Failed to load collections:', error);
       } else {
-        setFavoriteTemplateIds(favorites.map(f => f.templateId));
+        // 如果没有 Favorites 收藏夹，创建一个默认的
+        const hasFavorites = cols.some(c => c.name === 'Favorites');
+        if (!hasFavorites && cols.length === 0) {
+          // 创建默认的 Favorites 收藏夹
+          const { data: newCol } = await createCollectionInDb('Favorites');
+          if (newCol) {
+            setCollections([newCol, ...cols]);
+          } else {
+            setCollections(cols);
+          }
+        } else {
+          setCollections(cols);
+        }
       }
     } catch (err) {
-      console.error('Error loading favorites:', err);
+      console.error('Error loading collections:', err);
     }
     
-    setLoadingFavorites(false);
-  }, [loadingFavorites]);
+    setLoadingCollections(false);
+  }, [loadingCollections]);
 
   // --- Supabase Auth ---
 
@@ -156,7 +172,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // Load user's data from database
     await Promise.all([
       loadGenerations(1, true),
-      loadFavorites()
+      loadCollections()
     ]);
   };
 
@@ -184,7 +200,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           setData(getStorage());
           setSessionGenerations([]);
           setDbGenerations([]);
-          setFavoriteTemplateIds([]);
+          setCollections([]);
           setGenerationsPage(1);
           setHasMoreGenerations(true);
         }
@@ -243,7 +259,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     setData(getStorage());
     setSessionGenerations([]);
     setDbGenerations([]);
-    setFavoriteTemplateIds([]);
+    setCollections([]);
     addToast('info', 'Logged out successfully');
   };
 
@@ -427,54 +443,119 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  // --- Favorites (Database-backed) ---
-  
-  const isFavorite = (templateId: string): boolean => {
-    return favoriteTemplateIds.includes(templateId);
-  };
+  // --- Collections (Database-backed) ---
 
-  const toggleFavorite = async (templateId: string) => {
+  const createCollection = async (name: string) => {
     if (!data.user) {
-      addToast('info', 'Please login to save favorites');
+      addToast('info', 'Please login to create collections');
       return;
     }
 
-    const isCurrentlyFavorite = isFavorite(templateId);
+    const { data: newCol, error } = await createCollectionInDb(name);
     
-    // Optimistic update
-    if (isCurrentlyFavorite) {
-      setFavoriteTemplateIds(prev => prev.filter(id => id !== templateId));
-    } else {
-      setFavoriteTemplateIds(prev => [templateId, ...prev]);
+    if (error) {
+      console.error('Failed to create collection:', error);
+      addToast('error', 'Failed to create collection');
+      return;
     }
 
-    try {
-      if (isCurrentlyFavorite) {
-        const { error } = await removeFavoriteFromDb(templateId);
-        if (error) {
-          // Revert on error
-          setFavoriteTemplateIds(prev => [templateId, ...prev]);
-          addToast('error', 'Failed to remove from favorites');
-        }
-      } else {
-        const { error } = await addFavoriteToDb(templateId);
-        if (error) {
-          // Revert on error
-          setFavoriteTemplateIds(prev => prev.filter(id => id !== templateId));
-          addToast('error', 'Failed to add to favorites');
-        } else {
-          addToast('success', 'Added to favorites');
-        }
-      }
-    } catch (err) {
-      console.error('Toggle favorite error:', err);
-      // Revert on error
-      if (isCurrentlyFavorite) {
-        setFavoriteTemplateIds(prev => [templateId, ...prev]);
-      } else {
-        setFavoriteTemplateIds(prev => prev.filter(id => id !== templateId));
-      }
+    if (newCol) {
+      setCollections(prev => [...prev, newCol]);
+      addToast('success', `Collection "${name}" created`);
     }
+  };
+
+  const deleteCollection = async (id: string) => {
+    // 找到收藏夹
+    const collection = collections.find(c => c.id === id);
+    if (!collection) return;
+    
+    // 不允许删除 Favorites
+    if (collection.name === 'Favorites') {
+      addToast('info', 'Cannot delete the Favorites collection');
+      return;
+    }
+
+    // Optimistic update
+    setCollections(prev => prev.filter(c => c.id !== id));
+
+    const { success, error } = await deleteCollectionFromDb(id);
+    
+    if (error || !success) {
+      console.error('Failed to delete collection:', error);
+      // Revert on error
+      setCollections(prev => [...prev, collection]);
+      addToast('error', 'Failed to delete collection');
+      return;
+    }
+
+    addToast('info', 'Collection deleted');
+  };
+
+  const addToCollection = async (collectionId: string, itemId: string) => {
+    if (!data.user) {
+      addToast('info', 'Please login to save items');
+      return;
+    }
+
+    // 检查是否已存在
+    const collection = collections.find(c => c.id === collectionId);
+    if (collection && collection.imageIds.includes(itemId)) {
+      addToast('info', 'Already in collection');
+      return;
+    }
+
+    // Optimistic update
+    setCollections(prev => prev.map(c => 
+      c.id === collectionId 
+        ? { ...c, imageIds: [itemId, ...c.imageIds] } 
+        : c
+    ));
+
+    const { success, error } = await addItemToCollectionInDb(collectionId, itemId);
+    
+    if (error || !success) {
+      console.error('Failed to add to collection:', error);
+      // Revert on error
+      setCollections(prev => prev.map(c => 
+        c.id === collectionId 
+          ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) } 
+          : c
+      ));
+      addToast('error', 'Failed to add to collection');
+      return;
+    }
+
+    addToast('success', 'Added to collection');
+  };
+
+  const removeFromCollection = async (collectionId: string, itemId: string) => {
+    // 找到原始状态用于回滚
+    const collection = collections.find(c => c.id === collectionId);
+    if (!collection) return;
+
+    // Optimistic update
+    setCollections(prev => prev.map(c => 
+      c.id === collectionId 
+        ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) } 
+        : c
+    ));
+
+    const { success, error } = await removeItemFromCollectionInDb(collectionId, itemId);
+    
+    if (error || !success) {
+      console.error('Failed to remove from collection:', error);
+      // Revert on error
+      setCollections(prev => prev.map(c => 
+        c.id === collectionId 
+          ? { ...c, imageIds: [...c.imageIds, itemId] } 
+          : c
+      ));
+      addToast('error', 'Failed to remove from collection');
+      return;
+    }
+
+    addToast('info', 'Removed from collection');
   };
 
   // Combine database generations with session-only generations
@@ -489,12 +570,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         toasts,
         browsing: data.browsing,
         generations: userGenerations,
-        favoriteTemplateIds,
+        collections,
         theme: data.theme,
         authLoading,
         loadingGenerations,
         hasMoreGenerations,
-        loadingFavorites,
+        loadingCollections,
         toggleTheme,
         logout,
         updateUser,
@@ -507,8 +588,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         deleteGeneration,
         loadMoreGenerations,
         refreshGenerations,
-        toggleFavorite,
-        isFavorite,
+        createCollection,
+        deleteCollection,
+        addToCollection,
+        removeFromCollection,
       }}
     >
       {children}

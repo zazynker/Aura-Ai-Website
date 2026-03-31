@@ -1,11 +1,11 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, Clock, Heart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, ArrowLeft, ExternalLink, Search, Layers, Loader2 } from 'lucide-react';
+import { LayoutGrid, Clock, FolderHeart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, Plus, ArrowLeft, ExternalLink, Search, Layers, Loader2 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
-import { Generation, Template } from '../types';
-import { supabase } from '../utils/supabase';
+import { Generation, Collection, Template } from '../types';
+import { mockTemplates } from '../data/mockData';
 
 // 将同一批生成的图片分组
 const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => {
@@ -32,9 +32,11 @@ export const Dashboard = () => {
     user, 
     generations, 
     deleteGeneration, 
-    addToast,
-    favoriteTemplateIds,
-    toggleFavorite,
+    addToast, 
+    collections, 
+    createCollection, 
+    deleteCollection, 
+    removeFromCollection,
     // New: loading states for pagination
     loadingGenerations,
     hasMoreGenerations,
@@ -42,7 +44,7 @@ export const Dashboard = () => {
     refreshGenerations
   } = useStore();
   
-  const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'favorites'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'collections'>('overview');
   const [selectedImage, setSelectedImage] = useState<Generation | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
 
@@ -50,9 +52,10 @@ export const Dashboard = () => {
   const [sourceFilter, setSourceFilter] = useState<'all' | 'templates' | 'modify'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Favorites State
-  const [favoriteTemplates, setFavoriteTemplates] = useState<Template[]>([]);
-  const [loadingFavorites, setLoadingFavorites] = useState(false);
+  // Collections State
+  const [activeCollectionId, setActiveCollectionId] = useState<string | null>(null);
+  const [isCreatingCollection, setIsCreatingCollection] = useState(false);
+  const [newCollectionName, setNewCollectionName] = useState('');
 
   // Delete State
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
@@ -87,46 +90,6 @@ export const Dashboard = () => {
       refreshGenerations();
     }
   }, [activeTab]);
-
-  // Load favorite templates when switching to favorites tab
-  useEffect(() => {
-    if (activeTab === 'favorites' && favoriteTemplateIds.length > 0) {
-      loadFavoriteTemplates();
-    }
-  }, [activeTab, favoriteTemplateIds]);
-
-  const loadFavoriteTemplates = async () => {
-    if (favoriteTemplateIds.length === 0) {
-      setFavoriteTemplates([]);
-      return;
-    }
-    
-    setLoadingFavorites(true);
-    try {
-      const { data, error } = await supabase
-        .from('templates')
-        .select('*')
-        .in('id', favoriteTemplateIds);
-      
-      if (error) {
-        console.error('Error loading favorite templates:', error);
-      } else {
-        const mapped = (data || []).map(t => ({
-          id: t.id,
-          name: t.display_name || t.name,
-          imageUrl: t.image_url,
-          thumbUrl: t.thumb_url,
-          category: t.category,
-          tags: t.tags || [],
-          isPro: t.is_pro || false,
-        }));
-        setFavoriteTemplates(mapped);
-      }
-    } catch (err) {
-      console.error('Error:', err);
-    }
-    setLoadingFavorites(false);
-  };
 
   // Overview Data (Sorted by newest)
   const recentGenerations = useMemo(() => {
@@ -180,6 +143,21 @@ export const Dashboard = () => {
     }
   };
 
+  const handleCreateCollection = () => {
+     if (newCollectionName.trim()) {
+         createCollection(newCollectionName.trim());
+         setIsCreatingCollection(false);
+         setNewCollectionName('');
+     }
+  };
+
+  const activeCollection = collections.find(c => c.id === activeCollectionId);
+
+  // Helper to get template objects from IDs
+  const getCollectionItems = (col: Collection): Template[] => {
+      return col.imageIds.map(id => mockTemplates.find(t => t.id === id)).filter(Boolean) as Template[];
+  };
+
   // Helper to direct user to correct editing environment
   const navigateToEdit = (gen: Generation) => {
     navigate('/modify', {
@@ -188,18 +166,6 @@ export const Dashboard = () => {
         initialImageSource: { 
           templateId: gen.templateId, 
           templateName: gen.templateName || 'Image' 
-        }
-      }
-    });
-  };
-
-  const navigateToTemplate = (template: Template) => {
-    navigate('/modify', {
-      state: {
-        initialImage: template.imageUrl,
-        initialImageSource: { 
-          templateId: template.id, 
-          templateName: template.name 
         }
       }
     });
@@ -265,24 +231,19 @@ export const Dashboard = () => {
            {[
              { id: 'overview', icon: LayoutGrid, label: 'Overview' },
              { id: 'history', icon: Clock, label: 'History' },
-             { id: 'favorites', icon: Heart, label: 'Favorites' },
+             { id: 'collections', icon: FolderHeart, label: 'Collections' },
            ].map(item => (
              <button
               key={item.id}
-              onClick={() => setActiveTab(item.id as any)}
+              onClick={() => { setActiveTab(item.id as any); setActiveCollectionId(null); }}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all ${
                 activeTab === item.id 
                   ? 'bg-slate-100 dark:bg-white text-slate-900 dark:text-slate-900 shadow-sm' 
                   : 'text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white'
               }`}
              >
-               <item.icon className={`w-4 h-4 ${item.id === 'favorites' && favoriteTemplateIds.length > 0 ? 'text-pink-500' : ''}`} />
+               <item.icon className="w-4 h-4" />
                {item.label}
-               {item.id === 'favorites' && favoriteTemplateIds.length > 0 && (
-                 <span className="ml-auto text-xs bg-pink-100 dark:bg-pink-500/20 text-pink-600 dark:text-pink-400 px-2 py-0.5 rounded-full">
-                   {favoriteTemplateIds.length}
-                 </span>
-               )}
              </button>
            ))}
         </div>
@@ -297,13 +258,15 @@ export const Dashboard = () => {
       {/* Main Content */}
       <div className="flex-1 md:ml-64 p-6 md:p-10">
         <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6 capitalize flex items-center gap-3">
-            {activeTab === 'favorites' ? (
-              <>
-                <Heart className="w-6 h-6 text-pink-500" />
-                My Favorites
-              </>
+            {activeCollectionId && activeTab === 'collections' ? (
+                <>
+                    <button onClick={() => setActiveCollectionId(null)} className="p-1 hover:bg-slate-200 dark:hover:bg-white/10 rounded-full transition-colors">
+                        <ArrowLeft className="w-6 h-6" />
+                    </button>
+                    {activeCollection?.name}
+                </>
             ) : (
-              activeTab
+                activeTab
             )}
         </h2>
 
@@ -570,62 +533,111 @@ export const Dashboard = () => {
           </div>
         )}
 
-        {activeTab === 'favorites' && (
-          <div className="space-y-6 animate-in fade-in">
-            {loadingFavorites ? (
-              <div className="flex items-center justify-center py-20">
-                <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-              </div>
-            ) : favoriteTemplateIds.length === 0 ? (
-              <div className="text-center py-20">
-                <Heart className="w-16 h-16 text-slate-300 dark:text-slate-600 mx-auto mb-4" />
-                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No favorites yet</h3>
-                <p className="text-slate-500 dark:text-slate-400 mb-6">Browse templates and click the heart icon to save your favorites.</p>
-                <Button variant="gradient" onClick={() => navigate('/')}>
-                  Browse Templates
-                </Button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                {favoriteTemplates.map(template => (
-                  <div 
-                    key={template.id}
-                    className="group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all"
-                  >
-                    <img 
-                      src={template.thumbUrl || template.imageUrl}
-                      onClick={() => navigateToTemplate(template)}
-                      className="w-full aspect-[4/5] object-cover transition-transform duration-700 group-hover:scale-105" 
-                      loading="lazy"
-                      alt={template.name}
-                    />
-                    
-                    {/* Template Name */}
-                    <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent">
-                      <p className="text-sm text-white font-medium truncate">{template.name}</p>
-                    </div>
-                    
-                    {/* Hover Overlay */}
-                    <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                      <Button size="sm" variant="gradient" onClick={() => navigateToTemplate(template)}>
-                        Use Template
-                      </Button>
-                    </div>
-                    
-                    {/* Remove Button */}
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); toggleFavorite(template.id); }}
-                      className="absolute top-2 right-2 p-2 rounded-full bg-white/90 dark:bg-black/60 text-pink-500 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-white dark:hover:bg-black/80"
+        {activeTab === 'collections' && (
+          <>
+            {!activeCollectionId ? (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-in fade-in">
+                    <div 
+                        onClick={() => setIsCreatingCollection(true)}
+                        className="glass-panel border-dashed border-slate-300 dark:border-white/20 rounded-2xl flex flex-col items-center justify-center p-8 cursor-pointer bg-slate-50 hover:bg-white dark:bg-white/5 dark:hover:bg-white/10 transition-colors group h-48"
                     >
-                      <Heart className="w-4 h-4 fill-pink-500" />
-                    </button>
-                  </div>
-                ))}
-              </div>
+                        <div className="w-12 h-12 rounded-full bg-slate-200 dark:bg-white/5 flex items-center justify-center mb-3 group-hover:bg-purple-50 dark:group-hover:bg-purple-500/20 transition-colors">
+                            <Plus className="w-6 h-6 text-slate-500 dark:text-slate-400 group-hover:text-purple-600 dark:group-hover:text-purple-400" />
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-300 font-medium">New Collection</p>
+                    </div>
+
+                    {collections.map(col => {
+                        const items = getCollectionItems(col);
+                        const previews = items.slice(0, 4);
+                        
+                        return (
+                            <div key={col.id} onClick={() => setActiveCollectionId(col.id)} className="glass-panel p-4 rounded-2xl group cursor-pointer border border-slate-200 dark:border-white/10 hover:border-purple-500/30 transition-all relative bg-white dark:bg-slate-900/50">
+                                <div className="grid grid-cols-2 gap-2 mb-4 h-32">
+                                    {previews.length > 0 ? previews.map((item, idx) => (
+                                         <div key={idx} className="bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden relative">
+                                             <img src={item.imageUrl} className="w-full h-full object-cover" alt="preview" />
+                                         </div>
+                                    )) : (
+                                         <div className="col-span-2 bg-slate-50 dark:bg-white/5 rounded-lg flex items-center justify-center text-slate-400 dark:text-slate-500 text-xs border border-dashed border-slate-200 dark:border-white/5">Empty</div>
+                                    )}
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <h4 className="font-semibold text-slate-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">{col.name}</h4>
+                                    <span className="text-xs text-slate-500">{col.imageIds.length} items</span>
+                                </div>
+                                <button 
+                                    className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-200/80 dark:bg-black/50 hover:bg-red-500 hover:text-white dark:hover:bg-red-500/80 text-slate-600 dark:text-white opacity-0 group-hover:opacity-100 transition-all z-10"
+                                    onClick={(e) => { e.stopPropagation(); if(confirm('Delete this collection?')) deleteCollection(col.id); }}
+                                >
+                                    <Trash2 className="w-3 h-3" />
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+            ) : (
+                <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
+                    {activeCollection && getCollectionItems(activeCollection).length === 0 ? (
+                        <div className="text-center py-20 text-slate-500">
+                             <p>This collection is empty.</p>
+                             <Button variant="ghost" onClick={() => navigate('/')} className="mt-4">Browse Templates</Button>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                            {activeCollection && getCollectionItems(activeCollection).map(item => (
+                                <div key={item.id} className="group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all">
+                                    <img 
+                                        src={item.imageUrl} 
+                                        onClick={() => navigate('/modify', {
+                                            state: {
+                                                initialImage: item.imageUrl,
+                                                initialImageSource: { templateId: item.id, templateName: item.name }
+                                            }
+                                        })}
+                                        className="w-full aspect-square object-cover" 
+                                        loading="lazy" 
+                                    />
+                                    <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
+                                        <span className="text-xs font-medium text-white bg-slate-900/50 px-2 py-1 rounded backdrop-blur-md border border-white/10">Edit Template</span>
+                                    </div>
+                                    <button 
+                                        onClick={(e) => { e.stopPropagation(); removeFromCollection(activeCollection.id, item.id); }}
+                                        className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-200/80 dark:bg-black/60 hover:bg-red-500 text-slate-600 dark:text-white hover:text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto"
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
             )}
-          </div>
+          </>
         )}
       </div>
+
+      {/* Create Collection Modal */}
+      <Modal isOpen={isCreatingCollection} onClose={() => setIsCreatingCollection(false)} title="New Collection">
+           <div className="space-y-4">
+               <div className="space-y-2">
+                   <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Collection Name</label>
+                   <input 
+                      autoFocus
+                      type="text" 
+                      value={newCollectionName}
+                      onChange={e => setNewCollectionName(e.target.value)}
+                      placeholder="e.g. Summer Campaign"
+                      className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none"
+                      onKeyDown={e => e.key === 'Enter' && handleCreateCollection()}
+                   />
+               </div>
+               <div className="flex gap-3">
+                   <Button variant="secondary" className="flex-1" onClick={() => setIsCreatingCollection(false)}>Cancel</Button>
+                   <Button variant="gradient" className="flex-1" onClick={handleCreateCollection}>Create Collection</Button>
+               </div>
+           </div>
+      </Modal>
 
       {/* Delete Confirmation Modal */}
       <Modal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} title="Delete Image">

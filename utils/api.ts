@@ -148,8 +148,6 @@ export async function fetchUserGenerations(
   limit: number = 20
 ): Promise<{ data: import('../types').Generation[]; hasMore: boolean; error: string | null }> {
   try {
-    console.log('=== fetchUserGenerations called ===', { page, limit });
-    
     const offset = (page - 1) * limit;
     
     const { data, error, count } = await supabase
@@ -159,12 +157,10 @@ export async function fetchUserGenerations(
       .range(offset, offset + limit - 1);
 
     if (error) {
-      console.error('=== fetchUserGenerations ERROR ===', error);
+      console.error('Error fetching generations:', error);
       return { data: [], hasMore: false, error: error.message };
     }
 
-    console.log('=== fetchUserGenerations SUCCESS ===', { count, dataLength: data?.length });
-    
     const generations = (data as DbGeneration[]).map(dbToGeneration);
     const hasMore = count ? offset + limit < count : false;
 
@@ -182,9 +178,6 @@ export async function saveGenerationToDb(
   generation: Omit<import('../types').Generation, 'id' | 'createdAt'>
 ): Promise<{ data: import('../types').Generation | null; error: string | null }> {
   try {
-    console.log('=== saveGenerationToDb called ===');
-    console.log('Input generation:', generation);
-    
     const dbData = {
       user_id: generation.userId,
       template_id: generation.templateId,
@@ -194,8 +187,6 @@ export async function saveGenerationToDb(
       credits_used: generation.creditsUsed,
     };
 
-    console.log('DB data to insert:', dbData);
-
     const { data, error } = await supabase
       .from('generations')
       .insert(dbData)
@@ -203,11 +194,10 @@ export async function saveGenerationToDb(
       .single();
 
     if (error) {
-      console.error('=== saveGenerationToDb ERROR ===', error);
+      console.error('Error saving generation:', error);
       return { data: null, error: error.message };
     }
 
-    console.log('=== saveGenerationToDb SUCCESS ===', data);
     return { data: dbToGeneration(data as DbGeneration), error: null };
   } catch (err) {
     console.error('Unexpected error:', err);
@@ -222,9 +212,6 @@ export async function saveGenerationsToDb(
   generations: Omit<import('../types').Generation, 'id' | 'createdAt'>[]
 ): Promise<{ data: import('../types').Generation[]; error: string | null }> {
   try {
-    console.log('=== saveGenerationsToDb called ===');
-    console.log('Input generations:', generations);
-    
     const dbData = generations.map(gen => ({
       user_id: gen.userId,
       template_id: gen.templateId,
@@ -234,20 +221,16 @@ export async function saveGenerationsToDb(
       credits_used: gen.creditsUsed,
     }));
 
-    console.log('DB data to insert:', dbData);
-
     const { data, error } = await supabase
       .from('generations')
       .insert(dbData)
       .select();
 
     if (error) {
-      console.error('=== saveGenerationsToDb ERROR ===', error);
+      console.error('Error saving generations:', error);
       return { data: [], error: error.message };
     }
 
-    console.log('=== saveGenerationsToDb SUCCESS ===', data);
-    
     return { 
       data: (data as DbGeneration[]).map(dbToGeneration), 
       error: null 
@@ -265,86 +248,104 @@ export async function deleteGenerationFromDb(
   generationId: string
 ): Promise<{ success: boolean; error: string | null }> {
   try {
-    console.log('=== deleteGenerationFromDb called ===', generationId);
-    
     const { error } = await supabase
       .from('generations')
       .delete()
       .eq('id', generationId);
 
     if (error) {
-      console.error('=== deleteGenerationFromDb ERROR ===', error);
+      console.error('Error deleting generation:', error);
       return { success: false, error: error.message };
     }
 
-    console.log('=== deleteGenerationFromDb SUCCESS ===');
     return { success: true, error: null };
   } catch (err) {
     console.error('Unexpected error:', err);
     return { success: false, error: 'Failed to delete generation' };
   }
 }
+
 // ============================================
-// Favorites API (用户收藏)
+// Collections API (用户收藏夹)
 // ============================================
 
-export interface Favorite {
-  id: string;
-  userId: string;
-  templateId: string;
-  createdAt: number;
-}
-
-interface DbFavorite {
+interface DbCollection {
   id: string;
   user_id: string;
+  name: string;
+  created_at: string;
+}
+
+interface DbCollectionItem {
+  id: string;
+  collection_id: string;
   template_id: string;
   created_at: string;
 }
 
-const dbToFavorite = (db: DbFavorite): Favorite => ({
-  id: db.id,
-  userId: db.user_id,
-  templateId: db.template_id,
-  createdAt: new Date(db.created_at).getTime(),
-});
-
 /**
- * 获取用户的所有收藏
+ * 获取用户的所有收藏夹（包含其中的模板ID）
  */
-export async function fetchUserFavorites(): Promise<{ 
-  data: Favorite[]; 
+export async function fetchUserCollections(): Promise<{ 
+  data: import('../types').Collection[]; 
   error: string | null 
 }> {
   try {
-    console.log('=== fetchUserFavorites called ===');
+    console.log('=== fetchUserCollections called ===');
     
-    const { data, error } = await supabase
-      .from('favorites')
+    // 获取所有收藏夹
+    const { data: collections, error: colError } = await supabase
+      .from('collections')
       .select('*')
-      .order('created_at', { ascending: false });
+      .order('created_at', { ascending: true });
 
-    if (error) {
-      console.error('Error fetching favorites:', error);
-      return { data: [], error: error.message };
+    if (colError) {
+      console.error('Error fetching collections:', colError);
+      return { data: [], error: colError.message };
     }
 
-    console.log('Fetched favorites:', data?.length);
-    return { data: (data as DbFavorite[]).map(dbToFavorite), error: null };
+    if (!collections || collections.length === 0) {
+      return { data: [], error: null };
+    }
+
+    // 获取所有收藏夹中的项目
+    const collectionIds = collections.map(c => c.id);
+    const { data: items, error: itemsError } = await supabase
+      .from('collection_items')
+      .select('*')
+      .in('collection_id', collectionIds)
+      .order('created_at', { ascending: false });
+
+    if (itemsError) {
+      console.error('Error fetching collection items:', itemsError);
+    }
+
+    // 组装数据
+    const result: import('../types').Collection[] = collections.map((col: DbCollection) => ({
+      id: col.id,
+      userId: col.user_id,
+      name: col.name,
+      imageIds: (items || [])
+        .filter((item: DbCollectionItem) => item.collection_id === col.id)
+        .map((item: DbCollectionItem) => item.template_id)
+    }));
+
+    console.log('Fetched collections:', result.length);
+    return { data: result, error: null };
   } catch (err) {
     console.error('Unexpected error:', err);
-    return { data: [], error: 'Failed to fetch favorites' };
+    return { data: [], error: 'Failed to fetch collections' };
   }
 }
 
 /**
- * 添加收藏
+ * 创建新收藏夹
  */
-export async function addFavoriteToDb(
-  templateId: string
-): Promise<{ data: Favorite | null; error: string | null }> {
+export async function createCollectionInDb(
+  name: string
+): Promise<{ data: import('../types').Collection | null; error: string | null }> {
   try {
-    console.log('=== addFavoriteToDb called ===', templateId);
+    console.log('=== createCollectionInDb called ===', name);
     
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
@@ -352,58 +353,116 @@ export async function addFavoriteToDb(
     }
 
     const { data, error } = await supabase
-      .from('favorites')
-      .insert({ user_id: user.id, template_id: templateId })
+      .from('collections')
+      .insert({ user_id: user.id, name })
       .select()
       .single();
 
     if (error) {
-      // 如果是重复收藏，不算错误
-      if (error.code === '23505') {
-        console.log('Already favorited');
-        return { data: null, error: null };
-      }
-      console.error('Error adding favorite:', error);
+      console.error('Error creating collection:', error);
       return { data: null, error: error.message };
     }
 
-    console.log('Added favorite:', data);
-    return { data: dbToFavorite(data as DbFavorite), error: null };
+    console.log('Created collection:', data);
+    return { 
+      data: {
+        id: data.id,
+        userId: data.user_id,
+        name: data.name,
+        imageIds: []
+      }, 
+      error: null 
+    };
   } catch (err) {
     console.error('Unexpected error:', err);
-    return { data: null, error: 'Failed to add favorite' };
+    return { data: null, error: 'Failed to create collection' };
   }
 }
 
 /**
- * 取消收藏
+ * 删除收藏夹
  */
-export async function removeFavoriteFromDb(
-  templateId: string
+export async function deleteCollectionFromDb(
+  collectionId: string
 ): Promise<{ success: boolean; error: string | null }> {
   try {
-    console.log('=== removeFavoriteFromDb called ===', templateId);
+    console.log('=== deleteCollectionFromDb called ===', collectionId);
     
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return { success: false, error: 'Not authenticated' };
-    }
-
     const { error } = await supabase
-      .from('favorites')
+      .from('collections')
       .delete()
-      .eq('user_id', user.id)
-      .eq('template_id', templateId);
+      .eq('id', collectionId);
 
     if (error) {
-      console.error('Error removing favorite:', error);
+      console.error('Error deleting collection:', error);
       return { success: false, error: error.message };
     }
 
-    console.log('Removed favorite');
+    console.log('Deleted collection');
     return { success: true, error: null };
   } catch (err) {
     console.error('Unexpected error:', err);
-    return { success: false, error: 'Failed to remove favorite' };
+    return { success: false, error: 'Failed to delete collection' };
+  }
+}
+
+/**
+ * 添加模板到收藏夹
+ */
+export async function addItemToCollectionInDb(
+  collectionId: string,
+  templateId: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    console.log('=== addItemToCollectionInDb called ===', { collectionId, templateId });
+    
+    const { error } = await supabase
+      .from('collection_items')
+      .insert({ collection_id: collectionId, template_id: templateId });
+
+    if (error) {
+      // 如果是重复添加，不算错误
+      if (error.code === '23505') {
+        console.log('Already in collection');
+        return { success: true, error: null };
+      }
+      console.error('Error adding to collection:', error);
+      return { success: false, error: error.message };
+    }
+
+    console.log('Added to collection');
+    return { success: true, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, error: 'Failed to add to collection' };
+  }
+}
+
+/**
+ * 从收藏夹移除模板
+ */
+export async function removeItemFromCollectionInDb(
+  collectionId: string,
+  templateId: string
+): Promise<{ success: boolean; error: string | null }> {
+  try {
+    console.log('=== removeItemFromCollectionInDb called ===', { collectionId, templateId });
+    
+    const { error } = await supabase
+      .from('collection_items')
+      .delete()
+      .eq('collection_id', collectionId)
+      .eq('template_id', templateId);
+
+    if (error) {
+      console.error('Error removing from collection:', error);
+      return { success: false, error: error.message };
+    }
+
+    console.log('Removed from collection');
+    return { success: true, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, error: 'Failed to remove from collection' };
   }
 }
