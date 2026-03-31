@@ -14,6 +14,7 @@ export interface Template {
   id: string;
   name: string;
   imageUrl: string;
+  thumbUrl?: string;
   category: string;
   tags: string[];
   isPro: boolean;

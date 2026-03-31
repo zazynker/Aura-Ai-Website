@@ -5,7 +5,7 @@ import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Collection, Template } from '../types';
-import { mockTemplates } from '../data/mockData';
+import { supabase } from '../utils/supabase';
 
 // 将同一批生成的图片分组
 const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => {
@@ -63,6 +63,63 @@ export const Dashboard = () => {
 
   // Infinite scroll ref
   const loadMoreRef = useRef<HTMLDivElement>(null);
+
+  // Templates cache for collections (fetched from Supabase)
+  const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
+  const [loadingTemplates, setLoadingTemplates] = useState(false);
+
+  // Fetch templates for collections when needed
+  const fetchTemplatesForCollection = useCallback(async (templateIds: string[]) => {
+    if (templateIds.length === 0) return;
+    
+    // Filter out already cached
+    const uncachedIds = templateIds.filter(id => !templatesCache.has(id));
+    if (uncachedIds.length === 0) return;
+    
+    setLoadingTemplates(true);
+    try {
+      const { data, error } = await supabase
+        .from('templates')
+        .select('*')
+        .in('id', uncachedIds);
+      
+      if (error) {
+        console.error('Error fetching templates:', error);
+      } else if (data) {
+        const newCache = new Map(templatesCache);
+        data.forEach(t => {
+          newCache.set(t.id, {
+            id: t.id,
+            name: t.display_name || t.name,
+            imageUrl: t.image_url,
+            thumbUrl: t.thumb_url,
+            category: t.category,
+            tags: t.tags || [],
+            isPro: t.is_pro || false,
+            scene: t.scene,
+            model: t.model,
+            mood: t.mood,
+            holiday: t.holiday
+          });
+        });
+        setTemplatesCache(newCache);
+      }
+    } catch (err) {
+      console.error('Failed to fetch templates:', err);
+    }
+    setLoadingTemplates(false);
+  }, [templatesCache]);
+
+  // Fetch templates when collections change or when viewing a collection
+  useEffect(() => {
+    if (activeTab === 'collections') {
+      // Get all template IDs from all collections
+      const allTemplateIds = collections.flatMap(c => c.imageIds);
+      if (allTemplateIds.length > 0) {
+        fetchTemplatesForCollection(allTemplateIds);
+      }
+    }
+  }, [activeTab, collections, fetchTemplatesForCollection]);
 
   // Infinite scroll observer
   useEffect(() => {
@@ -143,9 +200,9 @@ export const Dashboard = () => {
     }
   };
 
-  const handleCreateCollection = () => {
+  const handleCreateCollection = async () => {
      if (newCollectionName.trim()) {
-         createCollection(newCollectionName.trim());
+         await createCollection(newCollectionName.trim());
          setIsCreatingCollection(false);
          setNewCollectionName('');
      }
@@ -153,9 +210,11 @@ export const Dashboard = () => {
 
   const activeCollection = collections.find(c => c.id === activeCollectionId);
 
-  // Helper to get template objects from IDs
+  // Helper to get template objects from IDs using cache
   const getCollectionItems = (col: Collection): Template[] => {
-      return col.imageIds.map(id => mockTemplates.find(t => t.id === id)).filter(Boolean) as Template[];
+      return col.imageIds
+        .map(id => templatesCache.get(id))
+        .filter((t): t is Template => t !== undefined);
   };
 
   // Helper to direct user to correct editing environment
@@ -454,69 +513,46 @@ export const Dashboard = () => {
                 )}
              </div>
 
-             {/* Loading State (initial load) */}
-             {loadingGenerations && generations.length === 0 && (
-               <div className="flex items-center justify-center py-20">
-                 <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-               </div>
-             )}
-
-             {/* Grid */}
-             {generations.length > 0 && (
-               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-                 {groupGenerations(filteredGenerations).map((item, idx) => {
-                   if (Array.isArray(item)) {
-                     const group = item;
-                     return (
-                       <div 
-                         key={`history_group_${idx}`}
-                         onClick={() => { setSelectedGroup(group); setSelectedImage(group[0]); }}
-                         className="relative aspect-[4/5] cursor-pointer group"
-                       >
-                         <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
-                         <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
-                         <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
-                           <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
-                           <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
-                             <Layers className="w-3 h-3" /> {group.length}
-                           </div>
-                           <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                             <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
-                           </div>
-                         </div>
-                       </div>
-                     );
-                   } else {
-                     return (
-                       <GenerationCard 
-                         key={item.id} 
-                         gen={item} 
-                         aspect="aspect-[4/5]" 
-                         onClick={() => setSelectedImage(item)} 
-                       />
-                     );
-                   }
-                 })}
-               </div>
-             )}
-
-             {/* Load More Trigger (Infinite Scroll) */}
-             {hasMoreGenerations && (
-               <div ref={loadMoreRef} className="flex justify-center py-8">
-                 {loadingGenerations && (
-                   <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
-                 )}
-               </div>
-             )}
-
-             {/* Empty State */}
-             {!loadingGenerations && filteredGenerations.length === 0 && (
-                <div className="col-span-full text-center py-20 text-slate-500 dark:text-slate-400">
-                   {generations.length === 0 ? (
-                      <div>
-                         <p>No history yet.</p>
-                         <Button variant="ghost" className="mt-4 text-purple-500 dark:text-purple-400" onClick={() => navigate('/')}>Start Creating</Button>
-                      </div>
+             {/* Generations Grid */}
+             {loadingGenerations && generations.length === 0 ? (
+                <div className="flex items-center justify-center py-20">
+                   <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+                </div>
+             ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                   {filteredGenerations.length > 0 ? (
+                      groupGenerations(filteredGenerations).map((item, idx) => {
+                        if (Array.isArray(item)) {
+                          const group = item;
+                          return (
+                            <div 
+                              key={`history_group_${idx}`}
+                              onClick={() => { setSelectedGroup(group); setSelectedImage(group[0]); }}
+                              className="relative aspect-square cursor-pointer group"
+                            >
+                              <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
+                              <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
+                              <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
+                                <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
+                                <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
+                                  <Layers className="w-3 h-3" /> {group.length}
+                                </div>
+                                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        } else {
+                          return (
+                            <GenerationCard 
+                              key={item.id} 
+                              gen={item} 
+                              onClick={() => navigateToEdit(item)} 
+                            />
+                          );
+                        }
+                      })
                    ) : (
                       <div>
                          <p>No results found for current filters.</p>
@@ -529,6 +565,13 @@ export const Dashboard = () => {
                       </div>
                    )}
                 </div>
+             )}
+             
+             {/* Load More / Infinite Scroll Trigger */}
+             {hasMoreGenerations && (
+               <div ref={loadMoreRef} className="flex justify-center py-8">
+                 {loadingGenerations && <Loader2 className="w-6 h-6 animate-spin text-purple-500" />}
+               </div>
              )}
           </div>
         )}
@@ -554,9 +597,13 @@ export const Dashboard = () => {
                         return (
                             <div key={col.id} onClick={() => setActiveCollectionId(col.id)} className="glass-panel p-4 rounded-2xl group cursor-pointer border border-slate-200 dark:border-white/10 hover:border-purple-500/30 transition-all relative bg-white dark:bg-slate-900/50">
                                 <div className="grid grid-cols-2 gap-2 mb-4 h-32">
-                                    {previews.length > 0 ? previews.map((item, idx) => (
+                                    {loadingTemplates && previews.length === 0 && col.imageIds.length > 0 ? (
+                                        <div className="col-span-2 flex items-center justify-center">
+                                            <Loader2 className="w-5 h-5 animate-spin text-slate-400" />
+                                        </div>
+                                    ) : previews.length > 0 ? previews.map((item, idx) => (
                                          <div key={idx} className="bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden relative">
-                                             <img src={item.imageUrl} className="w-full h-full object-cover" alt="preview" />
+                                             <img src={item.thumbUrl || item.imageUrl} className="w-full h-full object-cover" alt="preview" />
                                          </div>
                                     )) : (
                                          <div className="col-span-2 bg-slate-50 dark:bg-white/5 rounded-lg flex items-center justify-center text-slate-400 dark:text-slate-500 text-xs border border-dashed border-slate-200 dark:border-white/5">Empty</div>
@@ -566,12 +613,14 @@ export const Dashboard = () => {
                                     <h4 className="font-semibold text-slate-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">{col.name}</h4>
                                     <span className="text-xs text-slate-500">{col.imageIds.length} items</span>
                                 </div>
-                                <button 
-                                    className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-200/80 dark:bg-black/50 hover:bg-red-500 hover:text-white dark:hover:bg-red-500/80 text-slate-600 dark:text-white opacity-0 group-hover:opacity-100 transition-all z-10"
-                                    onClick={(e) => { e.stopPropagation(); if(confirm('Delete this collection?')) deleteCollection(col.id); }}
-                                >
-                                    <Trash2 className="w-3 h-3" />
-                                </button>
+                                {col.name !== 'Favorites' && (
+                                    <button 
+                                        className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-200/80 dark:bg-black/50 hover:bg-red-500 hover:text-white dark:hover:bg-red-500/80 text-slate-600 dark:text-white opacity-0 group-hover:opacity-100 transition-all z-10"
+                                        onClick={(e) => { e.stopPropagation(); if(confirm('Delete this collection?')) deleteCollection(col.id); }}
+                                    >
+                                        <Trash2 className="w-3 h-3" />
+                                    </button>
+                                )}
                             </div>
                         );
                     })}
@@ -580,26 +629,27 @@ export const Dashboard = () => {
                 <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
                     {activeCollection && getCollectionItems(activeCollection).length === 0 ? (
                         <div className="text-center py-20 text-slate-500">
-                             <p>This collection is empty.</p>
-                             <Button variant="ghost" onClick={() => navigate('/')} className="mt-4">Browse Templates</Button>
+                             {loadingTemplates ? (
+                               <Loader2 className="w-8 h-8 animate-spin text-purple-500 mx-auto" />
+                             ) : (
+                               <>
+                                 <p>This collection is empty.</p>
+                                 <Button variant="ghost" onClick={() => navigate('/')} className="mt-4">Browse Templates</Button>
+                               </>
+                             )}
                         </div>
                     ) : (
                         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                             {activeCollection && getCollectionItems(activeCollection).map(item => (
                                 <div key={item.id} className="group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all">
                                     <img 
-                                        src={item.imageUrl} 
-                                        onClick={() => navigate('/modify', {
-                                            state: {
-                                                initialImage: item.imageUrl,
-                                                initialImageSource: { templateId: item.id, templateName: item.name }
-                                            }
-                                        })}
+                                        src={item.thumbUrl || item.imageUrl} 
+                                        onClick={() => navigate(`/template/${item.id}`)}
                                         className="w-full aspect-square object-cover" 
                                         loading="lazy" 
                                     />
                                     <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
-                                        <span className="text-xs font-medium text-white bg-slate-900/50 px-2 py-1 rounded backdrop-blur-md border border-white/10">Edit Template</span>
+                                        <span className="text-xs font-medium text-white bg-slate-900/50 px-2 py-1 rounded backdrop-blur-md border border-white/10">Use Template</span>
                                     </div>
                                     <button 
                                         onClick={(e) => { e.stopPropagation(); removeFromCollection(activeCollection.id, item.id); }}
