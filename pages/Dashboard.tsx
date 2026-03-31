@@ -56,6 +56,8 @@ export const Dashboard = () => {
   const [activeCollectionId, setActiveCollectionId] = useState<string | null>(null);
   const [isCreatingCollection, setIsCreatingCollection] = useState(false);
   const [newCollectionName, setNewCollectionName] = useState('');
+  // 🔧 FIX: 添加防重复创建的状态
+  const [isCreatingInProgress, setIsCreatingInProgress] = useState(false);
 
   // Delete State
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
@@ -200,11 +202,20 @@ export const Dashboard = () => {
     }
   };
 
+  // 🔧 FIX: 添加防重复创建逻辑
   const handleCreateCollection = async () => {
-     if (newCollectionName.trim()) {
-         await createCollection(newCollectionName.trim());
-         setIsCreatingCollection(false);
-         setNewCollectionName('');
+     if (newCollectionName.trim() && !isCreatingInProgress) {
+         setIsCreatingInProgress(true);  // 开始创建，禁用按钮
+         try {
+           await createCollection(newCollectionName.trim());
+           setIsCreatingCollection(false);
+           setNewCollectionName('');
+         } catch (error) {
+           console.error('Failed to create collection:', error);
+           addToast('error', 'Failed to create collection');
+         } finally {
+           setIsCreatingInProgress(false);  // 创建完成，恢复按钮
+         }
      }
   };
 
@@ -603,7 +614,7 @@ export const Dashboard = () => {
                                         </div>
                                     ) : previews.length > 0 ? previews.map((item, idx) => (
                                          <div key={idx} className="bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden relative">
-                                             <img src={item.thumbUrl || item.imageUrl} className="w-full h-full object-cover" alt="preview" />
+                                             <img src={item.imageUrl} className="w-full h-full object-cover" alt="preview" />
                                          </div>
                                     )) : (
                                          <div className="col-span-2 bg-slate-50 dark:bg-white/5 rounded-lg flex items-center justify-center text-slate-400 dark:text-slate-500 text-xs border border-dashed border-slate-200 dark:border-white/5">Empty</div>
@@ -643,7 +654,7 @@ export const Dashboard = () => {
                             {activeCollection && getCollectionItems(activeCollection).map(item => (
                                 <div key={item.id} className="group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all">
                                     <img 
-                                        src={item.thumbUrl || item.imageUrl} 
+                                        src={item.imageUrl} 
                                         onClick={() => navigate(`/template/${item.id}`)}
                                         className="w-full aspect-square object-cover" 
                                         loading="lazy" 
@@ -668,7 +679,7 @@ export const Dashboard = () => {
       </div>
 
       {/* Create Collection Modal */}
-      <Modal isOpen={isCreatingCollection} onClose={() => setIsCreatingCollection(false)} title="New Collection">
+      <Modal isOpen={isCreatingCollection} onClose={() => { setIsCreatingCollection(false); setNewCollectionName(''); }} title="New Collection">
            <div className="space-y-4">
                <div className="space-y-2">
                    <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Collection Name</label>
@@ -679,12 +690,23 @@ export const Dashboard = () => {
                       onChange={e => setNewCollectionName(e.target.value)}
                       placeholder="e.g. Summer Campaign"
                       className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-xl px-4 py-3 text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500 outline-none"
-                      onKeyDown={e => e.key === 'Enter' && handleCreateCollection()}
+                      onKeyDown={e => e.key === 'Enter' && !isCreatingInProgress && handleCreateCollection()}
+                      disabled={isCreatingInProgress}
                    />
                </div>
                <div className="flex gap-3">
-                   <Button variant="secondary" className="flex-1" onClick={() => setIsCreatingCollection(false)}>Cancel</Button>
-                   <Button variant="gradient" className="flex-1" onClick={handleCreateCollection}>Create Collection</Button>
+                   <Button variant="secondary" className="flex-1" onClick={() => { setIsCreatingCollection(false); setNewCollectionName(''); }} disabled={isCreatingInProgress}>Cancel</Button>
+                   {/* 🔧 FIX: 按钮添加 disabled 和 loading 状态 */}
+                   <Button variant="gradient" className="flex-1" onClick={handleCreateCollection} disabled={isCreatingInProgress || !newCollectionName.trim()}>
+                       {isCreatingInProgress ? (
+                         <>
+                           <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                           Creating...
+                         </>
+                       ) : (
+                         'Create Collection'
+                       )}
+                   </Button>
                </div>
            </div>
       </Modal>
