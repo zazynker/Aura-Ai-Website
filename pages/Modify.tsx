@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
-import { mockTemplates } from '../data/mockData';
+import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Template } from '../types';
@@ -117,6 +117,48 @@ export const Modify = () => {
   const [t2iOutputCount, setT2iOutputCount] = useState(4);
   const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | null>(null);
 
+  // Templates cache for collections (fetched from Supabase)
+  const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
+
+  // Fetch templates for collections when image picker opens
+  const fetchCollectionTemplates = useCallback(async () => {
+    const allTemplateIds = collections.flatMap(c => c.imageIds);
+    const uncachedIds = allTemplateIds.filter(tid => !templatesCache.has(tid));
+    
+    if (uncachedIds.length === 0) return;
+    
+    const { data, error } = await supabase
+      .from('templates')
+      .select('*')
+      .in('id', uncachedIds);
+    
+    if (!error && data) {
+      const newCache = new Map(templatesCache);
+      data.forEach(t => {
+        newCache.set(t.id, {
+          id: t.id,
+          name: t.display_name || t.name,
+          imageUrl: t.image_url,
+          thumbUrl: t.thumb_url,
+          category: t.category,
+          tags: t.tags || [],
+          isPro: t.is_pro || false,
+          scene: t.scene,
+          model: t.model,
+          mood: t.mood,
+          holiday: t.holiday
+        });
+      });
+      setTemplatesCache(newCache);
+    }
+  }, [collections, templatesCache]);
+
+  useEffect(() => {
+    if (showImagePicker && imagePickerTab === 'collection') {
+      fetchCollectionTemplates();
+    }
+  }, [showImagePicker, imagePickerTab, fetchCollectionTemplates]);
+
   // --- Logic: History ---
   const history = useMemo(() => {
     // Show images from current source (template or upload)
@@ -211,10 +253,13 @@ export const Modify = () => {
     });
     setHasSelectedImage(true);
     
-    // Update original if possible
-    const t = mockTemplates.find(tmp => tmp.id === gen.templateId);
-    if (t) {
-        setOriginalUploadedImage(t.imageUrl);
+    // Update original - use the generation's image or fetch from cache
+    const cachedTemplate = templatesCache.get(gen.templateId);
+    if (cachedTemplate) {
+        setOriginalUploadedImage(cachedTemplate.imageUrl);
+    } else {
+        // If not in cache, use the generation's image itself
+        setOriginalUploadedImage(gen.imageUrl);
     }
   };
 
@@ -266,9 +311,12 @@ export const Modify = () => {
     setHasSelectedImage(true);
     setShowImagePicker(false);
     
-    const t = mockTemplates.find(tmp => tmp.id === gen.templateId);
-    if (t) {
-        setOriginalUploadedImage(t.imageUrl);
+    // Update original - use cache or generation's own image
+    const cachedTemplate = templatesCache.get(gen.templateId);
+    if (cachedTemplate) {
+        setOriginalUploadedImage(cachedTemplate.imageUrl);
+    } else {
+        setOriginalUploadedImage(gen.imageUrl);
     }
   };
 
@@ -1950,8 +1998,12 @@ export const Modify = () => {
                             </h4>
                             <div className="grid grid-cols-4 gap-2">
                                 {col.imageIds.length > 0 ? col.imageIds.map(templateId => {
-                                    const template = mockTemplates.find(t => t.id === templateId);
-                                    if (!template) return null;
+                                    const template = templatesCache.get(templateId);
+                                    if (!template) {
+                                      return (
+                                        <div key={templateId} className="aspect-square rounded-lg bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                                      );
+                                    }
                                     
                                     const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
                                     const isLocked = template.isPro && !isProUser;

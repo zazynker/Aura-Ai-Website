@@ -1,11 +1,10 @@
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Check, Crown, Zap } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
-import { mockTemplates } from '../data/mockData';
+import { supabase } from '../utils/supabase';
 
 export const Pricing = () => {
   const navigate = useNavigate();
@@ -22,31 +21,38 @@ export const Pricing = () => {
     setShowConfirm(true);
   };
 
-  const confirmUpgrade = () => {
+  const confirmUpgrade = async () => {
     setIsProcessing(true);
-    setTimeout(() => {
-      updateUser({ plan: 'Pro', credits: 500, maxCredits: 500 });
-      setIsProcessing(false);
-      setShowConfirm(false);
-      addToast('success', 'Upgraded to Pro!');
+    
+    // Simulate payment processing
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    updateUser({ plan: 'Pro', credits: 500, maxCredits: 500 });
+    setIsProcessing(false);
+    setShowConfirm(false);
+    addToast('success', 'Upgraded to Pro!');
+    
+    // Redirect back - fetch template from Supabase if needed
+    if (browsing.lastViewedTemplate) {
+      const { data: template } = await supabase
+        .from('templates')
+        .select('*')
+        .eq('id', browsing.lastViewedTemplate)
+        .single();
       
-      // Redirect back
-      if (browsing.lastViewedTemplate) {
-        const template = mockTemplates.find(t => t.id === browsing.lastViewedTemplate);
-        if (template) {
-            navigate('/modify', {
-                state: {
-                    initialImage: template.imageUrl,
-                    initialImageSource: { templateId: template.id, templateName: template.name }
-                }
-            });
-        } else {
-            navigate('/');
-        }
+      if (template) {
+        navigate('/modify', {
+          state: {
+            initialImage: template.image_url,
+            initialImageSource: { templateId: template.id, templateName: template.display_name || template.name }
+          }
+        });
       } else {
         navigate('/');
       }
-    }, 2000);
+    } else {
+      navigate('/');
+    }
   };
 
   return (
