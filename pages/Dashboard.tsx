@@ -646,7 +646,12 @@ export const Dashboard = () => {
                                 <div 
                                   key={item.id} 
                                   className="group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all shadow-sm hover:shadow-xl hover:shadow-purple-900/20 aspect-square"
-                                  onClick={() => navigate(`/template/${item.id}`)}
+                                  onClick={() => navigate('/modify', { 
+                                    state: { 
+                                      initialImage: item.imageUrl,
+                                      initialImageSource: { templateId: item.id, templateName: item.name }
+                                    }
+                                  })}
                                 >
                                     <img 
                                         src={item.imageUrl} 
@@ -657,7 +662,15 @@ export const Dashboard = () => {
 
                                     {/* Hover Overlay with Actions - 与 History 相同的效果 */}
                                     <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] z-30">
-                                        <Button size="sm" variant="gradient" onClick={(e) => { e.stopPropagation(); navigate(`/template/${item.id}`); }}>
+                                        <Button size="sm" variant="gradient" onClick={(e) => { 
+                                          e.stopPropagation(); 
+                                          navigate('/modify', { 
+                                            state: { 
+                                              initialImage: item.imageUrl,
+                                              initialImageSource: { templateId: item.id, templateName: item.name }
+                                            }
+                                          });
+                                        }}>
                                             <Edit className="w-3 h-3 mr-2" /> Edit in Studio
                                         </Button>
                                         <div className="flex gap-2">

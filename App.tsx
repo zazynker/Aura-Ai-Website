@@ -1,5 +1,5 @@
 import React from 'react';
-import { HashRouter, Routes, Route, useLocation } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import { StoreProvider } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { ToastContainer } from './components/ui/Toast';
@@ -10,7 +10,6 @@ import { ResetPassword } from './pages/ResetPassword';
 import { Pricing } from './pages/Pricing';
 import { Dashboard } from './pages/Dashboard';
 import { Modify } from './pages/Modify';
-import { TemplateDetail } from './pages/TemplateDetail';
 import { Privacy } from './pages/Privacy';
 import { Terms } from './pages/Terms';
 import { About } from './pages/About';
@@ -19,7 +18,7 @@ import { Footer } from './components/Footer';
 const AppContent = () => {
   const location = useLocation();
   const isAuthPage = ['/login', '/signup', '/forgot-password', '/reset-password'].includes(location.pathname);
-  const isEditorPage = location.pathname === '/modify' || location.pathname.startsWith('/template/');
+  const isEditorPage = location.pathname === '/modify';
   const hideFooter = isAuthPage || isEditorPage;
 
   return (
@@ -28,7 +27,7 @@ const AppContent = () => {
       <ToastContainer />
       <Routes>
         <Route path="/" element={<Home />} />
-        <Route path="/template/:id" element={<TemplateDetail />} />
+        <Route path="/template/:id" element={<Navigate to="/" replace />} />
         <Route path="/modify" element={<Modify />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Login isSignup />} />
