@@ -266,7 +266,7 @@ export const Modify = () => {
   };
 
   const handleChangeImage = () => {
-    setImagePickerTab('session');
+    setImagePickerTab('upload');
     setShowImagePicker(true);
   };
 
@@ -1930,7 +1930,12 @@ export const Modify = () => {
                 History
             </button>
             <button
-                onClick={() => { setShowImagePicker(false); setActiveTool('t2i'); }}
+                onClick={() => { 
+                  setShowImagePicker(false); 
+                  setActiveTool('t2i');
+                  // Clear current image to show T2I interface
+                  setHasSelectedImage(false);
+                }}
                 className="flex-1 py-2 text-xs font-medium rounded-md transition-all text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             >
                 Text to Image
@@ -1943,31 +1948,26 @@ export const Modify = () => {
                 {generations.length > 0 ? (
                 [...generations].sort((a, b) => b.createdAt - a.createdAt).map((gen) => {
                     const isModify = gen.templateId === MODIFY_SESSION_ID;
+                    const isT2I = gen.templateId === 'text-to-image';
                     return (
                     <div
                         key={gen.id}
                         onClick={() => handleImagePickerHistoryClick(gen)}
                         className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all group ${
-                        isModify
-                            ? currentImage === gen.imageUrl
+                        currentImage === gen.imageUrl
                             ? 'border-purple-500 ring-2 ring-purple-500/20'
                             : 'border-transparent hover:border-purple-500'
-                            : 'border-transparent hover:border-blue-400'
                         }`}
                     >
                         <img src={gen.imageUrl} className="w-full h-full object-cover" loading="lazy" />
+                        {/* Only show badge for Upload and Text to Image, not for templates */}
+                        {(isModify || isT2I) && (
                         <div className={`absolute top-1 left-1 backdrop-blur-sm px-1.5 py-0.5 rounded text-[9px] font-medium border ${
-                        isModify
-                            ? 'bg-purple-600/80 text-white border-purple-400/30'
-                            : 'bg-black/60 text-white border-white/10'
+                            isT2I
+                            ? 'bg-pink-600/80 text-white border-pink-400/30'
+                            : 'bg-purple-600/80 text-white border-purple-400/30'
                         }`}>
-                        {isModify ? 'Upload' : (gen.templateName || 'Template')}
-                        </div>
-                        {!isModify && (
-                        <div className="absolute inset-0 bg-blue-500/0 group-hover:bg-blue-500/20 transition-colors flex items-center justify-center">
-                            <div className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white flex items-center gap-1 border border-white/10">
-                            <ExternalLink className="w-3 h-3" /> Open
-                            </div>
+                            {isT2I ? 'Text to Image' : 'Upload'}
                         </div>
                         )}
                     </div>
