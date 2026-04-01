@@ -278,7 +278,7 @@ export const Home = () => {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onFocus={() => setIsSearchFocused(true)}
-              placeholder="Search templates (e.g., 'minimal perfume', 'neon sneakers')..."
+              placeholder="Search templates (e.g., 'minimal', 'perfume', 'flower')..."
               className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-white/10 rounded-full py-2.5 pl-10 pr-6 text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500/50 focus:bg-white dark:focus:bg-slate-800 transition-all shadow-inner"
             />
           </div>

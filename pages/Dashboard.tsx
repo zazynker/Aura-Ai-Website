@@ -49,7 +49,7 @@ export const Dashboard = () => {
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
 
   // Filter and Search State
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'templates' | 'modify'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'templates' | 'modify' | 'generated'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Collections State
@@ -163,7 +163,9 @@ export const Dashboard = () => {
     if (sourceFilter === 'modify') {
       filtered = filtered.filter(g => g.templateId === 'modify-session');
     } else if (sourceFilter === 'templates') {
-      filtered = filtered.filter(g => g.templateId !== 'modify-session');
+      filtered = filtered.filter(g => g.templateId !== 'modify-session' && g.templateId !== 'text-to-image');
+    } else if (sourceFilter === 'generated') {
+      filtered = filtered.filter(g => g.templateId === 'text-to-image');
     }
     
     // Apply search filter (search by templateName)
@@ -172,7 +174,9 @@ export const Dashboard = () => {
       filtered = filtered.filter(g => {
         const templateName = g.templateId === 'modify-session' 
           ? 'modify upload' 
-          : (g.templateName || '').toLowerCase();
+          : g.templateId === 'text-to-image'
+            ? 'text to image'
+            : (g.templateName || '').toLowerCase();
         return templateName.includes(query);
       });
     }
@@ -464,11 +468,12 @@ export const Dashboard = () => {
                       {[
                         { id: 'all', label: 'All' },
                         { id: 'templates', label: 'Templates' },
-                        { id: 'modify', label: 'Uploads' }
+                        { id: 'modify', label: 'Uploads' },
+                        { id: 'generated', label: 'Generated' }
                       ].map(filter => (
                         <button
                           key={filter.id}
-                          onClick={() => setSourceFilter(filter.id as 'all' | 'templates' | 'modify')}
+                          onClick={() => setSourceFilter(filter.id as 'all' | 'templates' | 'modify' | 'generated')}
                           className={`px-4 py-1.5 text-xs font-medium rounded-md transition-all ${
                             sourceFilter === filter.id
                               ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
@@ -681,15 +686,6 @@ export const Dashboard = () => {
                                             >
                                                 <X className="w-4 h-4" />
                                             </button>
-                                        </div>
-                                    </div>
-
-                                    {/* Bottom Info Bar */}
-                                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent opacity-100 z-20 pointer-events-none">
-                                        <div className="flex justify-between items-end">
-                                            <div className="min-w-0">
-                                               <p className="text-xs text-slate-200 font-medium truncate">{item.name}</p>
-                                            </div>
                                         </div>
                                     </div>
                                 </div>

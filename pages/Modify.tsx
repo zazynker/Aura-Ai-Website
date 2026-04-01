@@ -69,7 +69,7 @@ export const Modify = () => {
 
   // Modals
   const [showImagePicker, setShowImagePicker] = useState(false);
-  const [imagePickerTab, setImagePickerTab] = useState<'session' | 'all' | 'upload' | 'collection'>('session');
+  const [imagePickerTab, setImagePickerTab] = useState<'all' | 'upload' | 'collection'>('upload');
 
   // Generation Configuration - DEFAULT TO 4
   const [outputCount, setOutputCount] = useState(4);
@@ -158,6 +158,31 @@ export const Modify = () => {
       fetchCollectionTemplates();
     }
   }, [showImagePicker, imagePickerTab, fetchCollectionTemplates]);
+
+  // Fetch original template image when coming from Dashboard History
+  useEffect(() => {
+    const fetchOriginalTemplateImage = async () => {
+      // Only fetch if we have a template source (not user upload) and navigation state exists
+      if (navigationState?.initialImageSource && 
+          navigationState.initialImageSource.templateId !== MODIFY_SESSION_ID) {
+        
+        const templateId = navigationState.initialImageSource.templateId;
+        
+        const { data, error } = await supabase
+          .from('templates')
+          .select('image_url')
+          .eq('id', templateId)
+          .single();
+        
+        if (!error && data) {
+          // Set the original template image (not the generated one)
+          setOriginalUploadedImage(data.image_url);
+        }
+      }
+    };
+    
+    fetchOriginalTemplateImage();
+  }, []); // Run only once on mount
 
   // --- Logic: History ---
   const history = useMemo(() => {
@@ -1481,7 +1506,7 @@ export const Modify = () => {
                                                     onChange={(e) => setPrompt(e.target.value)}
                                                     onFocus={() => setShowDescribeHistory(true)}
                                                     onBlur={() => setTimeout(() => setShowDescribeHistory(false), 200)}
-                                                    placeholder="a frosted glass bottle with white dropper and gold cap"
+                                                    placeholder="e.g., a white serum bottle with gold cap"
                                                     className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-16"
                                                 />
                                                 {/* History Dropdown */}
@@ -1624,7 +1649,7 @@ export const Modify = () => {
                                 <textarea 
                                     value={modifyPrompt}
                                     onChange={(e) => setModifyPrompt(e.target.value)}
-                                    placeholder="replace the man who hold the kid with the woman in the upload photo"
+                                    placeholder="e.g., remove the necklace and earrings"
                                     className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg p-2.5 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500/50 focus:outline-none resize-none h-20"
                                 />
                             </div>
@@ -1875,24 +1900,14 @@ export const Modify = () => {
             {/* Tabs */}
             <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-lg border border-slate-200 dark:border-white/5">
             <button
-                onClick={() => setImagePickerTab('session')}
+                onClick={() => setImagePickerTab('upload')}
                 className={`flex-1 py-2 text-xs font-medium rounded-md transition-all ${
-                imagePickerTab === 'session'
+                imagePickerTab === 'upload'
                     ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
             >
-                Session
-            </button>
-            <button
-                onClick={() => setImagePickerTab('all')}
-                className={`flex-1 py-2 text-xs font-medium rounded-md transition-all ${
-                imagePickerTab === 'all'
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
-                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-            >
-                History
+                Upload
             </button>
             <button
                 onClick={() => setImagePickerTab('collection')}
@@ -1905,47 +1920,24 @@ export const Modify = () => {
                 Collection
             </button>
             <button
-                onClick={() => setImagePickerTab('upload')}
+                onClick={() => setImagePickerTab('all')}
                 className={`flex-1 py-2 text-xs font-medium rounded-md transition-all ${
-                imagePickerTab === 'upload'
+                imagePickerTab === 'all'
                     ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
                     : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
             >
-                Upload
+                History
+            </button>
+            <button
+                onClick={() => { setShowImagePicker(false); setActiveTool('t2i'); }}
+                className="flex-1 py-2 text-xs font-medium rounded-md transition-all text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+            >
+                Text to Image
             </button>
             </div>
 
             {/* Tab Content */}
-            {imagePickerTab === 'session' && (
-            <div className="grid grid-cols-3 gap-3 max-h-[400px] overflow-y-auto custom-scrollbar p-1">
-                {history.length > 0 ? (
-                history.map((gen) => (
-                    <div
-                    key={gen.id}
-                    onClick={() => handleImagePickerSelect(gen.imageUrl)}
-                    className={`relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition-all ${
-                        currentImage === gen.imageUrl
-                        ? 'border-purple-500 ring-2 ring-purple-500/20'
-                        : 'border-transparent hover:border-purple-500'
-                    }`}
-                    >
-                    <img src={gen.imageUrl} className="w-full h-full object-cover" loading="lazy" />
-                    {gen.isOriginal && (
-                        <div className="absolute top-1 left-1 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[9px] text-white font-medium border border-white/10">
-                        Original
-                        </div>
-                    )}
-                    </div>
-                ))
-                ) : (
-                <div className="col-span-3 text-center py-8 text-slate-500">
-                    <p>No session history yet.</p>
-                </div>
-                )}
-            </div>
-            )}
-
             {imagePickerTab === 'all' && (
             <div className="grid grid-cols-3 gap-3 max-h-[400px] overflow-y-auto custom-scrollbar p-1">
                 {generations.length > 0 ? (
