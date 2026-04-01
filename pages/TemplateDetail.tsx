@@ -1,19 +1,24 @@
-
 import { uploadUserImage, validateFile } from '../utils/uploadService';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Type, ExternalLink, Heart } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
-import { mockTemplates } from '../data/mockData';
+import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
-import { Generation } from '../types';
+import { Generation, Template } from '../types';
 
 export const TemplateDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user, addGenerations, addToast, generations, saveBrowsingState, collections } = useStore();
-  const template = mockTemplates.find(t => t.id === id);
+  
+  // Template state - fetched from Supabase
+  const [template, setTemplate] = useState<Template | null>(null);
+  const [loadingTemplate, setLoadingTemplate] = useState(true);
+  
+  // Templates cache for collections
+  const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
   
   // State
   const [currentImage, setCurrentImage] = useState<string>('');
@@ -57,7 +62,54 @@ export const TemplateDetail = () => {
   const [selectedRatio, setSelectedRatio] = useState('Square');
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
-  // --- 1. History Logic (Derived State) ---
+  // --- 1. Fetch template from Supabase ---
+  useEffect(() => {
+    const fetchTemplate = async () => {
+      if (!id) {
+        addToast('error', 'Template not found');
+        navigate('/');
+        return;
+      }
+      
+      setLoadingTemplate(true);
+      const { data, error } = await supabase
+        .from('templates')
+        .select('*')
+        .eq('id', id)
+        .single();
+      
+      if (error || !data) {
+        console.error('Error fetching template:', error);
+        addToast('error', 'Template not found');
+        navigate('/');
+        return;
+      }
+      
+      // Map database fields to Template type
+      const mappedTemplate: Template = {
+        id: data.id,
+        name: data.display_name || data.name,
+        imageUrl: data.image_url,
+        thumbUrl: data.thumb_url,
+        category: data.category,
+        tags: data.tags || [],
+        isPro: data.is_pro || false,
+        scene: data.scene,
+        model: data.model,
+        mood: data.mood,
+        holiday: data.holiday,
+        width: data.width || 1024,
+        height: data.height || 1024
+      };
+      
+      setTemplate(mappedTemplate);
+      setLoadingTemplate(false);
+    };
+    
+    fetchTemplate();
+  }, [id, navigate, addToast]);
+
+  // --- 3. History Logic (Derived State) ---
   const history = useMemo(() => {
     if (!template) return [];
     
@@ -99,14 +151,7 @@ export const TemplateDetail = () => {
     return result;
   }, [template, generations, user, uploadedOriginalImage]);
 
-  // --- 2. Initialization ---
-  useEffect(() => {
-    if (!template) {
-      addToast('error', 'Template not found');
-      navigate('/');
-    }
-  }, [template, navigate, addToast]);
-
+  // --- 4. Initialization ---
   useEffect(() => {
     if (template) {
         const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
@@ -116,12 +161,60 @@ export const TemplateDetail = () => {
 
         if (!currentImage) {
             setCurrentImage(template.imageUrl);
-            setImageDimensions({ width: template.width, height: template.height });
+            setImageDimensions({ width: template.width || 1024, height: template.height || 1024 });
             // Initialize source as the current template
             setCurrentImageSource({ templateId: template.id, templateName: template.name });
         }
     }
   }, [template, user, currentImage]);
+
+  // Fetch templates for collections when image picker opens
+  useEffect(() => {
+    const fetchCollectionTemplates = async () => {
+      if (!showImagePicker || imagePickerTab !== 'collection') return;
+      
+      const allTemplateIds = collections.flatMap(c => c.imageIds);
+      const uncachedIds = allTemplateIds.filter(tid => !templatesCache.has(tid));
+      
+      if (uncachedIds.length === 0) return;
+      
+      const { data, error } = await supabase
+        .from('templates')
+        .select('*')
+        .in('id', uncachedIds);
+      
+      if (!error && data) {
+        const newCache = new Map(templatesCache);
+        data.forEach(t => {
+          newCache.set(t.id, {
+            id: t.id,
+            name: t.display_name || t.name,
+            imageUrl: t.image_url,
+            thumbUrl: t.thumb_url,
+            category: t.category,
+            tags: t.tags || [],
+            isPro: t.is_pro || false,
+            scene: t.scene,
+            model: t.model,
+            mood: t.mood,
+            holiday: t.holiday
+          });
+        });
+        setTemplatesCache(newCache);
+      }
+    };
+    
+    fetchCollectionTemplates();
+  }, [showImagePicker, imagePickerTab, collections, templatesCache]);
+
+  // Loading state
+  if (loadingTemplate) {
+    return (
+      <div className="min-h-screen pt-16 flex items-center justify-center bg-slate-50 dark:bg-slate-900">
+        <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+      </div>
+    );
+  }
 
   if (!template) return null;
 
@@ -247,7 +340,7 @@ const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) =
     }
   };
 
-  // --- 3. Unified Generation Engine ---
+  // --- 5. Unified Generation Engine ---
   const runGeneration = (toolName: string, promptText: string) => {
     if (isLocked) return;
     if (!user) { 
@@ -976,12 +1069,16 @@ const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) =
                             </h4>
                             <div className="grid grid-cols-4 gap-2">
                                 {col.imageIds.length > 0 ? col.imageIds.map(templateId => {
-                                    const collectionTemplate = mockTemplates.find(t => t.id === templateId);
-                                    if (!collectionTemplate) return null;
+                                    const collectionTemplate = templatesCache.get(templateId);
+                                    if (!collectionTemplate) {
+                                      return (
+                                        <div key={templateId} className="aspect-square rounded-lg bg-slate-100 dark:bg-slate-800 animate-pulse" />
+                                      );
+                                    }
                                     
                                     const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
                                     const isLockedTemplate = collectionTemplate.isPro && !isProUser;
-                                    const isCurrentTemplateItem = collectionTemplate.id === template.id;
+                                    const isCurrentTemplateItem = collectionTemplate.id === template?.id;
                                     
                                     return (
                                         <div 
@@ -994,7 +1091,7 @@ const handleImagePickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) =
                                                 if (isCurrentTemplateItem) {
                                                     // Same template - just set as current image
                                                     setCurrentImage(collectionTemplate.imageUrl);
-                                                    setCurrentImageSource({ templateId: template.id, templateName: template.name });
+                                                    setCurrentImageSource({ templateId: template!.id, templateName: template!.name });
                                                     setShowImagePicker(false);
                                                 } else {
                                                     // Different template - navigate to it

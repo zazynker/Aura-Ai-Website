@@ -18,8 +18,12 @@ export interface Template {
   category: string;
   tags: string[];
   isPro: boolean;
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
+  scene?: string;
+  model?: string;
+  mood?: string;
+  holiday?: string;
 }
 
 export interface Generation {
