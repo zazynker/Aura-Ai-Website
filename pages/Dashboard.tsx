@@ -248,15 +248,6 @@ export const Dashboard = () => {
         onClick={onClick}
     >
         <img src={gen.imageUrl} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" loading="lazy" alt={gen.templateName} />
-        
-        {/* Template Name Tag - Purple Badge */}
-        <div className="absolute top-3 left-3 z-20">
-            <div className="px-2.5 py-1 rounded-md bg-white/90 dark:bg-purple-600/90 backdrop-blur-md border border-slate-200 dark:border-purple-400/30 shadow-sm dark:shadow-lg dark:shadow-purple-900/20">
-                <p className="text-[10px] font-bold text-slate-900 dark:text-white uppercase tracking-wider truncate max-w-[120px]">
-                    {gen.templateId === 'modify-session' ? 'Modify' : (gen.templateName || 'Template')}
-                </p>
-            </div>
-        </div>
 
         {/* Hover Overlay with Actions */}
         <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] z-30">
@@ -652,22 +643,42 @@ export const Dashboard = () => {
                     ) : (
                         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
                             {activeCollection && getCollectionItems(activeCollection).map(item => (
-                                <div key={item.id} className="group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all">
+                                <div 
+                                  key={item.id} 
+                                  className="group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all shadow-sm hover:shadow-xl hover:shadow-purple-900/20 aspect-square"
+                                  onClick={() => navigate(`/template/${item.id}`)}
+                                >
                                     <img 
                                         src={item.imageUrl} 
-                                        onClick={() => navigate(`/template/${item.id}`)}
-                                        className="w-full aspect-square object-cover" 
+                                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" 
                                         loading="lazy" 
+                                        alt={item.name}
                                     />
-                                    <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 pointer-events-none">
-                                        <span className="text-xs font-medium text-white bg-slate-900/50 px-2 py-1 rounded backdrop-blur-md border border-white/10">Use Template</span>
+
+                                    {/* Hover Overlay with Actions - 与 History 相同的效果 */}
+                                    <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] z-30">
+                                        <Button size="sm" variant="gradient" onClick={(e) => { e.stopPropagation(); navigate(`/template/${item.id}`); }}>
+                                            <Edit className="w-3 h-3 mr-2" /> Edit in Studio
+                                        </Button>
+                                        <div className="flex gap-2">
+                                            <button 
+                                              className="p-2 rounded-full bg-white/10 hover:bg-red-500 text-white transition-all border border-white/10" 
+                                              onClick={(e) => { e.stopPropagation(); removeFromCollection(activeCollection.id, item.id); }} 
+                                              title="Remove from Collection"
+                                            >
+                                                <X className="w-4 h-4" />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <button 
-                                        onClick={(e) => { e.stopPropagation(); removeFromCollection(activeCollection.id, item.id); }}
-                                        className="absolute top-2 right-2 p-1.5 rounded-full bg-slate-200/80 dark:bg-black/60 hover:bg-red-500 text-slate-600 dark:text-white hover:text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-auto"
-                                    >
-                                        <X className="w-3 h-3" />
-                                    </button>
+
+                                    {/* Bottom Info Bar */}
+                                    <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent opacity-100 z-20 pointer-events-none">
+                                        <div className="flex justify-between items-end">
+                                            <div className="min-w-0">
+                                               <p className="text-xs text-slate-200 font-medium truncate">{item.name}</p>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             ))}
                         </div>
