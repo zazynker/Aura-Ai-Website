@@ -757,7 +757,7 @@ export const Modify = () => {
       setProgress(100);
 
       const newImages = result.images;
-      const sourceId = 'text2img_' + Date.now();
+      const sourceId = 'text-to-image'; // Fixed ID for Generated category filtering
       const sourceName = 'Text to Image';
       const groupId = `group_${Date.now()}`;
 
@@ -831,8 +831,29 @@ export const Modify = () => {
     }
   };
 
-  const handleDownload = () => {
-    addToast('success', 'Image Downloaded!');
+  const handleDownload = async () => {
+    try {
+      // Fetch the image as blob to handle cross-origin
+      const response = await fetch(currentImage);
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      
+      // Create temporary link and trigger download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `lazora-${Date.now()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      // Clean up blob URL
+      window.URL.revokeObjectURL(url);
+      
+      addToast('success', 'Image Downloaded!');
+    } catch (error) {
+      console.error('Download failed:', error);
+      addToast('error', 'Download failed. Please try again.');
+    }
   };
 
   // --- UI Components ---
@@ -1333,14 +1354,12 @@ export const Modify = () => {
                             >
                                 <Upload className="w-4 h-4" /> Change Image
                             </button>
-                            <a 
-                                href={currentImage}
-                                download={`lazora-${Date.now()}.png`}
+                            <button 
                                 onClick={handleDownload}
                                 className="glass-panel px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-white hover:bg-white dark:hover:bg-slate-700 transition-colors border border-slate-200 dark:border-white/10"
                             >
                                 <Download className="w-4 h-4" /> Download
-                            </a>
+                            </button>
                         </div>
 
                         {/* Loading Overlay */}
