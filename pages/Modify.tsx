@@ -1932,9 +1932,7 @@ export const Modify = () => {
             <button
                 onClick={() => { 
                   setShowImagePicker(false); 
-                  setActiveTool('t2i');
-                  // Clear current image to show T2I interface
-                  setHasSelectedImage(false);
+                  setActiveTool('text2img');
                 }}
                 className="flex-1 py-2 text-xs font-medium rounded-md transition-all text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             >
