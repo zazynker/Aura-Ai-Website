@@ -27,7 +27,7 @@ export const Navbar = () => {
         <div className="hidden md:flex items-center gap-8">
           <Link to="/" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Templates</Link>
           <Link to="/modify" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/modify' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Modify</Link>
-          <Link to="/pricing" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/pricing' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Pricing</Link>
+          <Link to="/pricing" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/pricing' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Plans</Link>
         </div>
 
         {/* Right */}

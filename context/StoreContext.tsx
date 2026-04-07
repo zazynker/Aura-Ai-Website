@@ -159,10 +159,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     };
 
     updateStorage((prev) => {
-      // 保留已有的 credits/plan（如果用户之前登录过）
+      // 保留已有的 credits/plan/maxCredits（如果用户之前登录过）
       const existingUser = prev.user;
       const mergedUser = existingUser && existingUser.id === newUser.id
-        ? { ...newUser, credits: existingUser.credits, plan: existingUser.plan }
+        ? { ...newUser, credits: existingUser.credits, plan: existingUser.plan, maxCredits: existingUser.maxCredits }
         : newUser;
 
       return { ...prev, user: mergedUser };
