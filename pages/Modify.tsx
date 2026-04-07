@@ -221,6 +221,14 @@ export const Modify = () => {
     }
   }, [user]);
 
+  // Auto-open Change Image Modal when no image is selected on mount
+  useEffect(() => {
+    if (!hasSelectedImage && !navigationState?.initialImage) {
+      setShowImagePicker(true);
+      setImagePickerTab('upload');
+    }
+  }, []); // Run only once on mount
+
   // Auto-open Replace tool when image is selected
   useEffect(() => {
     if (hasSelectedImage && activeTool === null) {
