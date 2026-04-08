@@ -7,6 +7,7 @@ export interface GenerateOptions {
   numberOfImages?: number;
   imageSize?: '512' | '1K' | '2K' | '4K';  // Output resolution
   aspectRatio?: string;     // e.g., "1:1", "16:9", "9:16"
+  model?: 'standard' | 'premium';  // 'standard' = 2.5 Flash, 'premium' = 3.1 Flash
 }
 
 export interface GenerateResult {
@@ -15,6 +16,7 @@ export interface GenerateResult {
   text?: string;
   error?: string;
   imageSize?: string;
+  model?: string;
 }
 
 // Friendly error messages
@@ -39,7 +41,8 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
     productImageUrl, 
     numberOfImages = 1,
     imageSize = '1K',
-    aspectRatio
+    aspectRatio,
+    model = 'premium'
   } = options;
 
   console.log('=== generateImages called ===');
@@ -47,6 +50,7 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
   console.log('Has base image:', !!imageUrl);
   console.log('Has product image:', !!productImageUrl);
   console.log('Image size:', imageSize);
+  console.log('Model:', model);
 
   try {
     const response = await fetch('/api/generate', {
@@ -61,6 +65,7 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
         numberOfImages,
         imageSize,
         aspectRatio,
+        model,
       }),
     });
 
@@ -94,6 +99,7 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
       images: data.images || [],
       text: data.text || '',
       imageSize: data.imageSize,
+      model: data.model,
     };
   } catch (err) {
     console.error('Generate exception:', err);

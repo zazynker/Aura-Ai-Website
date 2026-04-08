@@ -117,6 +117,9 @@ export const Modify = () => {
   const [t2iOutputCount, setT2iOutputCount] = useState(4);
   const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | null>(null);
 
+  // ⚠️ TEMPORARY: A/B Test Model Selection - DELETE AFTER TESTING
+  const [testModel, setTestModel] = useState<'standard' | 'premium'>('premium');
+
   // Templates cache for collections (fetched from Supabase)
   const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
 
@@ -220,14 +223,6 @@ export const Modify = () => {
       navigate('/login');
     }
   }, [user]);
-
-  // Auto-open Change Image Modal when no image is selected on mount
-  useEffect(() => {
-    if (!hasSelectedImage && !navigationState?.initialImage) {
-      setShowImagePicker(true);
-      setImagePickerTab('upload');
-    }
-  }, []); // Run only once on mount
 
   // Auto-open Replace tool when image is selected
   useEffect(() => {
@@ -622,6 +617,7 @@ export const Modify = () => {
         numberOfImages: outputCount,      // Generate multiple images in parallel
         imageSize: targetImageSize,       // Resolution setting
         aspectRatio: targetAspectRatio,   // Target aspect ratio
+        model: testModel,                 // ⚠️ TEMPORARY: A/B test model selection
       });
 
       clearInterval(progressInterval);
@@ -748,6 +744,7 @@ export const Modify = () => {
         numberOfImages: t2iOutputCount,
         imageSize: t2iSize as '1K' | '2K' | '4K',
         aspectRatio: t2iRatio,
+        model: testModel,                 // ⚠️ TEMPORARY: A/B test model selection
       });
 
       clearInterval(progressInterval);
@@ -1613,6 +1610,40 @@ export const Modify = () => {
                                 )}
                             </div>
                             
+                            {/* ⚠️ TEMPORARY: A/B Test Model Selector - DELETE AFTER TESTING */}
+                            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30 rounded-xl space-y-2">
+                                <p className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+                                    ⚠️ A/B TEST MODE
+                                </p>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={() => setTestModel('standard')}
+                                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
+                                            testModel === 'standard' 
+                                                ? 'bg-blue-500 text-white shadow-lg' 
+                                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/10'
+                                        }`}
+                                    >
+                                        <div>Standard</div>
+                                        <div className="text-[10px] opacity-70">2.5 Flash • $0.039/img</div>
+                                    </button>
+                                    <button
+                                        onClick={() => setTestModel('premium')}
+                                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
+                                            testModel === 'premium' 
+                                                ? 'bg-purple-500 text-white shadow-lg' 
+                                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/10'
+                                        }`}
+                                    >
+                                        <div>Premium</div>
+                                        <div className="text-[10px] opacity-70">3.1 Flash • $0.067/img</div>
+                                    </button>
+                                </div>
+                                <p className="text-[10px] text-amber-600 dark:text-amber-400/70">
+                                    Current: {testModel === 'standard' ? '2.5 Flash (1K max)' : '3.1 Flash (up to 4K)'}
+                                </p>
+                            </div>
+
                             {/* Generate Button */}
                             <Button 
                                 variant="gradient" 
