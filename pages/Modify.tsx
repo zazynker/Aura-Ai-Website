@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download } from 'lucide-react';
-import { useStore } from '../context/StoreContext';
+import { useStore, CREDIT_COSTS, calculateCredits, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -116,9 +116,6 @@ export const Modify = () => {
   const [t2iSize, setT2iSize] = useState('1K');
   const [t2iOutputCount, setT2iOutputCount] = useState(4);
   const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | null>(null);
-
-  // ⚠️ TEMPORARY: A/B Test Model Selection - DELETE AFTER TESTING
-  const [testModel, setTestModel] = useState<'standard' | 'premium'>('premium');
 
   // Templates cache for collections (fetched from Supabase)
   const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
@@ -385,7 +382,20 @@ export const Modify = () => {
 
   const runGeneration = async (toolName: string, promptText: string) => {
     if (!user) { navigate('/login'); return; }
-    if (user.credits < outputCount) { addToast('error', 'Not enough credits'); navigate('/pricing'); return; }
+    
+    // Determine resolution for credit calculation
+    // For Upscale, use the target resolution; for other tools, default to 1K
+    let resolution: Resolution = '1K';
+    if (toolName === 'Upscale') {
+      resolution = promptText as Resolution; // '1K', '2K', or '4K'
+    }
+    
+    const creditsNeeded = calculateCredits(resolution, outputCount);
+    if (user.credits < creditsNeeded) { 
+      addToast('error', `Not enough credits. Need ${creditsNeeded}, have ${user.credits}`); 
+      navigate('/pricing'); 
+      return; 
+    }
 
     // Save describe to history when generating with Replace tool
     if (toolName === 'Replace' && promptText.trim()) {
@@ -617,7 +627,6 @@ export const Modify = () => {
         numberOfImages: outputCount,      // Generate multiple images in parallel
         imageSize: targetImageSize,       // Resolution setting
         aspectRatio: targetAspectRatio,   // Target aspect ratio
-        model: testModel,                 // ⚠️ TEMPORARY: A/B test model selection
       });
 
       clearInterval(progressInterval);
@@ -656,12 +665,17 @@ export const Modify = () => {
         displayPrompt = `Upscale to ${promptText}`;
       }
 
+      // Calculate credits per image based on resolution
+      const actualResolution = (result.imageSize || '1K') as Resolution;
+      const creditsPerImage = CREDIT_COSTS[actualResolution] || CREDIT_COSTS['1K'];
+      const totalCreditsUsed = creditsPerImage * newImages.length;
+
       const newGenerations = newImages.map(imgUrl => ({
         userId: user?.id || '',
         templateId: currentImageSource.templateId,
         templateName: currentImageSource.templateName,
         imageUrl: imgUrl,
-        creditsUsed: 1,
+        creditsUsed: creditsPerImage,
         prompt: displayPrompt,
     }));
 
@@ -674,7 +688,7 @@ export const Modify = () => {
           setCurrentImage(newImages[0]);
           setShowResults(true);
           setProgress(0);
-          addToast('success', `Generated ${newImages.length} image(s) with AI!`);
+          addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits.`);
       }, 300);
 
     } catch (err) {
@@ -689,8 +703,12 @@ export const Modify = () => {
   // --- Text to Image Generation ---
   const runTextToImage = async () => {
     if (!user) { navigate('/login'); return; }
-    if (user.credits < t2iOutputCount) { 
-      addToast('error', 'Not enough credits'); 
+    
+    // Calculate credits based on resolution and count
+    const t2iResolution = t2iSize as Resolution;
+    const creditsNeeded = calculateCredits(t2iResolution, t2iOutputCount);
+    if (user.credits < creditsNeeded) { 
+      addToast('error', `Not enough credits. Need ${creditsNeeded}, have ${user.credits}`); 
       navigate('/pricing'); 
       return; 
     }
@@ -744,7 +762,6 @@ export const Modify = () => {
         numberOfImages: t2iOutputCount,
         imageSize: t2iSize as '1K' | '2K' | '4K',
         aspectRatio: t2iRatio,
-        model: testModel,                 // ⚠️ TEMPORARY: A/B test model selection
       });
 
       clearInterval(progressInterval);
@@ -770,13 +787,18 @@ export const Modify = () => {
       setCurrentImageSource({ templateId: sourceId, templateName: sourceName });
       setOriginalUploadedImage(newImages[0]);
 
+      // Calculate credits per image based on resolution
+      const actualResolution = (result.imageSize || t2iSize) as Resolution;
+      const creditsPerImage = CREDIT_COSTS[actualResolution] || CREDIT_COSTS['1K'];
+      const totalCreditsUsed = creditsPerImage * newImages.length;
+
       // Create Generation records
       const newGenerations = newImages.map(imgUrl => ({
         userId: user?.id || '',
         templateId: sourceId,
         templateName: sourceName,
         imageUrl: imgUrl,
-        creditsUsed: 1,
+        creditsUsed: creditsPerImage,
         prompt: t2iPrompt || 'Text to Image',
     }));
 
@@ -791,7 +813,7 @@ export const Modify = () => {
         setActiveTool(null); // Close T2I panel after success
         setShowResults(true);
         setProgress(0);
-        addToast('success', `Generated ${newImages.length} image(s)!`);
+        addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits.`);
       }, 300);
 
     } catch (err) {
@@ -1610,40 +1632,6 @@ export const Modify = () => {
                                 )}
                             </div>
                             
-                            {/* ⚠️ TEMPORARY: A/B Test Model Selector - DELETE AFTER TESTING */}
-                            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/30 rounded-xl space-y-2">
-                                <p className="text-xs font-bold text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
-                                    ⚠️ A/B TEST MODE
-                                </p>
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={() => setTestModel('standard')}
-                                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
-                                            testModel === 'standard' 
-                                                ? 'bg-blue-500 text-white shadow-lg' 
-                                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/10'
-                                        }`}
-                                    >
-                                        <div>Standard</div>
-                                        <div className="text-[10px] opacity-70">2.5 Flash • $0.039/img</div>
-                                    </button>
-                                    <button
-                                        onClick={() => setTestModel('premium')}
-                                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-all ${
-                                            testModel === 'premium' 
-                                                ? 'bg-purple-500 text-white shadow-lg' 
-                                                : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/10'
-                                        }`}
-                                    >
-                                        <div>Premium</div>
-                                        <div className="text-[10px] opacity-70">3.1 Flash • $0.067/img</div>
-                                    </button>
-                                </div>
-                                <p className="text-[10px] text-amber-600 dark:text-amber-400/70">
-                                    Current: {testModel === 'standard' ? '2.5 Flash (1K max)' : '3.1 Flash (up to 4K)'}
-                                </p>
-                            </div>
-
                             {/* Generate Button */}
                             <Button 
                                 variant="gradient" 

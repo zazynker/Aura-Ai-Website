@@ -16,6 +16,21 @@ import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
 
+// Credit consumption rules based on output resolution
+export const CREDIT_COSTS = {
+  '512': 15,   // 512px = 15 credits/image
+  '1K': 22,    // 1024px = 22 credits/image
+  '2K': 34,    // 2048px = 34 credits/image
+  '4K': 50,    // 4096px = 50 credits/image
+} as const;
+
+export type Resolution = keyof typeof CREDIT_COSTS;
+
+// Calculate total credits needed for a generation
+export const calculateCredits = (resolution: Resolution, imageCount: number): number => {
+  return CREDIT_COSTS[resolution] * imageCount;
+};
+
 // Simple ID generator
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -152,8 +167,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       email: supaUser.email || '',
       name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
       plan: 'Free',
-      credits: 10,
-      maxCredits: 10,
+      credits: 120,
+      maxCredits: 120,
       avatarUrl: supaUser.user_metadata?.avatar_url ||
         `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
     };

@@ -1,10 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-// Gemini API endpoints - dual model support for A/B testing
-const MODELS = {
-  'standard': 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent',  // Nano Banana - cheaper, 1K max
-  'premium': 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent'  // Nano Banana 2 - better quality, up to 4K
-};
+// Gemini API endpoint - using gemini-3.1-flash-image-preview (Nano Banana 2)
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent';
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Only allow POST requests
@@ -26,27 +23,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             productImageUrl, 
             numberOfImages = 4,
             imageSize = '1K',  // Default to 1K, options: "512", "1K", "2K", "4K"
-            aspectRatio,      // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
-            model = 'premium' // 'standard' (2.5 Flash) or 'premium' (3.1 Flash) - default to premium
+            aspectRatio       // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
         } = req.body;
-        
-        // Select the appropriate model endpoint
-        const GEMINI_API_URL = MODELS[model as keyof typeof MODELS] || MODELS.premium;
-        
-        // Note: 2.5 Flash (standard) only supports up to 1K resolution
-        const effectiveImageSize = model === 'standard' && ['2K', '4K'].includes(imageSize) ? '1K' : imageSize;
 
         if (!prompt) {
             return res.status(400).json({ error: 'Prompt is required' });
         }
 
         console.log('=== Generate API called ===');
-        console.log('Model:', model, '→', GEMINI_API_URL.includes('2.5') ? '2.5 Flash (Standard)' : '3.1 Flash (Premium)');
         console.log('Prompt:', prompt.substring(0, 100) + '...');
         console.log('Has base image:', !!imageUrl);
         console.log('Has product image:', !!productImageUrl);
         console.log('Number of images requested:', numberOfImages);
-        console.log('Image size:', imageSize, effectiveImageSize !== imageSize ? `→ capped to ${effectiveImageSize}` : '');
+        console.log('Image size:', imageSize);
         console.log('Aspect ratio:', aspectRatio || 'default');
 
         // Build the request content parts
@@ -91,8 +80,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Build imageConfig for resolution and aspect ratio
         // Note: Gemini API uses camelCase for these parameters
         const imageConfig: any = {};
-        if (effectiveImageSize && ['512', '1K', '2K', '4K'].includes(effectiveImageSize)) {
-            imageConfig.imageSize = effectiveImageSize;  // camelCase
+        if (imageSize && ['512', '1K', '2K', '4K'].includes(imageSize)) {
+            imageConfig.imageSize = imageSize;  // camelCase
         }
         if (aspectRatio) {
             imageConfig.aspectRatio = aspectRatio;  // camelCase
@@ -223,8 +212,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             images: images,
             text: '',
             count: images.length,
-            imageSize: effectiveImageSize,
-            model: model
+            imageSize: imageSize
         });
 
     } catch (err) {
