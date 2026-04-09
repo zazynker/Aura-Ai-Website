@@ -43,7 +43,7 @@ export const CreditRules = () => {
             </p>
             <div className="glass-panel p-4 rounded-xl border border-slate-200 dark:border-white/10 my-6 text-center">
               <code className="text-lg font-mono text-purple-600 dark:text-purple-400">
-                Credits = ⌈ Output Tokens ÷ 50 ⌉
+                Credits = ⌈ Output Tokens ÷ 60 ⌉
               </code>
             </div>
             <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
@@ -62,22 +62,22 @@ export const CreditRules = () => {
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors">
                     <td className="p-4">512px</td>
                     <td className="p-4 text-slate-500">~747</td>
-                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~15</td>
+                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~13</td>
                   </tr>
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors">
                     <td className="p-4">1K (1024px)</td>
                     <td className="p-4 text-slate-500">~1,120</td>
-                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~22</td>
+                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~19</td>
                   </tr>
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors">
                     <td className="p-4">2K (2048px)</td>
                     <td className="p-4 text-slate-500">~1,680</td>
-                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~34</td>
+                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~28</td>
                   </tr>
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors">
                     <td className="p-4">4K (4096px)</td>
                     <td className="p-4 text-slate-500">~2,520</td>
-                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~50</td>
+                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~42</td>
                   </tr>
                 </tbody>
               </table>

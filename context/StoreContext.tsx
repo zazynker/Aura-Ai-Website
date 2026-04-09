@@ -36,22 +36,23 @@ export type Resolution = keyof typeof ESTIMATED_TOKENS_PER_IMAGE;
 export const estimateCredits = (resolution: Resolution, imageCount: number): number => {
   const tokensPerImage = ESTIMATED_TOKENS_PER_IMAGE[resolution];
   const totalTokens = tokensPerImage * imageCount;
-  return Math.ceil(totalTokens / 50);
+  return Math.ceil(totalTokens / 60);
 };
 
 // Calculate actual credits based on REAL token consumption from API
 // This is the authoritative calculation used after generation completes
+// Divisor of 60 yields ~65% profit margin
 export const calculateCreditsFromTokens = (tokensUsed: number): number => {
   if (tokensUsed <= 0) return 0;
-  return Math.ceil(tokensUsed / 50);
+  return Math.ceil(tokensUsed / 60);
 };
 
 // Legacy export for backwards compatibility (uses estimation)
 export const CREDIT_COSTS = {
-  '512': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['512'] / 50),   // ~15
-  '1K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['1K'] / 50),     // ~22
-  '2K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['2K'] / 50),     // ~34
-  '4K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['4K'] / 50),     // ~50
+  '512': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['512'] / 60),   // ~13
+  '1K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['1K'] / 60),     // ~19
+  '2K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['2K'] / 60),     // ~28
+  '4K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['4K'] / 60),     // ~42
 } as const;
 
 // Legacy function for backwards compatibility
