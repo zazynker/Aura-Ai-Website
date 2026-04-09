@@ -15,6 +15,7 @@ export interface GenerateResult {
   text?: string;
   error?: string;
   imageSize?: string;
+  tokensUsed?: number;  // Total tokens consumed by this generation
 }
 
 // Friendly error messages
@@ -80,12 +81,18 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
     }
 
     const data = await response.json();
-    console.log('API response:', { success: data.success, imageCount: data.images?.length, imageSize: data.imageSize });
+    console.log('API response:', { 
+      success: data.success, 
+      imageCount: data.images?.length, 
+      imageSize: data.imageSize,
+      tokensUsed: data.tokensUsed 
+    });
 
     if (!data.success) {
       return {
         success: false,
         error: data.error || 'Generation failed',
+        tokensUsed: data.tokensUsed || 0,
       };
     }
 
@@ -94,6 +101,7 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
       images: data.images || [],
       text: data.text || '',
       imageSize: data.imageSize,
+      tokensUsed: data.tokensUsed || 0,
     };
   } catch (err) {
     console.error('Generate exception:', err);

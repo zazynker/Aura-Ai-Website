@@ -31,48 +31,59 @@ export const CreditRules = () => {
           <section>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">1. Overview</h2>
             <p>
-              Lazora uses a credit-based billing system for AI image generation. The number of credits consumed per generation depends on the output resolution — higher resolution images consume more credits.
+              Lazora uses a credit-based billing system for AI image generation. Credits are calculated based on <strong>actual token consumption</strong> from the AI model — this ensures fair and transparent pricing that directly reflects the computational resources used.
             </p>
           </section>
 
           {/* Section 2: Credit Consumption Table */}
           <section>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">2. Credit Consumption Table</h2>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">2. Credit Calculation</h2>
+            <p className="mb-4">
+              Credits are calculated from the actual tokens consumed by the AI model using this formula:
+            </p>
+            <div className="glass-panel p-4 rounded-xl border border-slate-200 dark:border-white/10 my-6 text-center">
+              <code className="text-lg font-mono text-purple-600 dark:text-purple-400">
+                Credits = ⌈ Tokens Used ÷ 50 ⌉
+              </code>
+            </div>
+            <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
+              The table below shows <strong>estimated</strong> credits per image. Actual consumption may vary slightly based on image complexity and content.
+            </p>
             <div className="glass-panel overflow-hidden rounded-xl border border-slate-200 dark:border-white/10 my-6">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-100 dark:bg-white/5 border-b border-slate-200 dark:border-white/10">
                   <tr>
                     <th className="p-4 font-semibold text-slate-900 dark:text-white">Resolution</th>
-                    <th className="p-4 font-semibold text-slate-900 dark:text-white">Pixels</th>
-                    <th className="p-4 font-semibold text-slate-900 dark:text-white text-right">Credits per Image</th>
+                    <th className="p-4 font-semibold text-slate-900 dark:text-white">Est. Tokens</th>
+                    <th className="p-4 font-semibold text-slate-900 dark:text-white text-right">Est. Credits</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-white/10">
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors">
                     <td className="p-4">512px</td>
-                    <td className="p-4 text-slate-500">~0.25 megapixels</td>
-                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">15</td>
+                    <td className="p-4 text-slate-500">~747</td>
+                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~15</td>
                   </tr>
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors">
                     <td className="p-4">1K (1024px)</td>
-                    <td className="p-4 text-slate-500">~1 megapixel</td>
-                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">22</td>
+                    <td className="p-4 text-slate-500">~1,120</td>
+                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~22</td>
                   </tr>
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors">
                     <td className="p-4">2K (2048px)</td>
-                    <td className="p-4 text-slate-500">~4 megapixels</td>
-                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">34</td>
+                    <td className="p-4 text-slate-500">~1,680</td>
+                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~34</td>
                   </tr>
                   <tr className="hover:bg-slate-50/50 dark:hover:bg-white/[0.02] transition-colors">
                     <td className="p-4">4K (4096px)</td>
-                    <td className="p-4 text-slate-500">~16 megapixels</td>
-                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">50</td>
+                    <td className="p-4 text-slate-500">~2,520</td>
+                    <td className="p-4 text-right font-bold text-slate-900 dark:text-white">~50</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Credits are charged per output image. For example, generating 4 images at 1K resolution costs 4 × 22 = 88 credits.
+              After each generation, you'll see the exact credits deducted and tokens consumed in the notification.
             </p>
           </section>
 

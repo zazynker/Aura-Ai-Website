@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download } from 'lucide-react';
-import { useStore, CREDIT_COSTS, calculateCredits, Resolution } from '../context/StoreContext';
+import { useStore, estimateCredits, calculateCreditsFromTokens, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -383,16 +383,17 @@ export const Modify = () => {
   const runGeneration = async (toolName: string, promptText: string) => {
     if (!user) { navigate('/login'); return; }
     
-    // Determine resolution for credit calculation
+    // Determine resolution for credit estimation
     // For Upscale, use the target resolution; for other tools, default to 1K
     let resolution: Resolution = '1K';
     if (toolName === 'Upscale') {
       resolution = promptText as Resolution; // '1K', '2K', or '4K'
     }
     
-    const creditsNeeded = calculateCredits(resolution, outputCount);
-    if (user.credits < creditsNeeded) { 
-      addToast('error', `Not enough credits. Need ${creditsNeeded}, have ${user.credits}`); 
+    // Pre-check: estimate credits needed (actual amount will be based on real token usage)
+    const estimatedCredits = estimateCredits(resolution, outputCount);
+    if (user.credits < estimatedCredits) { 
+      addToast('error', `Not enough credits. Need ~${estimatedCredits}, have ${user.credits}`); 
       navigate('/pricing'); 
       return; 
     }
@@ -665,10 +666,15 @@ export const Modify = () => {
         displayPrompt = `Upscale to ${promptText}`;
       }
 
-      // Calculate credits per image based on resolution
-      const actualResolution = (result.imageSize || '1K') as Resolution;
-      const creditsPerImage = CREDIT_COSTS[actualResolution] || CREDIT_COSTS['1K'];
-      const totalCreditsUsed = creditsPerImage * newImages.length;
+      // Calculate credits based on ACTUAL token consumption from API
+      const tokensUsed = result.tokensUsed || 0;
+      const totalCreditsUsed = calculateCreditsFromTokens(tokensUsed);
+      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
+      
+      console.log('=== Credit Calculation ===');
+      console.log('Tokens used:', tokensUsed);
+      console.log('Total credits:', totalCreditsUsed);
+      console.log('Credits per image:', creditsPerImage);
 
       const newGenerations = newImages.map(imgUrl => ({
         userId: user?.id || '',
@@ -688,7 +694,7 @@ export const Modify = () => {
           setCurrentImage(newImages[0]);
           setShowResults(true);
           setProgress(0);
-          addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits.`);
+          addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits (${tokensUsed} tokens).`);
       }, 300);
 
     } catch (err) {
@@ -704,11 +710,11 @@ export const Modify = () => {
   const runTextToImage = async () => {
     if (!user) { navigate('/login'); return; }
     
-    // Calculate credits based on resolution and count
+    // Pre-check: estimate credits needed
     const t2iResolution = t2iSize as Resolution;
-    const creditsNeeded = calculateCredits(t2iResolution, t2iOutputCount);
-    if (user.credits < creditsNeeded) { 
-      addToast('error', `Not enough credits. Need ${creditsNeeded}, have ${user.credits}`); 
+    const estimatedCredits = estimateCredits(t2iResolution, t2iOutputCount);
+    if (user.credits < estimatedCredits) { 
+      addToast('error', `Not enough credits. Need ~${estimatedCredits}, have ${user.credits}`); 
       navigate('/pricing'); 
       return; 
     }
@@ -787,10 +793,15 @@ export const Modify = () => {
       setCurrentImageSource({ templateId: sourceId, templateName: sourceName });
       setOriginalUploadedImage(newImages[0]);
 
-      // Calculate credits per image based on resolution
-      const actualResolution = (result.imageSize || t2iSize) as Resolution;
-      const creditsPerImage = CREDIT_COSTS[actualResolution] || CREDIT_COSTS['1K'];
-      const totalCreditsUsed = creditsPerImage * newImages.length;
+      // Calculate credits based on ACTUAL token consumption from API
+      const tokensUsed = result.tokensUsed || 0;
+      const totalCreditsUsed = calculateCreditsFromTokens(tokensUsed);
+      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
+      
+      console.log('=== T2I Credit Calculation ===');
+      console.log('Tokens used:', tokensUsed);
+      console.log('Total credits:', totalCreditsUsed);
+      console.log('Credits per image:', creditsPerImage);
 
       // Create Generation records
       const newGenerations = newImages.map(imgUrl => ({
@@ -813,7 +824,7 @@ export const Modify = () => {
         setActiveTool(null); // Close T2I panel after success
         setShowResults(true);
         setProgress(0);
-        addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits.`);
+        addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits (${tokensUsed} tokens).`);
       }, 300);
 
     } catch (err) {

@@ -16,19 +16,47 @@ import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
 
-// Credit consumption rules based on output resolution
-export const CREDIT_COSTS = {
-  '512': 15,   // 512px = 15 credits/image
-  '1K': 22,    // 1024px = 22 credits/image
-  '2K': 34,    // 2048px = 34 credits/image
-  '4K': 50,    // 4096px = 50 credits/image
+// Credit calculation based on actual token usage
+// Formula: credits = ceil(tokensUsed / 50)
+// This ensures ~70% profit margin based on Gemini pricing ($60/M tokens for image output)
+
+// Estimated token consumption per image (for pre-generation credit check)
+// These are approximate values based on Gemini documentation
+export const ESTIMATED_TOKENS_PER_IMAGE = {
+  '512': 747,    // 512px
+  '1K': 1120,    // 1024px  
+  '2K': 1680,    // 2048px
+  '4K': 2520,    // 4096px
 } as const;
 
-export type Resolution = keyof typeof CREDIT_COSTS;
+export type Resolution = keyof typeof ESTIMATED_TOKENS_PER_IMAGE;
 
-// Calculate total credits needed for a generation
+// Estimate credits needed BEFORE generation (for UI display and pre-check)
+// This uses fixed estimates since we don't know actual consumption yet
+export const estimateCredits = (resolution: Resolution, imageCount: number): number => {
+  const tokensPerImage = ESTIMATED_TOKENS_PER_IMAGE[resolution];
+  const totalTokens = tokensPerImage * imageCount;
+  return Math.ceil(totalTokens / 50);
+};
+
+// Calculate actual credits based on REAL token consumption from API
+// This is the authoritative calculation used after generation completes
+export const calculateCreditsFromTokens = (tokensUsed: number): number => {
+  if (tokensUsed <= 0) return 0;
+  return Math.ceil(tokensUsed / 50);
+};
+
+// Legacy export for backwards compatibility (uses estimation)
+export const CREDIT_COSTS = {
+  '512': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['512'] / 50),   // ~15
+  '1K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['1K'] / 50),     // ~22
+  '2K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['2K'] / 50),     // ~34
+  '4K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['4K'] / 50),     // ~50
+} as const;
+
+// Legacy function for backwards compatibility
 export const calculateCredits = (resolution: Resolution, imageCount: number): number => {
-  return CREDIT_COSTS[resolution] * imageCount;
+  return estimateCredits(resolution, imageCount);
 };
 
 // Simple ID generator

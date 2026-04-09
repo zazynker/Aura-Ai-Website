@@ -123,7 +123,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // Generate multiple images by calling API multiple times in parallel
         // With retry mechanism to improve success rate
-        const generateOne = async (attempt = 1): Promise<string | null> => {
+        // Returns both image and token usage
+        interface GenerationResult {
+            image: string | null;
+            tokensUsed: number;
+        }
+        
+        const generateOne = async (attempt = 1): Promise<GenerationResult> => {
             const maxAttempts = 3; // Max retry attempts per image
             try {
                 const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
@@ -141,16 +147,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                         await new Promise(r => setTimeout(r, 300 * attempt)); // Increasing delay
                         return generateOne(attempt + 1);
                     }
-                    return null;
+                    return { image: null, tokensUsed: 0 };
                 }
 
                 const data = await response.json();
+                
+                // Extract token usage from usageMetadata
+                const tokensUsed = data.usageMetadata?.totalTokenCount || 0;
+                console.log('Token usage for this generation:', {
+                    promptTokenCount: data.usageMetadata?.promptTokenCount,
+                    candidatesTokenCount: data.usageMetadata?.candidatesTokenCount,
+                    totalTokenCount: tokensUsed
+                });
                 
                 if (data.candidates && data.candidates[0]?.content?.parts) {
                     for (const part of data.candidates[0].content.parts) {
                         if (part.inlineData?.data) {
                             const mimeType = part.inlineData.mimeType || 'image/png';
-                            return `data:${mimeType};base64,${part.inlineData.data}`;
+                            return { 
+                                image: `data:${mimeType};base64,${part.inlineData.data}`,
+                                tokensUsed: tokensUsed
+                            };
                         }
                     }
                 }
@@ -161,27 +178,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     await new Promise(r => setTimeout(r, 300 * attempt));
                     return generateOne(attempt + 1);
                 }
-                return null;
+                return { image: null, tokensUsed: 0 };
             } catch (err) {
                 console.error(`Error in generateOne (attempt ${attempt}):`, err);
                 if (attempt < maxAttempts) {
                     await new Promise(r => setTimeout(r, 300 * attempt));
                     return generateOne(attempt + 1);
                 }
-                return null;
+                return { image: null, tokensUsed: 0 };
             }
         };
 
         // Run generations and ensure we get the requested number
         const numToGenerate = Math.min(Math.max(1, numberOfImages), 4);
         let images: string[] = [];
+        let totalTokensUsed = 0;
         let totalAttempts = 0;
         const maxTotalAttempts = numToGenerate * 2; // Allow up to 2x attempts to fill quota
         
         // First batch - parallel
         const promises = Array.from({ length: numToGenerate }, () => generateOne());
         const results = await Promise.all(promises);
-        images = results.filter((img): img is string => img !== null);
+        
+        for (const result of results) {
+            if (result.image) {
+                images.push(result.image);
+            }
+            totalTokensUsed += result.tokensUsed;
+        }
         totalAttempts = numToGenerate;
         
         // If we didn't get enough, try to fill the gap
@@ -190,20 +214,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             console.log(`Only got ${images.length}/${numToGenerate}, generating ${needed} more...`);
             const extraPromises = Array.from({ length: needed }, () => generateOne());
             const extraResults = await Promise.all(extraPromises);
-            const extraImages = extraResults.filter((img): img is string => img !== null);
-            images = [...images, ...extraImages];
+            for (const result of extraResults) {
+                if (result.image) {
+                    images.push(result.image);
+                }
+                totalTokensUsed += result.tokensUsed;
+            }
             totalAttempts += needed;
         }
         
+        console.log('=== Generation Summary ===');
         console.log('Total images generated:', images.length, 'out of', numToGenerate, 'requested');
         console.log('Image size setting:', imageSize);
+        console.log('Total tokens used:', totalTokensUsed);
 
         if (images.length === 0) {
             return res.status(500).json({
                 success: false,
                 error: 'All generation attempts failed',
                 images: [],
-                count: 0
+                count: 0,
+                tokensUsed: totalTokensUsed
             });
         }
 
@@ -212,7 +243,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             images: images,
             text: '',
             count: images.length,
-            imageSize: imageSize
+            imageSize: imageSize,
+            tokensUsed: totalTokensUsed
         });
 
     } catch (err) {
