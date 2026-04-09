@@ -7,7 +7,9 @@ import {
   createCollectionInDb,
   deleteCollectionFromDb,
   addItemToCollectionInDb,
-  removeItemFromCollectionInDb
+  removeItemFromCollectionInDb,
+  fetchUserCredits,
+  deductUserCredits
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
@@ -191,26 +193,36 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
   const syncUserFromSession = async (session: Session) => {
     const supaUser = session.user;
+    
+    // 先从数据库获取用户积分信息
+    const { data: creditsData } = await fetchUserCredits();
+    
+    // 验证 plan 是否为有效值
+    const validPlans = ['Free', 'Pro'] as const;
+    const dbPlan = creditsData?.plan;
+    const plan = (dbPlan && validPlans.includes(dbPlan as any)) 
+      ? (dbPlan as 'Free' | 'Pro') 
+      : 'Free';
+    
     const newUser: User = {
       id: supaUser.id,
       email: supaUser.email || '',
       name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
-      plan: 'Free',
-      credits: 120,
-      maxCredits: 120,
+      plan: plan,
+      credits: creditsData?.credits ?? 120,  // 从数据库读取，如果没有则默认 120
+      maxCredits: creditsData?.maxCredits ?? 120,
       avatarUrl: supaUser.user_metadata?.avatar_url ||
         `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
     };
 
-    updateStorage((prev) => {
-      // 保留已有的 credits/plan/maxCredits（如果用户之前登录过）
-      const existingUser = prev.user;
-      const mergedUser = existingUser && existingUser.id === newUser.id
-        ? { ...newUser, credits: existingUser.credits, plan: existingUser.plan, maxCredits: existingUser.maxCredits }
-        : newUser;
+    console.log('=== User synced from database ===');
+    console.log('Credits from DB:', creditsData?.credits);
+    console.log('Plan from DB:', creditsData?.plan);
 
-      return { ...prev, user: mergedUser };
-    });
+    updateStorage((prev) => ({
+      ...prev,
+      user: newUser
+    }));
     setData(getStorage());
     
     // Load user's data from database
@@ -359,11 +371,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       };
       setSessionGenerations(prev => [sessionGen, ...prev]);
       
-      // Deduct credits locally
-      updateStorage((prev) => ({
-        ...prev,
-        user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
-      }));
+      // Deduct credits - sync to database
+      const { success, newCredits } = await deductUserCredits(gen.creditsUsed);
+      if (success) {
+        updateStorage((prev) => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, credits: newCredits } : null
+        }));
+      } else {
+        updateStorage((prev) => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
+        }));
+      }
       setData(getStorage());
       return;
     }
@@ -381,11 +401,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       // Add to local state immediately (at the beginning)
       setDbGenerations(prev => [savedGen, ...prev]);
       
-      // Deduct credits locally
-      updateStorage((prev) => ({
-        ...prev,
-        user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
-      }));
+      // Deduct credits - sync to database
+      const { success, newCredits } = await deductUserCredits(gen.creditsUsed);
+      if (success) {
+        updateStorage((prev) => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, credits: newCredits } : null
+        }));
+      } else {
+        updateStorage((prev) => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
+        }));
+      }
       setData(getStorage());
     }
   };
@@ -455,13 +483,26 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
     }
 
-    // 扣除积分
+    // 扣除积分 - 同步到数据库
     const totalCredits = gens.reduce((acc, g) => acc + g.creditsUsed, 0);
-    updateStorage((prev) => ({
-      ...prev,
-      user: prev.user ? { ...prev.user, credits: prev.user.credits - totalCredits } : null
-    }));
-    setData(getStorage());
+    const { success, newCredits, error: deductError } = await deductUserCredits(totalCredits);
+    
+    if (success) {
+      console.log(`Credits deducted: ${totalCredits}. New balance: ${newCredits}`);
+      updateStorage((prev) => ({
+        ...prev,
+        user: prev.user ? { ...prev.user, credits: newCredits } : null
+      }));
+      setData(getStorage());
+    } else {
+      console.error('Failed to deduct credits from database:', deductError);
+      // 即使数据库扣除失败，也更新本地（下次登录会同步）
+      updateStorage((prev) => ({
+        ...prev,
+        user: prev.user ? { ...prev.user, credits: prev.user.credits - totalCredits } : null
+      }));
+      setData(getStorage());
+    }
   };
 
   const deleteGeneration = async (id: string) => {

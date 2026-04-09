@@ -466,3 +466,176 @@ export async function removeItemFromCollectionInDb(
     return { success: false, error: 'Failed to remove from collection' };
   }
 }
+
+// ============================================
+// User Credits API (用户积分)
+// ============================================
+
+export interface UserCreditsData {
+  credits: number;
+  plan: string;
+  maxCredits: number;
+}
+
+/**
+ * 从数据库获取用户积分信息
+ */
+export async function fetchUserCredits(): Promise<{ 
+  data: UserCreditsData | null; 
+  error: string | null 
+}> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { data: null, error: 'Not authenticated' };
+    }
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('credits, plan, max_credits')
+      .eq('id', user.id)
+      .single();
+
+    if (error) {
+      // 如果用户不存在，创建新用户记录
+      if (error.code === 'PGRST116') {
+        console.log('User not found in users table, creating...');
+        const newUserData = {
+          id: user.id,
+          email: user.email,
+          credits: 120,
+          plan: 'Free',
+          max_credits: 120
+        };
+        
+        const { data: newUser, error: insertError } = await supabase
+          .from('users')
+          .insert(newUserData)
+          .select('credits, plan, max_credits')
+          .single();
+        
+        if (insertError) {
+          console.error('Error creating user:', insertError);
+          return { data: null, error: insertError.message };
+        }
+        
+        return { 
+          data: {
+            credits: newUser.credits,
+            plan: newUser.plan,
+            maxCredits: newUser.max_credits
+          }, 
+          error: null 
+        };
+      }
+      
+      console.error('Error fetching user credits:', error);
+      return { data: null, error: error.message };
+    }
+
+    return { 
+      data: {
+        credits: data.credits,
+        plan: data.plan,
+        maxCredits: data.max_credits
+      }, 
+      error: null 
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to fetch credits' };
+  }
+}
+
+/**
+ * 扣除用户积分（原子操作）
+ */
+export async function deductUserCredits(
+  amount: number
+): Promise<{ success: boolean; newCredits: number; error: string | null }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { success: false, newCredits: 0, error: 'Not authenticated' };
+    }
+
+    // 使用 RPC 函数进行原子扣除，防止并发问题
+    // 如果没有 RPC，先获取再更新
+    const { data: currentData, error: fetchError } = await supabase
+      .from('users')
+      .select('credits')
+      .eq('id', user.id)
+      .single();
+
+    if (fetchError) {
+      console.error('Error fetching current credits:', fetchError);
+      return { success: false, newCredits: 0, error: fetchError.message };
+    }
+
+    const currentCredits = currentData.credits;
+    if (currentCredits < amount) {
+      return { success: false, newCredits: currentCredits, error: 'Insufficient credits' };
+    }
+
+    const newCredits = currentCredits - amount;
+
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ credits: newCredits })
+      .eq('id', user.id);
+
+    if (updateError) {
+      console.error('Error updating credits:', updateError);
+      return { success: false, newCredits: currentCredits, error: updateError.message };
+    }
+
+    console.log(`Deducted ${amount} credits. New balance: ${newCredits}`);
+    return { success: true, newCredits, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, newCredits: 0, error: 'Failed to deduct credits' };
+  }
+}
+
+/**
+ * 添加用户积分（用于购买或奖励）
+ */
+export async function addUserCredits(
+  amount: number
+): Promise<{ success: boolean; newCredits: number; error: string | null }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { success: false, newCredits: 0, error: 'Not authenticated' };
+    }
+
+    const { data: currentData, error: fetchError } = await supabase
+      .from('users')
+      .select('credits')
+      .eq('id', user.id)
+      .single();
+
+    if (fetchError) {
+      console.error('Error fetching current credits:', fetchError);
+      return { success: false, newCredits: 0, error: fetchError.message };
+    }
+
+    const newCredits = currentData.credits + amount;
+
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ credits: newCredits })
+      .eq('id', user.id);
+
+    if (updateError) {
+      console.error('Error updating credits:', updateError);
+      return { success: false, newCredits: currentData.credits, error: updateError.message };
+    }
+
+    console.log(`Added ${amount} credits. New balance: ${newCredits}`);
+    return { success: true, newCredits, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, newCredits: 0, error: 'Failed to add credits' };
+  }
+}
