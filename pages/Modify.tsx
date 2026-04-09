@@ -694,7 +694,7 @@ export const Modify = () => {
           setCurrentImage(newImages[0]);
           setShowResults(true);
           setProgress(0);
-          addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits (${tokensUsed} tokens).`);
+          addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits.`);
       }, 300);
 
     } catch (err) {
@@ -824,7 +824,7 @@ export const Modify = () => {
         setActiveTool(null); // Close T2I panel after success
         setShowResults(true);
         setProgress(0);
-        addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits (${tokensUsed} tokens).`);
+        addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits.`);
       }, 300);
 
     } catch (err) {

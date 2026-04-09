@@ -153,11 +153,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 const data = await response.json();
                 
                 // Extract token usage from usageMetadata
-                const tokensUsed = data.usageMetadata?.totalTokenCount || 0;
+                // Use candidatesTokenCount (output only) for billing, as input tokens cost 120x less
+                const outputTokens = data.usageMetadata?.candidatesTokenCount || 0;
+                const inputTokens = data.usageMetadata?.promptTokenCount || 0;
+                const totalTokens = data.usageMetadata?.totalTokenCount || 0;
+                
                 console.log('Token usage for this generation:', {
-                    promptTokenCount: data.usageMetadata?.promptTokenCount,
-                    candidatesTokenCount: data.usageMetadata?.candidatesTokenCount,
-                    totalTokenCount: tokensUsed
+                    promptTokenCount: inputTokens,
+                    candidatesTokenCount: outputTokens,
+                    totalTokenCount: totalTokens,
+                    billingTokens: outputTokens  // We bill based on output only
                 });
                 
                 if (data.candidates && data.candidates[0]?.content?.parts) {
@@ -166,7 +171,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             const mimeType = part.inlineData.mimeType || 'image/png';
                             return { 
                                 image: `data:${mimeType};base64,${part.inlineData.data}`,
-                                tokensUsed: tokensUsed
+                                tokensUsed: outputTokens  // Bill based on output tokens only
                             };
                         }
                     }

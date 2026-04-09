@@ -31,7 +31,7 @@ export const CreditRules = () => {
           <section>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">1. Overview</h2>
             <p>
-              Lazora uses a credit-based billing system for AI image generation. Credits are calculated based on <strong>actual token consumption</strong> from the AI model — this ensures fair and transparent pricing that directly reflects the computational resources used.
+              Lazora uses a credit-based billing system for AI image generation. Credits are calculated based on <strong>output tokens only</strong> — you're only charged for the images we generate, not for the images you upload as input.
             </p>
           </section>
 
@@ -39,23 +39,23 @@ export const CreditRules = () => {
           <section>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">2. Credit Calculation</h2>
             <p className="mb-4">
-              Credits are calculated from the actual tokens consumed by the AI model using this formula:
+              Credits are calculated from the output tokens consumed by the AI model:
             </p>
             <div className="glass-panel p-4 rounded-xl border border-slate-200 dark:border-white/10 my-6 text-center">
               <code className="text-lg font-mono text-purple-600 dark:text-purple-400">
-                Credits = ⌈ Tokens Used ÷ 50 ⌉
+                Credits = ⌈ Output Tokens ÷ 50 ⌉
               </code>
             </div>
             <p className="mb-6 text-sm text-slate-500 dark:text-slate-400">
-              The table below shows <strong>estimated</strong> credits per image. Actual consumption may vary slightly based on image complexity and content.
+              Input images (templates, product photos) are <strong>free</strong> — only the generated output counts toward your credits.
             </p>
             <div className="glass-panel overflow-hidden rounded-xl border border-slate-200 dark:border-white/10 my-6">
               <table className="w-full text-left text-sm">
                 <thead className="bg-slate-100 dark:bg-white/5 border-b border-slate-200 dark:border-white/10">
                   <tr>
-                    <th className="p-4 font-semibold text-slate-900 dark:text-white">Resolution</th>
-                    <th className="p-4 font-semibold text-slate-900 dark:text-white">Est. Tokens</th>
-                    <th className="p-4 font-semibold text-slate-900 dark:text-white text-right">Est. Credits</th>
+                    <th className="p-4 font-semibold text-slate-900 dark:text-white">Output Resolution</th>
+                    <th className="p-4 font-semibold text-slate-900 dark:text-white">Output Tokens</th>
+                    <th className="p-4 font-semibold text-slate-900 dark:text-white text-right">Credits/Image</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-200 dark:divide-white/10">
@@ -83,7 +83,7 @@ export const CreditRules = () => {
               </table>
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              After each generation, you'll see the exact credits deducted and tokens consumed in the notification.
+              After each generation, you'll see the exact credits deducted based on actual output token consumption.
             </p>
           </section>
 
