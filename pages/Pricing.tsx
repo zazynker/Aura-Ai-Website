@@ -29,7 +29,7 @@ export const Pricing = () => {
     
     // Merge existing credits with Pro credits
     const currentCredits = user?.credits || 0;
-    const newCredits = currentCredits + 2900;
+    const newCredits = currentCredits + 3000;
     
     updateUser({ plan: 'Pro', credits: newCredits, maxCredits: newCredits });
     setIsProcessing(false);
@@ -106,7 +106,7 @@ export const Pricing = () => {
           <ul className="space-y-4 mb-8 flex-1">
             <li className="flex items-start gap-3 text-slate-700 dark:text-slate-200 text-sm">
               <Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0 mt-0.5" /> 
-              <span><strong className="text-slate-900 dark:text-white">2,900 Credits / month</strong> (rollover enabled)</span>
+              <span><strong className="text-slate-900 dark:text-white">3,000 Credits / month</strong> (rollover enabled)</span>
             </li>
             <li className="flex items-center gap-3 text-slate-700 dark:text-slate-200 text-sm"><Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" /> Up to 4K Ultra HD resolution</li>
             <li className="flex items-center gap-3 text-slate-700 dark:text-slate-200 text-sm"><Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" /> All premium templates</li>
@@ -125,24 +125,15 @@ export const Pricing = () => {
           
           <div className="space-y-3 mb-8 flex-1">
             <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-purple-300 dark:hover:border-purple-500/30 transition-colors cursor-pointer">
-              <div>
-                <p className="font-bold text-slate-900 dark:text-white">500 Credits</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">$0.014 / credit</p>
-              </div>
+              <p className="font-bold text-slate-900 dark:text-white">500 Credits</p>
               <Button variant="secondary" size="sm" className="font-bold">$7</Button>
             </div>
             <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-purple-300 dark:hover:border-purple-500/30 transition-colors cursor-pointer">
-              <div>
-                <p className="font-bold text-slate-900 dark:text-white">1,000 Credits</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">$0.012 / credit</p>
-              </div>
+              <p className="font-bold text-slate-900 dark:text-white">1,000 Credits</p>
               <Button variant="secondary" size="sm" className="font-bold">$12</Button>
             </div>
             <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-purple-300 dark:hover:border-purple-500/30 transition-colors cursor-pointer">
-              <div>
-                <p className="font-bold text-slate-900 dark:text-white">2,000 Credits</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">$0.011 / credit</p>
-              </div>
+              <p className="font-bold text-slate-900 dark:text-white">2,000 Credits</p>
               <Button variant="secondary" size="sm" className="font-bold">$22</Button>
             </div>
           </div>
@@ -161,11 +152,11 @@ export const Pricing = () => {
                  <Zap className="w-5 h-5 text-purple-500 dark:text-purple-400" />
                </div>
                <div>
-                 <p className="text-sm font-semibold text-slate-900 dark:text-white">2,900 Credits</p>
+                 <p className="text-sm font-semibold text-slate-900 dark:text-white">3,000 Credits</p>
                  <p className="text-xs text-slate-500 dark:text-slate-400">Added to your balance</p>
                </div>
              </div>
-             <span className="text-green-500 dark:text-green-400 text-sm font-medium">+2,900</span>
+             <span className="text-green-500 dark:text-green-400 text-sm font-medium">+3,000</span>
           </div>
           <div className="flex gap-3 pt-2">
             <Button variant="secondary" className="flex-1" onClick={() => setShowConfirm(false)}>Cancel</Button>
