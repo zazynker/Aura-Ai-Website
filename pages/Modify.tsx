@@ -298,7 +298,25 @@ export const Modify = () => {
   // --- Logic: Image Selection ---
   const handleLocalUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const imageUrl = URL.createObjectURL(e.target.files[0]);
+      const file = e.target.files[0];
+      
+      // Validate file size (10MB)
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        addToast('error', `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB.`);
+        e.target.value = '';
+        return;
+      }
+      
+      // Validate file type
+      const validTypes = ['image/png', 'image/jpeg', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+        addToast('error', 'Invalid file type. Please upload PNG, JPG, or WebP images only.');
+        e.target.value = '';
+        return;
+      }
+      
+      const imageUrl = URL.createObjectURL(file);
       setCurrentImage(imageUrl);
       setOriginalUploadedImage(imageUrl);
       setCurrentImageSource({ templateId: MODIFY_SESSION_ID, templateName: 'User Upload' });
@@ -323,7 +341,25 @@ export const Modify = () => {
 
   const handleImagePickerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
-      const imageUrl = URL.createObjectURL(e.target.files[0]);
+      const file = e.target.files[0];
+      
+      // Validate file size (10MB)
+      const maxSize = 10 * 1024 * 1024;
+      if (file.size > maxSize) {
+        addToast('error', `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Maximum size is 10MB.`);
+        e.target.value = '';
+        return;
+      }
+      
+      // Validate file type
+      const validTypes = ['image/png', 'image/jpeg', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+        addToast('error', 'Invalid file type. Please upload PNG, JPG, or WebP images only.');
+        e.target.value = '';
+        return;
+      }
+      
+      const imageUrl = URL.createObjectURL(file);
       setCurrentImage(imageUrl);
       setOriginalUploadedImage(imageUrl);
       setCurrentImageSource({ templateId: MODIFY_SESSION_ID, templateName: 'User Upload' });
@@ -871,6 +907,27 @@ export const Modify = () => {
     }
   };
 
+  // Validate and filter files for T2I reference images
+  const validateAndFilterFiles = (files: File[]): File[] => {
+    const maxSize = 10 * 1024 * 1024;
+    const validTypes = ['image/png', 'image/jpeg', 'image/webp'];
+    const validFiles: File[] = [];
+    
+    for (const file of files) {
+      if (file.size > maxSize) {
+        addToast('error', `${file.name} is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max 10MB.`);
+        continue;
+      }
+      if (!validTypes.includes(file.type)) {
+        addToast('error', `${file.name} has invalid type. Use PNG, JPG, or WebP.`);
+        continue;
+      }
+      validFiles.push(file);
+    }
+    
+    return validFiles;
+  };
+
   const handleDownload = async () => {
     try {
       // Fetch the image as blob to handle cross-origin
@@ -1123,11 +1180,14 @@ export const Modify = () => {
                                                         <input 
                                                             type="file" 
                                                             multiple
-                                                            accept="image/*"
+                                                            accept="image/png, image/jpeg, image/webp"
                                                             onChange={(e) => {
                                                                 if (e.target.files) {
-                                                                    const newFiles = Array.from(e.target.files);
-                                                                    setT2iFiles(prev => [...prev, ...newFiles].slice(0, 3));
+                                                                    const validFiles = validateAndFilterFiles(Array.from(e.target.files));
+                                                                    if (validFiles.length > 0) {
+                                                                        setT2iFiles(prev => [...prev, ...validFiles].slice(0, 3));
+                                                                    }
+                                                                    e.target.value = '';
                                                                 }
                                                             }}
                                                             className="absolute inset-0 opacity-0 cursor-pointer z-10"
@@ -1156,11 +1216,14 @@ export const Modify = () => {
                                                                     <input 
                                                                         type="file" 
                                                                         multiple
-                                                                        accept="image/*"
+                                                                        accept="image/png, image/jpeg, image/webp"
                                                                         onChange={(e) => {
                                                                             if (e.target.files) {
-                                                                                const newFiles = Array.from(e.target.files);
-                                                                                setT2iFiles(prev => [...prev, ...newFiles].slice(0, 3));
+                                                                                const validFiles = validateAndFilterFiles(Array.from(e.target.files));
+                                                                                if (validFiles.length > 0) {
+                                                                                    setT2iFiles(prev => [...prev, ...validFiles].slice(0, 3));
+                                                                                }
+                                                                                e.target.value = '';
                                                                             }
                                                                         }}
                                                                         className="absolute inset-0 opacity-0 cursor-pointer z-10"
@@ -1342,7 +1405,7 @@ export const Modify = () => {
                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-2xl">
                             {/* 1. Local Upload */}
                             <div className="relative group cursor-pointer h-40">
-                                <input type="file" accept="image/*" onChange={handleLocalUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
+                                <input type="file" accept="image/png, image/jpeg, image/webp" onChange={handleLocalUpload} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
                                 <div className="h-full rounded-2xl border-2 border-dashed border-slate-200 dark:border-white/10 group-hover:border-purple-500/50 group-hover:bg-purple-50/50 dark:group-hover:bg-purple-500/5 transition-all flex flex-col items-center justify-center text-center gap-3">
                                     <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center group-hover:scale-110 transition-transform">
                                         <Upload className="w-6 h-6 text-slate-400 group-hover:text-purple-500" />
@@ -2111,7 +2174,7 @@ export const Modify = () => {
                 <div className="relative group cursor-pointer">
                 <input
                     type="file"
-                    accept="image/*"
+                    accept="image/png, image/jpeg, image/webp"
                     onChange={handleImagePickerUpload}
                     className="absolute inset-0 opacity-0 cursor-pointer z-10"
                 />
