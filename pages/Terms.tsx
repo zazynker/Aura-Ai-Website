@@ -34,7 +34,7 @@ export const Terms = () => {
               By accessing or using Lazora (<a href="https://www.lazoraai.com" className="text-purple-600 dark:text-purple-400 hover:underline">www.lazoraai.com</a>), you agree to be bound by these Terms of Service. If you do not agree to these terms, you must not use our service.
             </p>
             <p className="mt-3">
-              Lazora is operated by Yifan Fang, based in Chengdu, China. These terms constitute a legal agreement between you and Lazora.
+              These terms constitute a legal agreement between you and Lazora.
             </p>
           </section>
 
@@ -175,7 +175,7 @@ export const Terms = () => {
               <div>
                 <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-1">How to Request a Refund</h3>
                 <p>
-                  Contact us at <a href="mailto:fangyifan0924@gmail.com" className="text-purple-600 dark:text-purple-400 hover:underline">fangyifan0924@gmail.com</a> with your account email and reason for the request. Since Paddle is our Merchant of Record, refunds are processed through Paddle and typically take 5–10 business days to appear on your statement.
+                  Contact us at <a href="mailto:support@lazoraai.com" className="text-purple-600 dark:text-purple-400 hover:underline">support@lazoraai.com</a> with your account email and reason for the request. Since Paddle is our Merchant of Record, refunds are processed through Paddle and typically take 5–10 business days to appear on your statement.
                 </p>
               </div>
             </div>
@@ -201,7 +201,7 @@ export const Terms = () => {
           <section>
             <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">10. Limitation of Liability</h2>
             <p>
-              To the maximum extent permitted by applicable law, Lazora and its operator shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, business opportunities, or goodwill, arising out of or related to your use of our service.
+              To the maximum extent permitted by applicable law, Lazora shall not be liable for any indirect, incidental, special, consequential, or punitive damages, including but not limited to loss of profits, data, business opportunities, or goodwill, arising out of or related to your use of our service.
             </p>
             <p className="mt-3">
               Our total aggregate liability to you for any claims arising from or related to the service shall not exceed the total amount you paid to us in the <strong className="text-slate-800 dark:text-slate-200">12 months</strong> preceding the claim.
@@ -230,7 +230,7 @@ export const Terms = () => {
           <section>
             <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">12. Indemnification</h2>
             <p>
-              You agree to indemnify and hold harmless Lazora, its operator, affiliates, and service providers from any claims, damages, losses, or expenses (including legal fees) arising from your use of the service, your violation of these terms, or your infringement of any third-party rights.
+              You agree to indemnify and hold harmless Lazora, its affiliates, and service providers from any claims, damages, losses, or expenses (including legal fees) arising from your use of the service, your violation of these terms, or your infringement of any third-party rights.
             </p>
           </section>
 
@@ -261,8 +261,7 @@ export const Terms = () => {
             </p>
             <div className="mt-3 p-4 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-white/5">
               <p><strong className="text-slate-800 dark:text-slate-200">Lazora</strong></p>
-              <p>Operated by: Yifan Fang</p>
-              <p>Email: <a href="mailto:fangyifan0924@gmail.com" className="text-purple-600 dark:text-purple-400 hover:underline">fangyifan0924@gmail.com</a></p>
+              <p>Email: <a href="mailto:support@lazoraai.com" className="text-purple-600 dark:text-purple-400 hover:underline">support@lazoraai.com</a></p>
               <p>Website: <a href="https://www.lazoraai.com" className="text-purple-600 dark:text-purple-400 hover:underline">www.lazoraai.com</a></p>
             </div>
           </section>

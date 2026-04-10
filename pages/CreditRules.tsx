@@ -184,7 +184,7 @@ export const CreditRules = () => {
         {/* Footer */}
         <div className="mt-16 pt-8 border-t border-slate-200 dark:border-white/10 text-sm text-slate-500 dark:text-slate-400">
           <p className="mb-2">Last updated: {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</p>
-          <p>Questions? Contact us at <a href="mailto:support@lazora.ai" className="text-purple-600 dark:text-purple-400 hover:underline">support@lazora.ai</a></p>
+          <p>Questions? Contact us at <a href="mailto:support@lazoraai.com" className="text-purple-600 dark:text-purple-400 hover:underline">support@lazoraai.com</a></p>
         </div>
 
       </div>

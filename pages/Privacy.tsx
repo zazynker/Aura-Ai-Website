@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Shield } from 'lucide-react';
@@ -7,8 +6,7 @@ export const Privacy = () => {
   const navigate = useNavigate();
   const lastUpdated = 'February 13, 2025';
   const companyName = 'Lazora';
-  const operatorName = 'Yifan Fang';
-  const contactEmail = 'fangyifan0924@gmail.com';
+  const contactEmail = 'support@lazoraai.com';
   const websiteUrl = 'www.lazoraai.com';
 
   return (
@@ -43,7 +41,7 @@ export const Privacy = () => {
           <div className="glass-panel rounded-2xl p-6 border border-slate-200 dark:border-white/10">
             <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
               Welcome to {companyName} (<a href={`https://${websiteUrl}`} className="text-purple-600 dark:text-purple-400 hover:underline">{websiteUrl}</a>).
-              {' '}{companyName} is an AI-powered product photography generation service operated by {operatorName}, based in Chengdu, China.
+              {' '}{companyName} is an AI-powered product photography generation service.
               This Privacy Policy explains how we collect, use, store, and protect your personal information when you use our website and services.
               By using {companyName}, you agree to the practices described in this policy. If you do not agree, please do not use our services.
             </p>
@@ -129,9 +127,9 @@ export const Privacy = () => {
 
           {/* 5. Data Retention */}
           <Section title="5. Data Retention">
-            <p>We retain your data as follows:</p>
+            <p>We retain your data for as long as your account is active or as needed to provide you with our services. Specifically:</p>
             <ul>
-              <li><strong>Account data:</strong> Retained for as long as your account is active, plus 30 days after deletion request.</li>
+              <li><strong>Account data:</strong> Retained until you delete your account.</li>
               <li><strong>Generated images:</strong> Retained for as long as your account is active. Deleted upon account deletion.</li>
               <li><strong>Uploaded images:</strong> Processed in real-time and not stored permanently on our servers after processing is complete.</li>
               <li><strong>Payment records:</strong> Retained by Paddle as required by applicable tax and financial regulations.</li>
@@ -218,7 +216,6 @@ export const Privacy = () => {
             <p>If you have any questions, concerns, or requests regarding this Privacy Policy or our data practices, please contact us:</p>
             <div className="glass-panel rounded-xl p-4 border border-slate-200 dark:border-white/10 mt-3">
               <p className="text-slate-700 dark:text-slate-200"><strong>{companyName}</strong></p>
-              <p className="text-slate-600 dark:text-slate-300">Operated by: {operatorName}</p>
               <p className="text-slate-600 dark:text-slate-300">Email: <a href={`mailto:${contactEmail}`} className="text-purple-600 dark:text-purple-400 hover:underline">{contactEmail}</a></p>
               <p className="text-slate-600 dark:text-slate-300">Website: <a href={`https://${websiteUrl}`} className="text-purple-600 dark:text-purple-400 hover:underline">{websiteUrl}</a></p>
             </div>

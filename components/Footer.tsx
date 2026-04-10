@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { Link } from 'react-router-dom';
 
@@ -36,7 +35,7 @@ export const Footer = () => {
           </Link>
           <span className="text-slate-200 dark:text-slate-700">·</span>
           <a 
-            href="mailto:fangyifan0924@gmail.com" 
+            href="mailto:support@lazoraai.com" 
             className="hover:text-slate-900 dark:hover:text-white transition-colors"
           >
             Contact

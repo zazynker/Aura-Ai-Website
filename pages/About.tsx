@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Info, ChevronDown, Camera, Sparkles, Layout, Download, Mail } from 'lucide-react';
@@ -46,7 +45,7 @@ const faqs = [
   },
   {
     q: 'How can I contact support?',
-    a: 'You can reach us anytime at fangyifan0924@gmail.com. We typically respond within 24 hours.',
+    a: 'You can reach us anytime at support@lazoraai.com. We typically respond within 24 hours.',
   },
 ];
 
@@ -180,8 +179,8 @@ export const About = () => {
                 <p className="text-slate-600 dark:text-slate-300 text-[15px] leading-relaxed">
                   Have questions, feedback, or need support? We'd love to hear from you.
                 </p>
-                <a href="mailto:fangyifan0924@gmail.com" className="inline-flex items-center gap-2 mt-2 text-purple-600 dark:text-purple-400 hover:underline font-medium text-sm">
-                  fangyifan0924@gmail.com
+                <a href="mailto:support@lazoraai.com" className="inline-flex items-center gap-2 mt-2 text-purple-600 dark:text-purple-400 hover:underline font-medium text-sm">
+                  support@lazoraai.com
                 </a>
               </div>
             </div>
