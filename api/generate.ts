@@ -89,16 +89,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         // Build the full request body
-        // For pure text-to-image, we need both TEXT and IMAGE in responseModalities
         const requestBody: any = {
             contents: [{
                 parts: parts
             }],
             generationConfig: {
-                // Pure text-to-image requires both TEXT and IMAGE modalities
-                // Image editing (with input images) can use just IMAGE
-                responseModalities: isPureTextToImage ? ["TEXT", "IMAGE"] : ["IMAGE"],
+                // Use IMAGE only to avoid text output consuming extra tokens
+                responseModalities: ["IMAGE"],
                 temperature: 1,
+                // Minimize thinking tokens to reduce unnecessary token consumption
+                // Thinking tokens are billed even if not requested
+                thinkingConfig: {
+                    thinkingLevel: "MINIMAL"
+                }
             },
             safetySettings: [
                 { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
@@ -152,28 +155,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
                 const data = await response.json();
                 
+                // ===== DETAILED TOKEN LOGGING =====
+                // Log the FULL usageMetadata to diagnose token discrepancies
+                console.log('=== Full usageMetadata ===');
+                console.log(JSON.stringify(data.usageMetadata, null, 2));
+                
                 // Extract token usage from usageMetadata
-                // Use candidatesTokenCount (output only) for billing, as input tokens cost 120x less
                 const outputTokens = data.usageMetadata?.candidatesTokenCount || 0;
                 const inputTokens = data.usageMetadata?.promptTokenCount || 0;
                 const totalTokens = data.usageMetadata?.totalTokenCount || 0;
+                const thoughtsTokens = data.usageMetadata?.thoughtsTokenCount || 0;
                 
-                console.log('Token usage for this generation:', {
+                // Log per-modality breakdown if available
+                const candidatesDetails = data.usageMetadata?.candidatesTokensDetails;
+                if (candidatesDetails) {
+                    console.log('=== Output Token Breakdown by Modality ===');
+                    for (const detail of candidatesDetails) {
+                        console.log(`  ${detail.modality}: ${detail.tokenCount} tokens`);
+                    }
+                }
+                
+                const promptDetails = data.usageMetadata?.promptTokensDetails;
+                if (promptDetails) {
+                    console.log('=== Input Token Breakdown by Modality ===');
+                    for (const detail of promptDetails) {
+                        console.log(`  ${detail.modality}: ${detail.tokenCount} tokens`);
+                    }
+                }
+                
+                console.log('Token summary:', {
                     promptTokenCount: inputTokens,
                     candidatesTokenCount: outputTokens,
+                    thoughtsTokenCount: thoughtsTokens,
                     totalTokenCount: totalTokens,
-                    billingTokens: outputTokens  // We bill based on output only
+                    billingTokens: outputTokens
                 });
+                // ===== END DETAILED TOKEN LOGGING =====
                 
                 if (data.candidates && data.candidates[0]?.content?.parts) {
-                    for (const part of data.candidates[0].content.parts) {
+                    // Log all parts to see what's being returned
+                    const parts = data.candidates[0].content.parts;
+                    console.log('Response parts count:', parts.length);
+                    
+                    let textContent = '';
+                    let imageFound = false;
+                    
+                    for (const part of parts) {
+                        if (part.text) {
+                            textContent += part.text;
+                            console.log('Found TEXT in response (this consumes tokens!):', part.text.substring(0, 100) + '...');
+                        }
                         if (part.inlineData?.data) {
+                            imageFound = true;
                             const mimeType = part.inlineData.mimeType || 'image/png';
                             return { 
                                 image: `data:${mimeType};base64,${part.inlineData.data}`,
-                                tokensUsed: outputTokens  // Bill based on output tokens only
+                                tokensUsed: outputTokens
                             };
                         }
+                    }
+                    
+                    if (textContent && !imageFound) {
+                        console.log('WARNING: Response contains only text, no image!');
                     }
                 }
                 
