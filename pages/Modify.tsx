@@ -44,22 +44,24 @@ export const Modify = () => {
   } | null;
 
   // --- State ---
-  // Image Selection
-  const [hasSelectedImage, setHasSelectedImage] = useState(
-    navigationState?.initialImage ? true : (session?.hasSelectedImage || false)
-  );
+  // Default template for new users entering Modify page without an image
+  const DEFAULT_TEMPLATE_URL = 'https://qdbixebjariupvcvsqff.supabase.co/storage/v1/object/public/templates/full/cos_out_han_cas_0039.png';
+  const DEFAULT_TEMPLATE_SOURCE = { templateId: 'default-welcome', templateName: 'Welcome Template' };
+
+  // Image Selection - always show an image (default template if nothing else)
+  const [hasSelectedImage, setHasSelectedImage] = useState(true);
   const [currentImage, setCurrentImage] = useState<string>(
-    navigationState?.initialImage || session?.currentImage || ''
+    navigationState?.initialImage || session?.currentImage || DEFAULT_TEMPLATE_URL
   );
   const [originalUploadedImage, setOriginalUploadedImage] = useState<string>(
-    navigationState?.initialImage || session?.originalUploadedImage || ''
+    navigationState?.initialImage || session?.originalUploadedImage || DEFAULT_TEMPLATE_URL
   );
   
   // Track current image source (for proper labeling when generating)
   const [currentImageSource, setCurrentImageSource] = useState<{ templateId: string; templateName: string }>(
     navigationState?.initialImageSource || 
     session?.currentImageSource || 
-    { templateId: MODIFY_SESSION_ID, templateName: 'User Upload' }
+    DEFAULT_TEMPLATE_SOURCE
   );
 
   const [imageDimensions, setImageDimensions] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
