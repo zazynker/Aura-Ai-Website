@@ -5,7 +5,7 @@ import { ArrowLeft, Info, ChevronDown, Camera, Sparkles, Layout, Download, Mail 
 const faqs = [
   {
     q: 'What is Lazora?',
-    a: 'Lazora is an AI-powered product photography platform designed for e-commerce sellers and brand owners. It helps you create professional, studio-quality product photos in seconds — no photographer, studio, or expensive equipment needed.',
+    a: 'Lazora is an AI-powered product photography platform designed for e-commerce sellers and brand owners. It helps you create professional, studio-style product photos in seconds — reducing the need for photographers, studios, and expensive equipment.',
   },
   {
     q: 'Who is Lazora for?',
@@ -20,12 +20,8 @@ const faqs = [
     a: 'Simply upload your product image, choose a photography template or describe the scene you want, and Lazora\'s AI will generate a professional product photo for you. You can then download the result in high resolution for immediate use.',
   },
   {
-    q: 'Do I own the images I create?',
-    a: 'Yes. All images generated through Lazora are yours to use for commercial and personal purposes, including e-commerce listings, advertisements, and social media. Please refer to our Terms of Service for full details.',
-  },
-  {
     q: 'What are credits and how do they work?',
-    a: 'Each image generation costs one credit. Your subscription plan determines how many credits you receive per month. The Starter plan includes 10 free credits, and the Pro plan includes 500 credits per month. Unused credits do not roll over to the next billing cycle.',
+    a: 'Credits are consumed when you generate images. Higher resolution outputs cost more credits. The Free plan includes 120 welcome credits (one-time). The Pro plan ($29/month) includes 3,000 credits per month with rollover. You can also purchase Credit Packs that never expire.',
   },
   {
     q: 'How is payment handled?',
@@ -37,7 +33,7 @@ const faqs = [
   },
   {
     q: 'Is my data secure?',
-    a: 'Yes. Your data is stored on secure servers in the European Union via Supabase. We use encrypted data transmission (HTTPS/TLS) and do not sell your personal information or use your images to train AI models. See our Privacy Policy for details.',
+    a: 'Yes. Your data is primarily stored on secure servers in the European Union via Supabase. We use encrypted data transmission (HTTPS/TLS) and do not sell your personal information. We do not use your images to train our own AI models. See our Privacy Policy for details.',
   },
   {
     q: 'What content is not allowed?',
@@ -104,7 +100,7 @@ export const About = () => {
           <div className="glass-panel rounded-2xl p-6 border border-slate-200 dark:border-white/10">
             <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-[15px]">
               Lazora is a professional AI product photography platform built for e-commerce sellers, brand owners, and marketing teams.
-              We help businesses create stunning, studio-quality product photos in seconds — without the need for photographers, physical studios, or expensive equipment.
+              We help businesses create stunning, studio-style product photos in seconds — reducing the need for photographers, physical studios, and expensive equipment.
             </p>
             <p className="text-slate-600 dark:text-slate-300 leading-relaxed text-[15px] mt-3">
               Whether you're launching a new skincare line, updating your online store, or creating social media content,
@@ -117,10 +113,10 @@ export const About = () => {
             <h2 className="text-xl font-bold text-slate-900 dark:text-white border-b border-slate-200 dark:border-white/10 pb-2">What We Do</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {[
-                { icon: Camera, title: 'Professional Product Photography', desc: 'Generate studio-quality product photos with AI-powered lighting, shadows, and compositions.' },
+                { icon: Camera, title: 'Professional Product Photography', desc: 'Generate high-quality, studio-style product photos with AI-powered lighting, shadows, and compositions.' },
                 { icon: Layout, title: '500+ Photography Templates', desc: 'Choose from a curated library of professional scenes designed for cosmetics, skincare, food, electronics, and more.' },
                 { icon: Sparkles, title: 'AI Scene Customization', desc: 'Describe the scene you want in plain text and let AI create the perfect product shot for you.' },
-                { icon: Download, title: 'High-Resolution Export', desc: 'Download your product photos in high resolution, ready for e-commerce listings, ads, and social media.' },
+                { icon: Download, title: 'High-Resolution Export', desc: 'Download your product photos in up to 4K resolution, optimized for various platforms and use cases.' },
               ].map((f, i) => (
                 <div key={i} className="glass-panel rounded-xl p-4 border border-slate-200 dark:border-white/10 flex gap-3">
                   <div className="w-9 h-9 rounded-lg bg-purple-50 dark:bg-purple-500/10 flex items-center justify-center shrink-0 border border-purple-100 dark:border-purple-500/20">

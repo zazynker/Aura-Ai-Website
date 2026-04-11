@@ -118,7 +118,10 @@ export const Terms = () => {
 
             <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mt-4 mb-2">6.2 Generated Content</h3>
             <p>
-              Subject to your compliance with these terms and an active subscription, you are granted a license to use AI-generated images produced through Lazora for commercial and personal purposes. You are responsible for ensuring that your use of generated content does not infringe on the rights of any third party.
+              Subject to your compliance with these terms, you are granted a license to use AI-generated images produced through Lazora for commercial and personal purposes. However, you are solely responsible for ensuring that your use of generated content does not infringe any third-party rights, including but not limited to copyrights, trademarks, and personality/publicity rights.
+            </p>
+            <p className="mt-2">
+              <strong className="text-slate-800 dark:text-slate-200">We do not guarantee that generated content is free from third-party rights claims.</strong> If your uploaded content contains third-party intellectual property, modifying it through our service does not grant you rights to that intellectual property.
             </p>
 
             <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mt-4 mb-2">6.3 Lazora's Property</h3>
@@ -146,7 +149,10 @@ export const Terms = () => {
 
             <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mt-4 mb-2">7.3 Automatic Renewal</h3>
             <p>
-              Subscriptions renew automatically at the end of each billing cycle. You can cancel your subscription at any time through your account dashboard or by contacting Paddle's support. Cancellation takes effect at the end of the current billing period.
+              <strong className="text-slate-800 dark:text-slate-200">Subscription plans</strong> (such as the Pro Plan) renew automatically at the end of each billing cycle unless cancelled. You can cancel your subscription at any time through your account dashboard or by contacting support. Cancellation takes effect at the end of the current billing period, and you will retain access until then.
+            </p>
+            <p className="mt-2">
+              <strong className="text-slate-800 dark:text-slate-200">Credit Packs</strong> are one-time purchases and do not renew automatically.
             </p>
           </section>
 
@@ -208,9 +214,29 @@ export const Terms = () => {
             </p>
           </section>
 
-          {/* 11. Service Termination */}
+          {/* 11. Force Majeure */}
           <section>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">11. Service Termination</h2>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">11. Force Majeure</h2>
+            <p>
+              Lazora shall not be liable for any failure or delay in performing our obligations where such failure or delay results from circumstances beyond our reasonable control, including but not limited to:
+            </p>
+            <ul className="list-disc list-inside mt-2 space-y-1 ml-2">
+              <li>Natural disasters, acts of God, or extreme weather events</li>
+              <li>War, terrorism, riots, or civil unrest</li>
+              <li>Government actions, laws, regulations, or sanctions</li>
+              <li>Failure or unavailability of third-party AI service providers</li>
+              <li>Internet or infrastructure outages beyond our control</li>
+              <li>Cyberattacks, including DDoS attacks or security breaches</li>
+              <li>Pandemics, epidemics, or public health emergencies</li>
+            </ul>
+            <p className="mt-3">
+              In the event of a force majeure, we will make reasonable efforts to resume service as soon as practicable.
+            </p>
+          </section>
+
+          {/* 12. Service Termination */}
+          <section>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">12. Service Termination</h2>
             <p>
               We reserve the right to suspend or permanently terminate your account if:
             </p>
@@ -226,25 +252,28 @@ export const Terms = () => {
             </p>
           </section>
 
-          {/* 12. Indemnification */}
+          {/* 13. Indemnification */}
           <section>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">12. Indemnification</h2>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">13. Indemnification</h2>
             <p>
               You agree to indemnify and hold harmless Lazora, its affiliates, and service providers from any claims, damages, losses, or expenses (including legal fees) arising from your use of the service, your violation of these terms, or your infringement of any third-party rights.
             </p>
           </section>
 
-          {/* 13. Governing Law */}
+          {/* 14. Governing Law */}
           <section>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">13. Governing Law</h2>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">14. Governing Law</h2>
             <p>
-              These Terms of Service shall be governed by and construed in accordance with applicable international commercial laws. Any disputes arising from these terms shall first be addressed through good-faith negotiation. If a resolution cannot be reached, disputes shall be submitted to arbitration in a mutually agreed jurisdiction.
+              These Terms of Service shall be governed by and construed in accordance with the laws of the <strong className="text-slate-800 dark:text-slate-200">Hong Kong Special Administrative Region</strong>, without regard to its conflict of law principles.
+            </p>
+            <p className="mt-3">
+              Any disputes arising from or relating to these terms or your use of the service shall be subject to the exclusive jurisdiction of the courts of Hong Kong SAR. Before initiating any legal proceedings, both parties agree to attempt to resolve disputes through good-faith negotiation.
             </p>
           </section>
 
-          {/* 14. Changes to Terms */}
+          {/* 15. Changes to Terms */}
           <section>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">14. Changes to These Terms</h2>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">15. Changes to These Terms</h2>
             <p>
               We may update these Terms of Service from time to time. When we do, we will update the "Last updated" date at the top of this page. For significant changes that affect your rights, we will notify you by email or by posting a prominent notice on our website at least 14 days before the changes take effect.
             </p>
@@ -253,9 +282,9 @@ export const Terms = () => {
             </p>
           </section>
 
-          {/* 15. Contact */}
+          {/* 16. Contact */}
           <section>
-            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">15. Contact Us</h2>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">16. Contact Us</h2>
             <p>
               If you have any questions about these Terms of Service, please contact us:
             </p>

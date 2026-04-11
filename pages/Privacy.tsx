@@ -89,7 +89,7 @@ export const Privacy = () => {
             </ul>
             <p>
               We do <strong>not</strong> sell your personal information to third parties.
-              We do <strong>not</strong> use your uploaded images or generated content to train AI models.
+              We do <strong>not</strong> use your content to train our own AI models. Our AI providers process data in real time and, to the best of our knowledge, do not retain it for model training purposes.
             </p>
           </Section>
 
@@ -107,7 +107,7 @@ export const Privacy = () => {
                 <p><strong>Google OAuth</strong> — If you choose to sign in with Google, Google shares your basic profile information with us. <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer" className="text-purple-600 dark:text-purple-400 hover:underline">Google Privacy Policy</a></p>
               </div>
               <div className="glass-panel rounded-xl p-4 border border-slate-200 dark:border-white/10">
-                <p><strong>AI Image Generation Provider</strong> — Your uploaded images and text prompts are sent to our AI processing provider to generate results. These images are processed in real-time and are not retained by the provider for training purposes.</p>
+                <p><strong>AI Image Generation Provider</strong> — Your uploaded images and text prompts are sent to our AI processing provider to generate results. These images are processed in real-time. To the best of our knowledge, they are not retained by the provider for model training.</p>
               </div>
             </div>
           </Section>
@@ -131,7 +131,7 @@ export const Privacy = () => {
             <ul>
               <li><strong>Account data:</strong> Retained until you delete your account.</li>
               <li><strong>Generated images:</strong> Retained for as long as your account is active. Deleted upon account deletion.</li>
-              <li><strong>Uploaded images:</strong> Processed in real-time and not stored permanently on our servers after processing is complete.</li>
+              <li><strong>Uploaded images:</strong> Processed in real-time and not intentionally stored permanently by us after processing is complete.</li>
               <li><strong>Payment records:</strong> Retained by Paddle as required by applicable tax and financial regulations.</li>
             </ul>
           </Section>
@@ -150,13 +150,16 @@ export const Privacy = () => {
             <p>
               To exercise any of these rights, please contact us at{' '}
               <a href={`mailto:${contactEmail}`} className="text-purple-600 dark:text-purple-400 hover:underline">{contactEmail}</a>.
-              We will respond to your request within 30 days.
+              We will respond to your request within 30 days, in accordance with applicable laws.
             </p>
           </Section>
 
           {/* 7. GDPR Compliance */}
           <Section title="7. GDPR Compliance (EEA Users)">
-            <p>If you are located in the European Economic Area (EEA), we process your personal data based on the following legal grounds:</p>
+            <p>
+              {companyName} acts as the data controller for your personal data.
+              If you are located in the European Economic Area (EEA), we process your personal data based on the following legal grounds:
+            </p>
             <ul>
               <li><strong>Contract Performance:</strong> Processing necessary to provide you with our services.</li>
               <li><strong>Legitimate Interest:</strong> Processing for service improvement, security, and fraud prevention.</li>
@@ -173,19 +176,19 @@ export const Privacy = () => {
           <Section title="8. Cookies &amp; Local Storage">
             <p>
               {companyName} uses browser local storage to save your user preferences (such as theme, browsing state, and session data).
-              We do not currently use tracking cookies or third-party analytics services.
+              We do not currently use tracking cookies for analytics purposes. However, certain third-party services (such as Paddle) may use cookies as part of their functionality.
               You can clear your browser's local storage at any time through your browser settings.
             </p>
             <p>
-              Paddle may use cookies as part of the payment checkout process.
-              Please refer to Paddle's cookie policy for details.
+              Please refer to Paddle's cookie policy for details on their cookie usage.
             </p>
           </Section>
 
           {/* 9. Age Restriction */}
           <Section title="9. Age Restriction">
             <p>
-              {companyName} is designed for business professionals and is not intended for use by anyone under the age of <strong>18</strong>.
+              Users must be at least <strong>18</strong> years old to use our services.
+              {companyName} is designed for business professionals and is not intended for use by minors.
               We do not knowingly collect personal information from individuals under 18.
               If we become aware that a user under 18 has provided us with personal data,
               we will take steps to delete that information promptly.
