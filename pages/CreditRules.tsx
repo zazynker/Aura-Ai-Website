@@ -1,119 +1,166 @@
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import React, { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Check, Crown, Zap } from 'lucide-react';
+import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
+import { Modal } from '../components/ui/Modal';
+import { supabase } from '../utils/supabase';
 
-export const CreditRules = () => {
+export const Pricing = () => {
   const navigate = useNavigate();
+  const { user, updateUser, addToast, browsing, saveBrowsingState } = useStore();
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  const handleSubscribe = () => {
+    if (!user) {
+      saveBrowsingState({ intendedDestination: '/pricing' });
+      navigate('/login');
+      return;
+    }
+    setShowConfirm(true);
+  };
+
+  const confirmUpgrade = async () => {
+    setIsProcessing(true);
+    
+    // Simulate payment processing (will be replaced with Paddle)
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Merge existing credits with Pro credits
+    const currentCredits = user?.credits || 0;
+    const newCredits = currentCredits + 3000;
+    
+    updateUser({ plan: 'Pro', credits: newCredits, maxCredits: newCredits });
+    setIsProcessing(false);
+    setShowConfirm(false);
+    addToast('success', 'Upgraded to Pro! Your credits have been added.');
+    
+    // Redirect back - fetch template from Supabase if needed
+    if (browsing.lastViewedTemplate) {
+      const { data: template } = await supabase
+        .from('templates')
+        .select('*')
+        .eq('id', browsing.lastViewedTemplate)
+        .single();
+      
+      if (template) {
+        navigate('/modify', {
+          state: {
+            initialImage: template.image_url,
+            initialImageSource: { templateId: template.id, templateName: template.display_name || template.name }
+          }
+        });
+      } else {
+        navigate('/');
+      }
+    } else {
+      navigate('/');
+    }
+  };
 
   return (
-    <div className="min-h-screen pt-24 px-4 pb-12 bg-slate-50 dark:bg-slate-900">
-      <div className="max-w-3xl mx-auto">
-        <Button 
-          variant="ghost" 
-          className="mb-8 pl-0 hover:bg-transparent hover:text-purple-600 dark:hover:text-purple-400"
-          onClick={() => navigate(-1)}
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back
-        </Button>
-
-        <div className="mb-12">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">How Credits Work</h1>
-          <p className="text-slate-500 dark:text-slate-400 text-lg">
-            Simple, transparent billing for AI image generation.
-          </p>
-        </div>
-        
-        <div className="space-y-12 text-slate-700 dark:text-slate-300 leading-relaxed">
-          
-          {/* Section 1: How It Works */}
-          <section>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">How Billing Works</h2>
-            <p className="mb-4">
-              Lazora charges credits based on the images you generate. Higher resolution and more complex outputs consume more credits. You'll see the exact cost after each generation.
-            </p>
-            <p>
-              <strong>Input images are always free</strong> — you're only charged for what we create, not what you upload.
-            </p>
-          </section>
-
-          {/* Section 2: Subscription Plans */}
-          <section>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Plans</h2>
-            
-            <div className="space-y-6">
-              <div className="glass-panel p-6 rounded-xl border border-slate-200 dark:border-white/10">
-                <h3 className="font-bold text-slate-900 dark:text-white mb-3">Free</h3>
-                <p className="mb-2"><strong>120 credits</strong> welcome bonus to try Lazora.</p>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Up to 1K resolution. Basic templates. Credits don't expire.</p>
-              </div>
-
-              <div className="glass-panel p-6 rounded-xl border border-purple-200 dark:border-purple-500/30 bg-purple-50/50 dark:bg-purple-500/5">
-                <h3 className="font-bold text-slate-900 dark:text-white mb-3">Pro — $29/month</h3>
-                <p className="mb-2"><strong>3,000 credits</strong> per month for professional use.</p>
-                <p className="text-sm text-slate-500 dark:text-slate-400">Up to 4K resolution. All templates. Unused credits roll over. Commercial license included.</p>
-              </div>
-            </div>
-          </section>
-
-          {/* Section 3: Credit Packs */}
-          <section>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Credit Packs</h2>
-            <p className="mb-4">Need more credits? Purchase additional packs anytime. They never expire.</p>
-            <div className="glass-panel p-6 rounded-xl border border-slate-200 dark:border-white/10">
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <span>500 Credits</span>
-                  <span className="font-bold text-slate-900 dark:text-white">$7</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span>1,000 Credits</span>
-                  <span className="font-bold text-slate-900 dark:text-white">$12</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span>2,000 Credits</span>
-                  <span className="font-bold text-slate-900 dark:text-white">$22</span>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          {/* Section 4: FAQ */}
-          <section>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">FAQ</h2>
-            
-            <div className="space-y-6">
-              <div>
-                <h3 className="font-bold text-slate-900 dark:text-white mb-2">What if I run out of credits?</h3>
-                <p>You'll be prompted to upgrade to Pro or purchase a credit pack before generating more images.</p>
-              </div>
-              
-              <div>
-                <h3 className="font-bold text-slate-900 dark:text-white mb-2">Do credits expire?</h3>
-                <p>No. Free credits, purchased credits, and rolled-over Pro credits never expire.</p>
-              </div>
-              
-              <div>
-                <h3 className="font-bold text-slate-900 dark:text-white mb-2">What happens if I cancel Pro?</h3>
-                <p>Your remaining credits stay in your account. You can still use them, but you'll lose access to 4K resolution and premium templates.</p>
-              </div>
-
-              <div>
-                <h3 className="font-bold text-slate-900 dark:text-white mb-2">Can I get a refund?</h3>
-                <p>Purchased credit packs are non-refundable. For subscription questions, contact support.</p>
-              </div>
-            </div>
-          </section>
-
-        </div>
-
-        {/* Footer */}
-        <div className="mt-16 pt-8 border-t border-slate-200 dark:border-white/10 text-sm text-slate-500 dark:text-slate-400">
-          <p>Questions? Contact us at <a href="mailto:support@lazora.ai" className="text-purple-600 dark:text-purple-400 hover:underline">support@lazora.ai</a></p>
-        </div>
-
+    <div className="min-h-screen pt-24 px-4 pb-12">
+      <div className="text-center mb-12">
+        <h1 className="text-4xl font-bold mb-4 text-slate-900 dark:text-white">Choose Your <span className="text-gradient">Power</span></h1>
+        <p className="text-slate-500 dark:text-slate-400">
+          Unlock professional AI photography tools.
+        </p>
       </div>
+
+      <div className="max-w-6xl mx-auto grid md:grid-cols-3 gap-8 items-start">
+        {/* Free */}
+        <div className="glass-panel p-8 rounded-2xl border-slate-200 dark:border-white/5 flex flex-col">
+          <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Free</h3>
+          <p className="text-3xl font-bold text-slate-900 dark:text-white mb-6">$0</p>
+          <ul className="space-y-4 mb-8 flex-1">
+            <li className="flex items-start gap-3 text-slate-600 dark:text-slate-300 text-sm">
+              <Check className="w-4 h-4 text-green-500 dark:text-green-400 shrink-0 mt-0.5" /> 
+              <span><strong className="text-slate-900 dark:text-white">120 Credits</strong> (one-time welcome bonus)</span>
+            </li>
+            <li className="flex items-center gap-3 text-slate-600 dark:text-slate-300 text-sm"><Check className="w-4 h-4 text-green-500 dark:text-green-400 shrink-0" /> Up to 1K resolution</li>
+            <li className="flex items-center gap-3 text-slate-600 dark:text-slate-300 text-sm"><Check className="w-4 h-4 text-green-500 dark:text-green-400 shrink-0" /> Basic templates</li>
+            <li className="flex items-start gap-3 text-slate-600 dark:text-slate-300 text-sm">
+              <Check className="w-4 h-4 text-green-500 dark:text-green-400 shrink-0 mt-0.5" /> 
+              <span>Remaining credits kept upon Pro upgrade</span>
+            </li>
+          </ul>
+          <Button variant="secondary" className="w-full mt-auto" disabled={user?.plan === 'Free'}>
+            {user?.plan === 'Free' ? 'Current Plan' : 'Downgrade'}
+          </Button>
+        </div>
+
+        {/* Pro */}
+        <div className="glass-panel p-8 rounded-2xl border-purple-200 dark:border-purple-500/50 relative transform md:-translate-y-4 shadow-2xl shadow-purple-200/50 dark:shadow-purple-900/20 bg-purple-50/50 dark:bg-transparent flex flex-col">
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-gradient-to-r from-purple-500 to-pink-500 px-4 py-1 rounded-full text-xs font-bold text-white uppercase tracking-wider shadow-lg">
+            Most Popular
+          </div>
+          {user?.plan === 'Pro' && (
+             <div className="absolute top-4 right-4 text-xs font-bold text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-500/10 px-2 py-1 rounded">Current Plan</div>
+          )}
+          <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2 flex items-center gap-2">Pro <Crown className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /></h3>
+          <p className="text-3xl font-bold text-slate-900 dark:text-white mb-6">$29<span className="text-sm text-slate-500 dark:text-slate-400 font-normal">/mo</span></p>
+          <ul className="space-y-4 mb-8 flex-1">
+            <li className="flex items-start gap-3 text-slate-700 dark:text-slate-200 text-sm">
+              <Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0 mt-0.5" /> 
+              <span><strong className="text-slate-900 dark:text-white">3,000 Credits / month</strong> (rollover enabled)</span>
+            </li>
+            <li className="flex items-center gap-3 text-slate-700 dark:text-slate-200 text-sm"><Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" /> Up to 4K Ultra HD resolution</li>
+            <li className="flex items-center gap-3 text-slate-700 dark:text-slate-200 text-sm"><Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" /> All premium templates</li>
+            <li className="flex items-center gap-3 text-slate-700 dark:text-slate-200 text-sm"><Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" /> Priority generation</li>
+            <li className="flex items-center gap-3 text-slate-700 dark:text-slate-200 text-sm"><Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" /> Commercial license</li>
+          </ul>
+          <Button variant="gradient" className="w-full mt-auto" onClick={handleSubscribe} disabled={user?.plan === 'Pro'}>
+            {user?.plan === 'Pro' ? 'Manage Subscription' : 'Upgrade to Pro'}
+          </Button>
+        </div>
+
+        {/* Credit Packs */}
+        <div className="glass-panel p-8 rounded-2xl border-slate-200 dark:border-white/5 flex flex-col">
+          <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Credit Packs</h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">One-time purchase, never expires.</p>
+          
+          <div className="space-y-3 mb-8 flex-1">
+            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-purple-300 dark:hover:border-purple-500/30 transition-colors cursor-pointer">
+              <p className="font-bold text-slate-900 dark:text-white">500 Credits</p>
+              <Button variant="secondary" size="sm" className="font-bold">$7</Button>
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-purple-300 dark:hover:border-purple-500/30 transition-colors cursor-pointer">
+              <p className="font-bold text-slate-900 dark:text-white">1,000 Credits</p>
+              <Button variant="secondary" size="sm" className="font-bold">$12</Button>
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 hover:border-purple-300 dark:hover:border-purple-500/30 transition-colors cursor-pointer">
+              <p className="font-bold text-slate-900 dark:text-white">2,000 Credits</p>
+              <Button variant="secondary" size="sm" className="font-bold">$22</Button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <Modal isOpen={showConfirm} onClose={() => setShowConfirm(false)} title="Confirm Upgrade">
+        <div className="space-y-4">
+          <p className="text-slate-600 dark:text-slate-300">
+            You are about to upgrade to the <span className="text-slate-900 dark:text-white font-bold">Pro Plan</span>. 
+            This will charge <span className="text-slate-900 dark:text-white font-bold">$29.00</span> to your default payment method.
+          </p>
+          <div className="flex items-center justify-between bg-slate-50 dark:bg-white/5 p-4 rounded-xl border border-slate-200 dark:border-white/10">
+             <div className="flex items-center gap-3">
+               <div className="w-10 h-10 rounded-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 flex items-center justify-center">
+                 <Zap className="w-5 h-5 text-purple-500 dark:text-purple-400" />
+               </div>
+               <div>
+                 <p className="text-sm font-semibold text-slate-900 dark:text-white">3,000 Credits</p>
+                 <p className="text-xs text-slate-500 dark:text-slate-400">Added to your balance</p>
+               </div>
+             </div>
+             <span className="text-green-500 dark:text-green-400 text-sm font-medium">+3,000</span>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <Button variant="secondary" className="flex-1" onClick={() => setShowConfirm(false)}>Cancel</Button>
+            <Button variant="gradient" className="flex-1" onClick={confirmUpgrade} isLoading={isProcessing}>Confirm Payment</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

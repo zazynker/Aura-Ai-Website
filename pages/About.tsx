@@ -29,7 +29,7 @@ const faqs = [
   },
   {
     q: 'Can I get a refund?',
-    a: 'Yes, we offer refunds within 7 days of purchase if you have used fewer than 5 credits. Refunds are processed through Paddle and typically take 5–10 business days. Please see our Terms of Service for full refund policy details.',
+    a: 'Pro subscriptions are eligible for a refund within 7 days if you have not substantially used the service. Credit packs are generally non-refundable, but we may offer refunds for duplicate charges or payment errors. All refunds are processed through Paddle and typically take 5–10 business days. See our Billing Policy for full details.',
   },
   {
     q: 'Is my data secure?',
