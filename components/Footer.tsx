@@ -28,6 +28,13 @@ export const Footer = () => {
           </Link>
           <span className="text-slate-200 dark:text-slate-700">·</span>
           <Link 
+            to="/credit-rules" 
+            className="hover:text-slate-900 dark:hover:text-white transition-colors"
+          >
+            Billing Policy
+          </Link>
+          <span className="text-slate-200 dark:text-slate-700">·</span>
+          <Link 
             to="/about" 
             className="hover:text-slate-900 dark:hover:text-white transition-colors"
           >
