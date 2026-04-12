@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download, Crown } from 'lucide-react';
 import { useStore, estimateCredits, calculateCreditsFromTokens, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
@@ -72,6 +72,7 @@ export const Modify = () => {
   // Modals
   const [showImagePicker, setShowImagePicker] = useState(false);
   const [imagePickerTab, setImagePickerTab] = useState<'all' | 'upload' | 'collection'>('upload');
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
 
   // Generation Configuration - DEFAULT TO 4
   const [outputCount, setOutputCount] = useState(4);
@@ -108,7 +109,7 @@ export const Modify = () => {
   const [modifyReferenceFile, setModifyReferenceFile] = useState<File | null>(null);
   const [selectedRatio, setSelectedRatio] = useState('Square');
   const [ratioPrompt, setRatioPrompt] = useState(''); // Prompt for expanded areas in ratio change
-  const [selectedResolution, setSelectedResolution] = useState('2K'); // Default to 2K
+  const [selectedResolution, setSelectedResolution] = useState('1K'); // Default to 1K (Free tier)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
   // Text to Image State
@@ -1950,12 +1951,22 @@ export const Modify = () => {
                                 <div className="grid grid-cols-4 gap-2">
                                     {[
                                         { label: '1K', size: '1024×1024', value: '1K' },
-                                        { label: '2K', size: '2048×2048', value: '2K' },
+                                        { label: '2K', size: '2048×2048', value: '2K', isPro: true },
                                         { label: '4K', size: '4096×4096', value: '4K', isPro: true },
-                                    ].map(res => (
+                                    ].map(res => {
+                                        const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
+                                        const needsPro = res.isPro && !isProUser;
+                                        
+                                        return (
                                         <button
                                             key={res.value}
-                                            onClick={() => setSelectedResolution(res.value)}
+                                            onClick={() => {
+                                                if (needsPro) {
+                                                    setShowUpgradeModal(true);
+                                                    return;
+                                                }
+                                                setSelectedResolution(res.value);
+                                            }}
                                             className={`relative py-2.5 text-xs font-medium rounded-lg border transition-all ${
                                                 selectedResolution === res.value
                                                     ? 'bg-pink-600 border-pink-500 text-white shadow-lg shadow-pink-900/20'
@@ -1972,7 +1983,7 @@ export const Modify = () => {
                                                 </div>
                                             )}
                                         </button>
-                                    ))}
+                                    )})}
                                 </div>
                                 <p className="text-[10px] text-slate-400">
                                     Max: 4096×4096 (4K)
@@ -2204,6 +2215,22 @@ export const Modify = () => {
               <img src={currentImage} className="max-w-[95%] max-h-[95vh] object-contain shadow-2xl" onClick={(e) => e.stopPropagation()} alt="Lightbox" />
           </div>
       )}
+
+      {/* Upgrade Modal */}
+      <Modal isOpen={showUpgradeModal} onClose={() => setShowUpgradeModal(false)} title="🔒 Pro Feature">
+         <div className="flex flex-col items-center text-center p-4">
+             <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-4 border border-slate-200 dark:border-white/10 shadow-xl shadow-purple-900/20">
+                <Crown className="w-8 h-8 text-yellow-400" />
+             </div>
+             <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Unlock Pro Features</h3>
+             <p className="text-slate-600 dark:text-slate-400 text-sm mb-6">2K and 4K upscaling are exclusively available on the Pro plan. Upgrade now to access high-resolution exports and premium features.</p>
+             
+             <div className="flex w-full gap-3">
+                 <Button variant="secondary" className="flex-1" onClick={() => setShowUpgradeModal(false)}>Cancel</Button>
+                 <Button variant="gradient" className="flex-1" onClick={() => navigate('/pricing')}>Upgrade to Pro</Button>
+             </div>
+         </div>
+      </Modal>
     </div>
   );
 };
