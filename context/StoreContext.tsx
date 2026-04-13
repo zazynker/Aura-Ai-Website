@@ -213,11 +213,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       maxCredits: creditsData?.maxCredits ?? 120,
       avatarUrl: supaUser.user_metadata?.avatar_url ||
         `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
+      isWhitelisted: creditsData?.isWhitelisted ?? false,
     };
 
     console.log('=== User synced from database ===');
     console.log('Credits from DB:', creditsData?.credits);
     console.log('Plan from DB:', creditsData?.plan);
+    console.log('Whitelisted:', creditsData?.isWhitelisted);
 
     updateStorage((prev) => ({
       ...prev,

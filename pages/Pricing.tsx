@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Check, Crown, Zap } from 'lucide-react';
+import { Check, Crown, Zap, HelpCircle } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -16,6 +16,11 @@ export const Pricing = () => {
     if (!user) {
       saveBrowsingState({ intendedDestination: '/pricing' });
       navigate('/login');
+      return;
+    }
+    // 非白名单用户显示 Coming Soon
+    if (!user.isWhitelisted) {
+      addToast('info', 'Payment system coming soon! Stay tuned.');
       return;
     }
     setShowConfirm(true);
@@ -63,8 +68,11 @@ export const Pricing = () => {
     <div className="min-h-screen pt-24 px-4 pb-12">
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold mb-4 text-slate-900 dark:text-white">Choose Your <span className="text-gradient">Power</span></h1>
-        <p className="text-slate-500 dark:text-slate-400">
+        <p className="text-slate-500 dark:text-slate-400 flex items-center justify-center gap-1">
           Unlock professional AI photography tools.
+          <Link to="/credit-rules" title="View billing rules">
+            <HelpCircle className="w-4 h-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 cursor-pointer transition-colors" />
+          </Link>
         </p>
       </div>
 

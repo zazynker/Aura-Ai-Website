@@ -8,6 +8,7 @@ export interface User {
   credits: number;
   maxCredits: number;
   avatarUrl?: string;
+  isWhitelisted?: boolean;
 }
 
 export interface Template {
