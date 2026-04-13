@@ -4,7 +4,7 @@ import { ArrowLeft, Shield } from 'lucide-react';
 
 export const Privacy = () => {
   const navigate = useNavigate();
-  const lastUpdated = 'February 13, 2025';
+  const lastUpdated = 'April 13, 2026';
   const companyName = 'Lazora';
   const contactEmail = 'support@lazoraai.com';
   const websiteUrl = 'www.lazoraai.com';
@@ -65,11 +65,9 @@ export const Privacy = () => {
             </SubSection>
             <SubSection title="1.3 Payment Information">
               <p>
-                All payments are processed by <strong>Paddle.com Market Limited</strong>, which acts as our Merchant of Record.
-                This means Paddle is the legal seller of our services and handles all payment processing, invoicing, and sales tax compliance.
+                All payments are processed by our <strong>payment partner</strong>, which acts as our Merchant of Record.
+                This means our payment partner is the legal seller of our services and handles all payment processing, invoicing, and sales tax compliance.
                 We do <strong>not</strong> directly collect, store, or have access to your credit card numbers or bank account details.
-                For information on how Paddle handles your payment data, please refer to{' '}
-                <a href="https://www.paddle.com/legal/privacy" target="_blank" rel="noopener noreferrer" className="text-purple-600 dark:text-purple-400 hover:underline">Paddle's Privacy Policy</a>.
               </p>
             </SubSection>
           </Section>
@@ -81,7 +79,7 @@ export const Privacy = () => {
               <li>Provide, operate, and maintain our AI image generation service</li>
               <li>Process your image generation requests and deliver results</li>
               <li>Manage your account, credits, and subscription</li>
-              <li>Process payments and refunds through Paddle</li>
+              <li>Process payments and refunds through our payment partner</li>
               <li>Communicate with you about your account, service updates, or support requests</li>
               <li>Improve our service, fix bugs, and develop new features</li>
               <li>Prevent misuse, fraud, and enforce our Terms of Service</li>
@@ -98,7 +96,7 @@ export const Privacy = () => {
             <p>We use the following third-party services to operate {companyName}:</p>
             <div className="space-y-3 mt-3">
               <div className="glass-panel rounded-xl p-4 border border-slate-200 dark:border-white/10">
-                <p><strong>Paddle</strong> — Payment processing, invoicing, and sales tax. Paddle acts as the Merchant of Record for all transactions. <a href="https://www.paddle.com/legal/privacy" target="_blank" rel="noopener noreferrer" className="text-purple-600 dark:text-purple-400 hover:underline">Paddle Privacy Policy</a></p>
+                <p><strong>Payment Partner</strong> — Payment processing, invoicing, and sales tax. Our payment partner acts as the Merchant of Record for all transactions.</p>
               </div>
               <div className="glass-panel rounded-xl p-4 border border-slate-200 dark:border-white/10">
                 <p><strong>Supabase</strong> — Authentication and database services. Your account data and generation history are stored on Supabase servers in the European Union (EU). <a href="https://supabase.com/privacy" target="_blank" rel="noopener noreferrer" className="text-purple-600 dark:text-purple-400 hover:underline">Supabase Privacy Policy</a></p>
@@ -176,12 +174,10 @@ export const Privacy = () => {
           <Section title="8. Cookies &amp; Local Storage">
             <p>
               {companyName} uses browser local storage to save your user preferences (such as theme, browsing state, and session data).
-              We do not currently use tracking cookies for analytics purposes. However, certain third-party services (such as Paddle) may use cookies as part of their functionality.
+              We do not currently use tracking cookies for analytics purposes. However, certain third-party services (such as our payment partner) may use cookies as part of their functionality.
               You can clear your browser's local storage at any time through your browser settings.
             </p>
-            <p>
-              Please refer to Paddle's cookie policy for details on their cookie usage.
-            </p>
+
           </Section>
 
           {/* 9. Age Restriction */}

@@ -25,11 +25,11 @@ const faqs = [
   },
   {
     q: 'How is payment handled?',
-    a: 'All payments are securely processed by Paddle, our Merchant of Record. Paddle handles billing, invoicing, currency conversion, and sales tax on our behalf. We never see or store your credit card information.',
+    a: 'All payments are securely processed by our payment partner, which acts as our Merchant of Record. Our payment partner handles billing, invoicing, currency conversion, and sales tax on our behalf. We never see or store your credit card information.',
   },
   {
     q: 'Can I get a refund?',
-    a: 'Pro subscriptions are eligible for a refund within 7 days if you have not substantially used the service. Credit packs are generally non-refundable, but we may offer refunds for duplicate charges or payment errors. All refunds are processed through Paddle and typically take 5–10 business days. See our Billing Policy for full details.',
+    a: 'Yes, we offer refunds within 7 days of purchase if you have used fewer than 5 credits. Refunds are processed through our payment partner and typically take 5–10 business days. Please see our Terms of Service for full refund policy details.',
   },
   {
     q: 'Is my data secure?',

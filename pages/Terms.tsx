@@ -21,7 +21,7 @@ export const Terms = () => {
           Terms of Service
         </h1>
         <p className="text-sm text-slate-400 dark:text-slate-500 mb-10">
-          Last updated: February 13, 2025
+          Last updated: April 13, 2026
         </p>
 
         {/* Content */}
@@ -134,7 +134,7 @@ export const Terms = () => {
           <section>
             <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">7. Payments &amp; Subscriptions</h2>
             <p>
-              All payments for Lazora are processed by <strong className="text-slate-800 dark:text-slate-200">Paddle.com Market Limited</strong>, which serves as our Merchant of Record. Paddle handles all billing, invoicing, currency conversion, and applicable taxes on our behalf.
+              All payments for Lazora are processed by our <strong className="text-slate-800 dark:text-slate-200">payment partner</strong>, which serves as our Merchant of Record. Our payment partner handles all billing, invoicing, currency conversion, and applicable taxes on our behalf.
             </p>
 
             <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mt-4 mb-2">7.1 Subscription Plans</h3>
@@ -159,44 +159,32 @@ export const Terms = () => {
           {/* 8. Refund Policy */}
           <section>
             <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-3">8. Refund Policy</h2>
-            <p className="mb-4">
-              All payments and refunds are processed through our payment partner, Paddle. This policy does not affect your statutory consumer rights under applicable law.
-            </p>
             <div className="p-4 bg-white dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-white/5 space-y-3">
               <div>
-                <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-1">Pro Subscription</h3>
-                <p>
-                  You may request a refund within <strong className="text-slate-800 dark:text-slate-200">7 days</strong> of your initial subscription, provided you have not substantially used the service (e.g., you have consumed no or only a minimal amount of credits). If the service has been used, we will evaluate your request based on actual usage and may offer a partial refund or alternative compensation.
-                </p>
+                <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-1">Eligible for Refund</h3>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>Requests made within <strong className="text-slate-800 dark:text-slate-200">7 days</strong> of purchase</li>
+                  <li>No credits or fewer than 5 credits have been used during the billing period</li>
+                  <li>Service was unavailable for an extended period due to issues on our side</li>
+                  <li>Duplicate or accidental charges</li>
+                </ul>
               </div>
               <div>
-                <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-1">Credit Packs</h3>
-                <p>
-                  Credit packs are delivered instantly as digital products and are generally non-refundable. However, we may provide a refund or compensation for duplicate charges, payment errors, or other reasonable special circumstances.
-                </p>
-              </div>
-              <div>
-                <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-1">Technical Issues</h3>
-                <p>
-                  If a generation task fails due to platform server errors or system outages and no result is returned, the corresponding credits will be automatically refunded to your account. Issues caused by upload image quality, network connectivity, or content moderation are not covered.
-                </p>
+                <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-1">Not Eligible for Refund</h3>
+                <ul className="list-disc list-inside space-y-1 ml-2">
+                  <li>More than 7 days have passed since purchase</li>
+                  <li>A significant number of credits have been used</li>
+                  <li>Account was terminated due to violation of these terms</li>
+                  <li>Dissatisfaction with AI-generated results (as results vary by input and prompt)</li>
+                </ul>
               </div>
               <div>
                 <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-1">How to Request a Refund</h3>
                 <p>
-                  Contact us at <a href="mailto:support@lazoraai.com" className="text-purple-600 dark:text-purple-400 hover:underline">support@lazoraai.com</a> with your registered email, date of purchase, and reason for refund. We will respond within 5 business days. Refunds are processed through Paddle and typically take 5–10 business days.
-                </p>
-              </div>
-              <div>
-                <h3 className="text-base font-medium text-slate-800 dark:text-slate-200 mb-1">EU Users</h3>
-                <p>
-                  Under the EU Consumer Rights Directive, the right of withdrawal for digital content ends once delivery has begun. By completing your purchase, you agree to the immediate provision of digital services and acknowledge that your right of withdrawal will be limited accordingly.
+                  Contact us at <a href="mailto:support@lazoraai.com" className="text-purple-600 dark:text-purple-400 hover:underline">support@lazoraai.com</a> with your account email and reason for the request. Refunds are processed through our payment partner and typically take 5–10 business days to appear on your statement.
                 </p>
               </div>
             </div>
-            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-              For full billing details, see our <Link to="/credit-rules" className="text-purple-600 dark:text-purple-400 hover:underline">Billing Policy</Link>.
-            </p>
           </section>
 
           {/* 9. Disclaimers */}
