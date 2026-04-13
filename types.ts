@@ -8,7 +8,7 @@ export interface User {
   credits: number;
   maxCredits: number;
   avatarUrl?: string;
-  isWhitelisted?: boolean;
+  isAdmin?: boolean;
 }
 
 export interface Template {
@@ -78,4 +78,35 @@ export interface ToastMessage {
   id: string;
   type: 'success' | 'error' | 'info';
   message: string;
+}
+
+// ============================================
+// Admin Types
+// ============================================
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  credits: number;
+  plan: Plan;
+  max_credits: number;
+  is_admin: boolean;
+  created_at: string;
+}
+
+export interface AdminStats {
+  total_users: number;
+  pro_users: number;
+  free_users: number;
+  total_generations: number;
+  generations_today: number;
+  generations_this_week: number;
+  total_credits_used: number;
+}
+
+export interface TemplateStats {
+  template_id: string;
+  template_name: string | null;
+  usage_count: number;
+  total_credits: number;
 }

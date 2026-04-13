@@ -1,0 +1,223 @@
+import { supabase } from './supabase';
+import { AdminUser, AdminStats, TemplateStats } from '../types';
+
+// ============================================
+// Admin API Functions
+// ============================================
+
+/**
+ * 检查当前用户是否是管理员
+ */
+export async function checkIsAdmin(): Promise<boolean> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return false;
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('is_admin')
+      .eq('id', user.id)
+      .single();
+
+    if (error || !data) return false;
+    return data.is_admin === true;
+  } catch (err) {
+    console.error('Error checking admin status:', err);
+    return false;
+  }
+}
+
+/**
+ * 获取用户列表（管理员专用）
+ */
+export async function adminGetUsers(
+  searchQuery: string = '',
+  page: number = 1,
+  pageSize: number = 20
+): Promise<{ 
+  data: { users: AdminUser[]; total: number } | null; 
+  error: string | null 
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_get_users', {
+      search_query: searchQuery,
+      page_num: page,
+      page_size: pageSize
+    });
+
+    if (error) {
+      console.error('Error fetching users:', error);
+      return { data: null, error: error.message };
+    }
+
+    if (!data.success) {
+      return { data: null, error: data.error || 'Unknown error' };
+    }
+
+    return { 
+      data: { 
+        users: data.users || [], 
+        total: data.total || 0 
+      }, 
+      error: null 
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to fetch users' };
+  }
+}
+
+/**
+ * 修改用户积分（管理员专用）
+ */
+export async function adminUpdateCredits(
+  userId: string,
+  amount: number,
+  operation: 'set' | 'add' | 'subtract' = 'set'
+): Promise<{ 
+  success: boolean; 
+  data?: { previous_credits: number; new_credits: number }; 
+  error: string | null 
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_update_user_credits', {
+      target_user_id: userId,
+      new_credits: amount,
+      operation: operation
+    });
+
+    if (error) {
+      console.error('Error updating credits:', error);
+      return { success: false, error: error.message };
+    }
+
+    if (!data.success) {
+      return { success: false, error: data.error || 'Unknown error' };
+    }
+
+    return { 
+      success: true, 
+      data: {
+        previous_credits: data.previous_credits,
+        new_credits: data.new_credits
+      },
+      error: null 
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, error: 'Failed to update credits' };
+  }
+}
+
+/**
+ * 修改用户 Plan（管理员专用）
+ */
+export async function adminUpdatePlan(
+  userId: string,
+  newPlan: 'Free' | 'Pro',
+  bonusCredits: number = 0
+): Promise<{ 
+  success: boolean; 
+  data?: { previous_plan: string; new_plan: string; new_credits: number }; 
+  error: string | null 
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_update_user_plan', {
+      target_user_id: userId,
+      new_plan: newPlan,
+      bonus_credits: bonusCredits
+    });
+
+    if (error) {
+      console.error('Error updating plan:', error);
+      return { success: false, error: error.message };
+    }
+
+    if (!data.success) {
+      return { success: false, error: data.error || 'Unknown error' };
+    }
+
+    return { 
+      success: true, 
+      data: {
+        previous_plan: data.previous_plan,
+        new_plan: data.new_plan,
+        new_credits: data.new_credits
+      },
+      error: null 
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, error: 'Failed to update plan' };
+  }
+}
+
+/**
+ * 获取统计数据（管理员专用）
+ */
+export async function adminGetStats(): Promise<{ 
+  data: AdminStats | null; 
+  error: string | null 
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_get_stats');
+
+    if (error) {
+      console.error('Error fetching stats:', error);
+      return { data: null, error: error.message };
+    }
+
+    if (!data.success) {
+      return { data: null, error: data.error || 'Unknown error' };
+    }
+
+    return { 
+      data: {
+        total_users: data.total_users,
+        pro_users: data.pro_users,
+        free_users: data.free_users,
+        total_generations: data.total_generations,
+        generations_today: data.generations_today,
+        generations_this_week: data.generations_this_week,
+        total_credits_used: data.total_credits_used
+      }, 
+      error: null 
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to fetch stats' };
+  }
+}
+
+/**
+ * 获取模板使用统计（管理员专用）
+ */
+export async function adminGetTemplateStats(
+  limit: number = 20
+): Promise<{ 
+  data: TemplateStats[] | null; 
+  error: string | null 
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_get_template_stats', {
+      limit_num: limit
+    });
+
+    if (error) {
+      console.error('Error fetching template stats:', error);
+      return { data: null, error: error.message };
+    }
+
+    if (!data.success) {
+      return { data: null, error: data.error || 'Unknown error' };
+    }
+
+    return { 
+      data: data.templates || [], 
+      error: null 
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to fetch template stats' };
+  }
+}

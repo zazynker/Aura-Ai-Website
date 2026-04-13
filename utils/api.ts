@@ -475,7 +475,7 @@ export interface UserCreditsData {
   credits: number;
   plan: string;
   maxCredits: number;
-  isWhitelisted: boolean;
+  isAdmin: boolean;
 }
 
 /**
@@ -493,7 +493,7 @@ export async function fetchUserCredits(): Promise<{
 
     const { data, error } = await supabase
       .from('users')
-      .select('credits, plan, max_credits, is_whitelisted')
+      .select('credits, plan, max_credits, is_admin')
       .eq('id', user.id)
       .single();
 
@@ -507,13 +507,13 @@ export async function fetchUserCredits(): Promise<{
           credits: 120,
           plan: 'Free',
           max_credits: 120,
-          is_whitelisted: false
+          is_admin: false
         };
         
         const { data: newUser, error: insertError } = await supabase
           .from('users')
           .insert(newUserData)
-          .select('credits, plan, max_credits, is_whitelisted')
+          .select('credits, plan, max_credits, is_admin')
           .single();
         
         if (insertError) {
@@ -526,7 +526,7 @@ export async function fetchUserCredits(): Promise<{
             credits: newUser.credits,
             plan: newUser.plan,
             maxCredits: newUser.max_credits,
-            isWhitelisted: newUser.is_whitelisted || false
+            isAdmin: newUser.is_admin || false
           }, 
           error: null 
         };
@@ -541,7 +541,7 @@ export async function fetchUserCredits(): Promise<{
         credits: data.credits,
         plan: data.plan,
         maxCredits: data.max_credits,
-        isWhitelisted: data.is_whitelisted || false
+        isAdmin: data.is_admin || false
       }, 
       error: null 
     };

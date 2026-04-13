@@ -15,12 +15,14 @@ import { Terms } from './pages/Terms';
 import { About } from './pages/About';
 import { Footer } from './components/Footer';
 import { CreditRules } from './pages/CreditRules';
+import Admin from './pages/Admin';
 
 const AppContent = () => {
   const location = useLocation();
   const isAuthPage = ['/login', '/signup', '/forgot-password', '/reset-password'].includes(location.pathname);
   const isEditorPage = location.pathname === '/modify';
-  const hideFooter = isAuthPage || isEditorPage;
+  const isAdminPage = location.pathname === '/admin';
+  const hideFooter = isAuthPage || isEditorPage || isAdminPage;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
@@ -40,6 +42,7 @@ const AppContent = () => {
         <Route path="/terms" element={<Terms />} />
         <Route path="/about" element={<About />} />
         <Route path="/credit-rules" element={<CreditRules />} />
+        <Route path="/admin" element={<Admin />} />
       </Routes>
       {!hideFooter && <Footer />}
     </div>
