@@ -6,7 +6,7 @@
 // Dodo API configuration
 const DODO_API_URL = 'https://api.dodopayments.com/v1';
 const DODO_API_KEY = import.meta.env.VITE_DODO_API_KEY || '';
-
+console.log('DODO_API_KEY loaded:', DODO_API_KEY ? 'YES' : 'NO'); 
 // Product IDs from Dodo Live Mode
 export const DODO_PRODUCTS = {
   PRO_MONTHLY: 'pdt_0NcgjVAuBCIs2boj8YVVr',
