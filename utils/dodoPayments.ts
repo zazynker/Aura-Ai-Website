@@ -8,10 +8,10 @@ const SUPABASE_FUNCTION_URL = 'https://qdbixebjariupvcvsqff.supabase.co/function
 
 // Product IDs from Dodo Live Mode
 export const DODO_PRODUCTS = {
-  PRO_MONTHLY: 'pdt_0NcgjVAuBCIs2boj8YVVr',
+  PRO_MONTHLY: 'pdt_0NcgjVAuBCls2boj8YVVr',
   CREDITS_500: 'pdt_0NcgjXHAv4YGQGRus5jTK',
   CREDITS_1000: 'pdt_0NcgjZRQg8BmUo91hSPAw',
-  CREDITS_2000: 'pdt_0NcgjbbX6J3ziExgmpLvs',
+  CREDITS_2000: 'pdt_0Ncgjbbx6J3ziExgmpLvs',
 } as const;
 
 // Product details for display
