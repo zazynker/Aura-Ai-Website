@@ -500,14 +500,14 @@ export const Admin = () => {
                 <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
                 {templateStats.map((t, idx) => (
                   <div 
                     key={t.template_id} 
                     className="glass-panel rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden hover:border-purple-300 dark:hover:border-purple-500/30 transition-colors"
                   >
-                    {/* Thumbnail */}
-                    <div className="relative h-32 bg-slate-100 dark:bg-slate-800">
+                    {/* Thumbnail - 方形 */}
+                    <div className="relative aspect-square bg-slate-100 dark:bg-slate-800">
                       {(t.thumb_url || t.image_url) ? (
                         <img 
                           src={t.thumb_url || t.image_url || ''} 
@@ -520,27 +520,24 @@ export const Admin = () => {
                         </div>
                       )}
                       {/* Rank Badge */}
-                      <div className={`absolute top-2 left-2 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                      <div className={`absolute top-2 left-2 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
                         idx < 3 
                           ? 'bg-gradient-to-br from-yellow-400 to-orange-500 text-white shadow-lg'
                           : 'bg-white/90 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/10'
                       }`}>
                         {idx + 1}
                       </div>
+                      {/* Uses Badge */}
+                      <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold bg-purple-500 text-white">
+                        {t.usage_count} uses
+                      </div>
                     </div>
                     {/* Info */}
-                    <div className="p-3">
-                      <h3 className="text-sm font-medium text-slate-900 dark:text-white truncate mb-2">
+                    <div className="p-2">
+                      <h3 className="text-xs font-medium text-slate-900 dark:text-white truncate">
                         {t.template_name || t.template_id}
                       </h3>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-slate-500">
-                          <span className="font-mono font-bold text-slate-900 dark:text-white">{t.usage_count}</span> uses
-                        </span>
-                        <span className="text-slate-500">
-                          <span className="font-mono font-bold text-orange-500">{t.total_credits.toLocaleString()}</span> credits
-                        </span>
-                      </div>
+                      <p className="text-[10px] text-orange-500 font-mono">{t.total_credits.toLocaleString()} credits</p>
                     </div>
                   </div>
                 ))}
