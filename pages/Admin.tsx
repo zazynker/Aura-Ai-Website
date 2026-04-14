@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Shield, Users, TrendingUp, Zap, Search, Crown, 
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
-  Plus, Minus, Settings, BarChart3, RefreshCw
+  Settings, BarChart3, RefreshCw, Image, AlertTriangle
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
@@ -13,12 +13,13 @@ import {
   adminGetUsers, 
   adminGetStats, 
   adminGetTemplateStats,
+  adminGetUnusedTemplates,
   adminUpdateCredits,
   adminUpdatePlan
 } from '../utils/adminApi';
-import { AdminUser, AdminStats, TemplateStats } from '../types';
+import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
-type TabType = 'overview' | 'users' | 'templates';
+type TabType = 'overview' | 'users' | 'templates' | 'unused';
 
 export const Admin = () => {
   const navigate = useNavigate();
@@ -45,6 +46,10 @@ export const Admin = () => {
   // Template stats state
   const [templateStats, setTemplateStats] = useState<TemplateStats[]>([]);
   const [templateStatsLoading, setTemplateStatsLoading] = useState(false);
+
+  // Unused templates state
+  const [unusedTemplates, setUnusedTemplates] = useState<UnusedTemplate[]>([]);
+  const [unusedTemplatesLoading, setUnusedTemplatesLoading] = useState(false);
 
   // Edit user modal state
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -112,6 +117,18 @@ export const Admin = () => {
     setTemplateStatsLoading(false);
   }, [addToast]);
 
+  // Load unused templates
+  const loadUnusedTemplates = useCallback(async () => {
+    setUnusedTemplatesLoading(true);
+    const { data, error } = await adminGetUnusedTemplates(2, 50);
+    if (error) {
+      addToast('error', `Failed to load unused templates: ${error}`);
+    } else if (data) {
+      setUnusedTemplates(data);
+    }
+    setUnusedTemplatesLoading(false);
+  }, [addToast]);
+
   // Load data when tab changes
   useEffect(() => {
     if (!isAdmin) return;
@@ -122,8 +139,10 @@ export const Admin = () => {
       loadUsers(1, '');
     } else if (activeTab === 'templates' && templateStats.length === 0) {
       loadTemplateStats();
+    } else if (activeTab === 'unused' && unusedTemplates.length === 0) {
+      loadUnusedTemplates();
     }
-  }, [activeTab, isAdmin, stats, users.length, templateStats.length, loadStats, loadUsers, loadTemplateStats]);
+  }, [activeTab, isAdmin, stats, users.length, templateStats.length, unusedTemplates.length, loadStats, loadUsers, loadTemplateStats, loadUnusedTemplates]);
 
   // Handle user search
   const handleUserSearch = () => {
@@ -195,9 +214,9 @@ export const Admin = () => {
       addToast('success', `Plan updated: ${data.previous_plan} → ${data.new_plan}`);
       // Update local state
       setUsers(prev => prev.map(u => 
-        u.id === editingUser.id ? { ...u, plan: data.new_plan, credits: data.new_credits } : u
+        u.id === editingUser.id ? { ...u, plan: data.new_plan as 'Free' | 'Pro', credits: data.new_credits } : u
       ));
-      setEditingUser(prev => prev ? { ...prev, plan: data.new_plan, credits: data.new_credits } : null);
+      setEditingUser(prev => prev ? { ...prev, plan: data.new_plan as 'Free' | 'Pro', credits: data.new_credits } : null);
     } else {
       addToast('error', error || 'Failed to update plan');
     }
@@ -242,16 +261,17 @@ export const Admin = () => {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-2 mb-6 border-b border-slate-200 dark:border-white/10">
+        <div className="flex gap-2 mb-6 border-b border-slate-200 dark:border-white/10 overflow-x-auto">
           {[
             { id: 'overview', label: 'Overview', icon: BarChart3 },
             { id: 'users', label: 'Users', icon: Users },
-            { id: 'templates', label: 'Templates', icon: TrendingUp },
+            { id: 'templates', label: 'Top Templates', icon: TrendingUp },
+            { id: 'unused', label: 'Low Usage', icon: AlertTriangle },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as TabType)}
-              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
+              className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'border-purple-500 text-purple-600 dark:text-purple-400'
                   : 'border-transparent text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
@@ -348,18 +368,20 @@ export const Admin = () => {
             </div>
 
             {/* Users Table */}
-            <div className="glass-panel rounded-xl overflow-hidden border border-slate-200 dark:border-white/10">
+            <div className="glass-panel rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 overflow-x-auto">
               {usersLoading ? (
                 <div className="flex justify-center py-12">
                   <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
                 </div>
               ) : (
-                <table className="w-full">
+                <table className="w-full min-w-[800px]">
                   <thead className="bg-slate-50 dark:bg-white/5">
                     <tr>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Email</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Plan</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Credits</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Credits</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Used</th>
+                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Gens</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Joined</th>
                       <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
                     </tr>
@@ -386,9 +408,19 @@ export const Admin = () => {
                             {u.plan}
                           </span>
                         </td>
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 text-right">
                           <span className="text-sm font-mono text-slate-900 dark:text-white">
                             {u.credits.toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-sm font-mono text-orange-600 dark:text-orange-400">
+                            {(u.total_credits_used || 0).toLocaleString()}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-sm font-mono text-slate-500">
+                            {(u.generation_count || 0).toLocaleString()}
                           </span>
                         </td>
                         <td className="px-4 py-3">
@@ -450,7 +482,7 @@ export const Admin = () => {
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                Template Usage Rankings
+                Top Templates by Usage
               </h2>
               <Button 
                 variant="secondary" 
@@ -463,54 +495,133 @@ export const Admin = () => {
               </Button>
             </div>
 
-            <div className="glass-panel rounded-xl overflow-hidden border border-slate-200 dark:border-white/10">
-              {templateStatsLoading ? (
-                <div className="flex justify-center py-12">
-                  <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-                </div>
-              ) : (
-                <table className="w-full">
-                  <thead className="bg-slate-50 dark:bg-white/5">
-                    <tr>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Rank</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Template</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Uses</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">Credits</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 dark:divide-white/5">
-                    {templateStats.map((t, idx) => (
-                      <tr key={t.template_id} className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
-                        <td className="px-4 py-3">
-                          <span className={`w-6 h-6 inline-flex items-center justify-center rounded-full text-xs font-bold ${
-                            idx < 3 
-                              ? 'bg-gradient-to-br from-yellow-400 to-orange-500 text-white'
-                              : 'bg-slate-100 dark:bg-white/10 text-slate-600 dark:text-slate-400'
-                          }`}>
-                            {idx + 1}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="text-sm text-slate-900 dark:text-white">
-                            {t.template_name || t.template_id}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-sm font-mono text-slate-900 dark:text-white">
-                            {t.usage_count.toLocaleString()}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-sm font-mono text-slate-500">
-                            {t.total_credits.toLocaleString()}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+            {templateStatsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {templateStats.map((t, idx) => (
+                  <div 
+                    key={t.template_id} 
+                    className="glass-panel rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden hover:border-purple-300 dark:hover:border-purple-500/30 transition-colors"
+                  >
+                    {/* Thumbnail */}
+                    <div className="relative h-32 bg-slate-100 dark:bg-slate-800">
+                      {(t.thumb_url || t.image_url) ? (
+                        <img 
+                          src={t.thumb_url || t.image_url || ''} 
+                          alt={t.template_name || 'Template'} 
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Image className="w-8 h-8 text-slate-300 dark:text-slate-600" />
+                        </div>
+                      )}
+                      {/* Rank Badge */}
+                      <div className={`absolute top-2 left-2 w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${
+                        idx < 3 
+                          ? 'bg-gradient-to-br from-yellow-400 to-orange-500 text-white shadow-lg'
+                          : 'bg-white/90 dark:bg-slate-800/90 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-white/10'
+                      }`}>
+                        {idx + 1}
+                      </div>
+                    </div>
+                    {/* Info */}
+                    <div className="p-3">
+                      <h3 className="text-sm font-medium text-slate-900 dark:text-white truncate mb-2">
+                        {t.template_name || t.template_id}
+                      </h3>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-slate-500">
+                          <span className="font-mono font-bold text-slate-900 dark:text-white">{t.usage_count}</span> uses
+                        </span>
+                        <span className="text-slate-500">
+                          <span className="font-mono font-bold text-orange-500">{t.total_credits.toLocaleString()}</span> credits
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Unused Templates Tab */}
+        {activeTab === 'unused' && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                  Low Usage Templates
+                </h2>
+                <p className="text-sm text-slate-500">Templates with 2 or fewer uses</p>
+              </div>
+              <Button 
+                variant="secondary" 
+                size="sm" 
+                onClick={loadUnusedTemplates}
+                disabled={unusedTemplatesLoading}
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${unusedTemplatesLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
             </div>
+
+            {unusedTemplatesLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                {unusedTemplates.map((t) => (
+                  <div 
+                    key={t.template_id} 
+                    className="glass-panel rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden"
+                  >
+                    {/* Thumbnail */}
+                    <div className="relative aspect-square bg-slate-100 dark:bg-slate-800">
+                      {(t.thumb_url || t.image_url) ? (
+                        <img 
+                          src={t.thumb_url || t.image_url || ''} 
+                          alt={t.template_name || 'Template'} 
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Image className="w-8 h-8 text-slate-300 dark:text-slate-600" />
+                        </div>
+                      )}
+                      {/* Usage Badge */}
+                      <div className={`absolute top-2 right-2 px-2 py-0.5 rounded-full text-xs font-bold ${
+                        t.usage_count === 0 
+                          ? 'bg-red-500 text-white'
+                          : 'bg-yellow-500 text-white'
+                      }`}>
+                        {t.usage_count} uses
+                      </div>
+                    </div>
+                    {/* Info */}
+                    <div className="p-2">
+                      <h3 className="text-xs font-medium text-slate-900 dark:text-white truncate">
+                        {t.display_name || t.template_name || t.template_id}
+                      </h3>
+                      <p className="text-[10px] text-slate-400 truncate">{t.category}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {unusedTemplates.length === 0 && !unusedTemplatesLoading && (
+              <div className="text-center py-12">
+                <TrendingUp className="w-12 h-12 text-green-500 mx-auto mb-4" />
+                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">All templates are being used!</h3>
+                <p className="text-slate-500">No templates with low usage found.</p>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -535,6 +646,18 @@ export const Admin = () => {
                 <span className="text-sm text-slate-500">Current Credits:</span>
                 <span className="text-sm font-mono font-medium text-slate-900 dark:text-white">
                   {editingUser.credits.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-sm text-slate-500">Total Used:</span>
+                <span className="text-sm font-mono font-medium text-orange-500">
+                  {(editingUser.total_credits_used || 0).toLocaleString()}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-sm text-slate-500">Generations:</span>
+                <span className="text-sm font-mono font-medium text-slate-500">
+                  {(editingUser.generation_count || 0).toLocaleString()}
                 </span>
               </div>
             </div>

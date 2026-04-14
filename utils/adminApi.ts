@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import { AdminUser, AdminStats, TemplateStats } from '../types';
+import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
 // ============================================
 // Admin API Functions
@@ -28,7 +28,7 @@ export async function checkIsAdmin(): Promise<boolean> {
 }
 
 /**
- * 获取用户列表（管理员专用）
+ * 获取用户列表（管理员专用）- 包含用户消耗的总积分
  */
 export async function adminGetUsers(
   searchQuery: string = '',
@@ -190,7 +190,7 @@ export async function adminGetStats(): Promise<{
 }
 
 /**
- * 获取模板使用统计（管理员专用）
+ * 获取模板使用统计（管理员专用）- 排除特殊模板，包含缩略图
  */
 export async function adminGetTemplateStats(
   limit: number = 20
@@ -219,5 +219,40 @@ export async function adminGetTemplateStats(
   } catch (err) {
     console.error('Unexpected error:', err);
     return { data: null, error: 'Failed to fetch template stats' };
+  }
+}
+
+/**
+ * 获取低使用率/未使用的模板（管理员专用）
+ */
+export async function adminGetUnusedTemplates(
+  maxUsage: number = 2,
+  limit: number = 50
+): Promise<{ 
+  data: UnusedTemplate[] | null; 
+  error: string | null 
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_get_unused_templates', {
+      max_usage: maxUsage,
+      limit_num: limit
+    });
+
+    if (error) {
+      console.error('Error fetching unused templates:', error);
+      return { data: null, error: error.message };
+    }
+
+    if (!data.success) {
+      return { data: null, error: data.error || 'Unknown error' };
+    }
+
+    return { 
+      data: data.templates || [], 
+      error: null 
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to fetch unused templates' };
   }
 }

@@ -92,6 +92,8 @@ export interface AdminUser {
   max_credits: number;
   is_admin: boolean;
   created_at: string;
+  total_credits_used: number;  // 用户消耗的总积分
+  generation_count: number;    // 用户生成的总次数
 }
 
 export interface AdminStats {
@@ -107,6 +109,20 @@ export interface AdminStats {
 export interface TemplateStats {
   template_id: string;
   template_name: string | null;
+  thumb_url: string | null;
+  image_url: string | null;
+  usage_count: number;
+  total_credits: number;
+}
+
+export interface UnusedTemplate {
+  template_id: string;
+  template_name: string | null;
+  display_name: string | null;
+  thumb_url: string | null;
+  image_url: string | null;
+  category: string;
+  created_at: string;
   usage_count: number;
   total_credits: number;
 }
