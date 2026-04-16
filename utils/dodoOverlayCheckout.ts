@@ -45,44 +45,43 @@ export function initDodoCheckout(mode: 'test' | 'live' = 'live'): void {
  * 处理支付事件
  */
 function handleCheckoutEvent(event: any): void {
-  console.log('[DodoCheckout] Event received:', JSON.stringify(event, null, 2));
+  console.log('[DodoCheckout] Event received:', event);
 
-  // 尝试多种可能的事件结构
-  const eventType = event.type || event.event || event.eventType || event.name;
-  const eventData = event.data || event.payload || event;
+  // Dodo SDK 使用 event_type 而不是 type
+  const eventType = event.event_type;
 
   console.log('[DodoCheckout] Event type:', eventType);
 
   switch (eventType) {
+    case 'checkout.payment_page_opened':
+      console.log('[DodoCheckout] Payment page opened');
+      break;
+
+    case 'checkout.form_ready':
+      console.log('[DodoCheckout] Form ready');
+      break;
+
     case 'payment.success':
-    case 'payment_success':
-    case 'success':
+    case 'checkout.success':
       console.log('[DodoCheckout] Payment successful!');
       if (currentCallbacks.onSuccess) {
-        const paymentId = eventData?.payment_id || eventData?.paymentId || 'unknown';
+        const paymentId = event.data?.payment_id || 'unknown';
         currentCallbacks.onSuccess(paymentId);
       }
       currentCallbacks = {};
       break;
 
     case 'payment.failed':
-    case 'payment_failed':
-    case 'failed':
-    case 'error':
+    case 'checkout.failed':
       console.log('[DodoCheckout] Payment failed');
       if (currentCallbacks.onFailed) {
-        currentCallbacks.onFailed(eventData);
+        currentCallbacks.onFailed(event.data);
       }
       currentCallbacks = {};
       break;
 
     case 'checkout.closed':
-    case 'closed':
-    case 'close':
-    case 'dismissed':
-    case 'cancelled':
-    case 'cancel':
-      console.log('[DodoCheckout] Checkout closed');
+      console.log('[DodoCheckout] Checkout closed!');
       if (currentCallbacks.onClosed) {
         currentCallbacks.onClosed();
       }
@@ -90,8 +89,7 @@ function handleCheckoutEvent(event: any): void {
       break;
 
     default:
-      console.log('[DodoCheckout] Unhandled event type:', eventType);
-      // 如果事件类型未知但弹窗可能已关闭，也重置状态
+      console.log('[DodoCheckout] Other event:', eventType);
       break;
   }
 }
