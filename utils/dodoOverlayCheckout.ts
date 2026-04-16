@@ -35,6 +35,23 @@ export function initDodoCheckout(mode: 'test' | 'live' = 'live'): void {
     
     isInitialized = true;
     console.log(`[DodoCheckout] Initialized in ${mode} mode`);
+    
+    // 预热：预加载 Dodo 资源
+    const link = document.createElement('link');
+    link.rel = 'preconnect';
+    link.href = 'https://checkout.dodopayments.com';
+    document.head.appendChild(link);
+    
+    const link2 = document.createElement('link');
+    link2.rel = 'dns-prefetch';
+    link2.href = 'https://checkout.dodopayments.com';
+    document.head.appendChild(link2);
+    
+    const link3 = document.createElement('link');
+    link3.rel = 'preconnect';
+    link3.href = 'https://live.dodopayments.com';
+    document.head.appendChild(link3);
+    
   } catch (error) {
     console.error('[DodoCheckout] Failed to initialize:', error);
     throw error;

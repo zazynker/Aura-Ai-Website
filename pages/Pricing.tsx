@@ -1,3 +1,4 @@
+import { initDodoCheckout } from '../utils/dodoOverlayCheckout';
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Check, Crown, Zap, Loader2 } from 'lucide-react';
@@ -12,6 +13,10 @@ export const Pricing = () => {
   const { user, updateUser, addToast, browsing, saveBrowsingState } = useStore();
   const [isProcessing, setIsProcessing] = useState<string | null>(null); // Track which product is processing
 
+  // 预初始化 Dodo Checkout SDK（页面加载时）
+React.useEffect(() => {
+  initDodoCheckout('live');
+}, []);
   // Get the success/cancel URL base
   const getBaseUrl = () => {
     if (typeof window !== 'undefined') {
