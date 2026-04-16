@@ -86,3 +86,39 @@ export async function redirectToCheckout(params: CreateCheckoutParams): Promise<
 export function isDodoConfigured(): boolean {
   return true;
 }
+/**
+ * Open overlay checkout (弹窗支付，不离开页面)
+ */
+export async function openDodoOverlayCheckout(
+  params: CreateCheckoutParams,
+  callbacks?: {
+    onSuccess?: (paymentId: string) => void;
+    onFailed?: (error: unknown) => void;
+    onClosed?: () => void;
+  }
+): Promise<void> {
+  const { openOverlayCheckout } = await import('./dodoOverlayCheckout');
+  
+  try {
+    const checkout = await createCheckout(params);
+    console.log('Checkout created for overlay:', checkout);
+    
+    openOverlayCheckout(checkout.checkout_url, {
+      onSuccess: (paymentId) => {
+        console.log('Payment successful:', paymentId);
+        callbacks?.onSuccess?.(paymentId);
+      },
+      onFailed: (error) => {
+        console.error('Payment failed:', error);
+        callbacks?.onFailed?.(error);
+      },
+      onClosed: () => {
+        console.log('Checkout closed');
+        callbacks?.onClosed?.();
+      },
+    });
+  } catch (error) {
+    console.error('Failed to open overlay checkout:', error);
+    throw error;
+  }
+}

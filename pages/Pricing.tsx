@@ -5,7 +5,7 @@ import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { supabase } from '../utils/supabase';
-import { DODO_PRODUCTS, PRODUCT_DETAILS, redirectToCheckout, isDodoConfigured } from '../utils/dodoPayments';
+import { DODO_PRODUCTS, PRODUCT_DETAILS, openDodoOverlayCheckout, isDodoConfigured } from '../utils/dodoPayments';
 
 export const Pricing = () => {
   const navigate = useNavigate();
@@ -40,17 +40,50 @@ export const Pricing = () => {
     try {
       const baseUrl = getBaseUrl();
       
-      await redirectToCheckout({
-        productId,
-        customerEmail: user.email,
-        customerId: user.id,
-        successUrl: `${baseUrl}/#/pricing?payment=success&product=${productId}`,
-        cancelUrl: `${baseUrl}/#/pricing?payment=cancelled`,
-        metadata: {
-          user_id: user.id,
-          user_email: user.email,
+      await openDodoOverlayCheckout(
+        {
+          productId,
+          customerEmail: user.email,
+          customerId: user.id,
+          successUrl: `${baseUrl}/#/pricing?payment=success&product=${productId}`,
+          cancelUrl: `${baseUrl}/#/pricing?payment=cancelled`,
+          metadata: {
+            user_id: user.id,
+            user_email: user.email,
+          },
         },
-      });
+        {
+          onSuccess: async (paymentId) => {
+            console.log('Payment successful:', paymentId);
+            addToast('success', 'Payment successful! Your credits will be added shortly.');
+            setIsProcessing(null);
+            
+            // Refresh user credits after delay (webhook needs time to process)
+            setTimeout(async () => {
+              if (user?.id) {
+                const { data } = await supabase
+                  .from('users')
+                  .select('credits, plan')
+                  .eq('id', user.id)
+                  .single();
+                
+                if (data) {
+                  updateUser({ credits: data.credits, plan: data.plan });
+                }
+              }
+            }, 3000);
+          },
+          onFailed: (error) => {
+            console.error('Payment failed:', error);
+            addToast('error', 'Payment failed. Please try again.');
+            setIsProcessing(null);
+          },
+          onClosed: () => {
+            console.log('Checkout closed');
+            setIsProcessing(null);
+          },
+        }
+      );
     } catch (error) {
       console.error('Payment error:', error);
       addToast('error', 'Failed to start payment. Please try again.');
