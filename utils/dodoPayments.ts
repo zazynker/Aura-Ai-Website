@@ -29,6 +29,7 @@ interface CreateCheckoutParams {
   successUrl: string;
   cancelUrl?: string;
   metadata?: Record<string, string>;
+  country?: string;  //
 }
 
 interface CheckoutResponse {
@@ -40,7 +41,7 @@ interface CheckoutResponse {
  * Create a checkout session via Supabase Edge Function
  */
 export async function createCheckout(params: CreateCheckoutParams): Promise<CheckoutResponse> {
-  const { productId, customerEmail, customerId, successUrl, cancelUrl, metadata } = params;
+  const { productId, customerEmail, customerId, successUrl, cancelUrl, metadata, country } = params;
 
   const response = await fetch(SUPABASE_FUNCTION_URL, {
     method: 'POST',
@@ -54,6 +55,7 @@ export async function createCheckout(params: CreateCheckoutParams): Promise<Chec
       successUrl,
       cancelUrl: cancelUrl || successUrl,
       metadata: metadata || {},
+      country: country || 'US',  // 新增，默认美国
     }),
   });
 

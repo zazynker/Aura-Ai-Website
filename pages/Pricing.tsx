@@ -51,6 +51,7 @@ export const Pricing = () => {
             user_id: user.id,
             user_email: user.email,
           },
+          country: 'US',  // ← 加这一行
         },
         {
           onSuccess: async (paymentId) => {
