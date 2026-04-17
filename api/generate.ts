@@ -130,6 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         interface GenerationResult {
             image: string | null;
             tokensUsed: number;
+            error?: { code: number; message: string };  // 新增：错误信息
         }
         
         const generateOne = async (attempt = 1): Promise<GenerationResult> => {
@@ -146,11 +147,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (!response.ok) {
                     const errorText = await response.text();
                     console.error(`Gemini API error (attempt ${attempt}):`, response.status, errorText);
+                    
+                    // ========== 429 错误不重试，直接返回 ==========
+                    if (response.status === 429) {
+                        console.error('Rate limit exceeded (429), not retrying');
+                        return { 
+                            image: null, 
+                            tokensUsed: 0,
+                            error: { 
+                                code: 429, 
+                                message: 'Server is busy right now. Please wait 30 seconds and try again. [E429]' 
+                            }
+                        };
+                    }
+                    
+                    // 其他错误可以重试
                     if (attempt < maxAttempts) {
                         await new Promise(r => setTimeout(r, 300 * attempt)); // Increasing delay
                         return generateOne(attempt + 1);
                     }
-                    return { image: null, tokensUsed: 0 };
+                    return { 
+                        image: null, 
+                        tokensUsed: 0,
+                        error: { 
+                            code: response.status, 
+                            message: `API error [E${response.status}]` 
+                        }
+                    };
                 }
 
                 const data = await response.json();
@@ -242,6 +265,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         let images: string[] = [];
         let totalTokensUsed = 0;
         let totalAttempts = 0;
+        let rateLimitError: { code: number; message: string } | null = null;  // 记录 429 错误
         const maxTotalAttempts = numToGenerate * 2; // Allow up to 2x attempts to fill quota
         
         // First batch - parallel
@@ -253,10 +277,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 images.push(result.image);
             }
             totalTokensUsed += result.tokensUsed;
+            
+            // 检查是否有 429 错误
+            if (result.error?.code === 429) {
+                rateLimitError = result.error;
+            }
         }
         totalAttempts = numToGenerate;
         
-        // If we didn't get enough, try to fill the gap
+        // ========== 如果遇到 429 错误，立即返回，不再重试 ==========
+        if (rateLimitError) {
+            console.error('Rate limit hit, returning immediately');
+            return res.status(429).json({
+                success: false,
+                error: rateLimitError.message,
+                errorCode: 429,
+                images: images,  // 返回已成功生成的图片
+                count: images.length,
+                tokensUsed: totalTokensUsed
+            });
+        }
+        
+        // If we didn't get enough, try to fill the gap (only if no rate limit error)
         while (images.length < numToGenerate && totalAttempts < maxTotalAttempts) {
             const needed = numToGenerate - images.length;
             console.log(`Only got ${images.length}/${numToGenerate}, generating ${needed} more...`);
@@ -267,8 +309,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     images.push(result.image);
                 }
                 totalTokensUsed += result.tokensUsed;
+                
+                // 检查是否有 429 错误
+                if (result.error?.code === 429) {
+                    rateLimitError = result.error;
+                    break;
+                }
             }
             totalAttempts += needed;
+            
+            // 如果遇到 429，停止重试
+            if (rateLimitError) {
+                console.error('Rate limit hit during retry, stopping');
+                break;
+            }
         }
         
         console.log('=== Generation Summary ===');
@@ -277,9 +331,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('Total tokens used:', totalTokensUsed);
 
         if (images.length === 0) {
+            // 如果是 429 错误导致的失败
+            if (rateLimitError) {
+                return res.status(429).json({
+                    success: false,
+                    error: rateLimitError.message,
+                    errorCode: 429,
+                    images: [],
+                    count: 0,
+                    tokensUsed: totalTokensUsed
+                });
+            }
+            
             return res.status(500).json({
                 success: false,
-                error: 'All generation attempts failed',
+                error: 'All generation attempts failed. Please try again. [E500]',
+                errorCode: 500,
                 images: [],
                 count: 0,
                 tokensUsed: totalTokensUsed
@@ -298,7 +365,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } catch (err) {
         console.error('Generation exception:', err);
         return res.status(500).json({ 
-            error: 'Generation failed', 
+            success: false,
+            error: 'Generation failed. Please try again. [E500]', 
+            errorCode: 500,
             details: err instanceof Error ? err.message : 'Unknown error' 
         });
     }
