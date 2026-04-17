@@ -9,6 +9,7 @@ const SUPABASE_FUNCTION_URL = 'https://qdbixebjariupvcvsqff.supabase.co/function
 // Product IDs from Dodo Live Mode
 export const DODO_PRODUCTS = {
   PRO_MONTHLY: 'pdt_0NcgjVAuBCls2boj8YVVr',
+  PRO_YEARLY: 'pdt_0NctYcepOLToIEIh1qBxi',
   CREDITS_500: 'pdt_0NcgjXHAv4YGQGRus5jTK',
   CREDITS_1000: 'pdt_0NcgjZRQg8BmUo91hSPAw',
   CREDITS_2000: 'pdt_0Ncgjbbx6J3ziExgmpLvs',
@@ -17,6 +18,7 @@ export const DODO_PRODUCTS = {
 // Product details for display
 export const PRODUCT_DETAILS = {
   [DODO_PRODUCTS.PRO_MONTHLY]: { name: 'Pro Monthly', credits: 3000, price: 29 },
+  [DODO_PRODUCTS.PRO_YEARLY]: { name: 'Pro Yearly', credits: 3000, price: 238.8 },
   [DODO_PRODUCTS.CREDITS_500]: { name: '500 Credits', credits: 500, price: 7 },
   [DODO_PRODUCTS.CREDITS_1000]: { name: '1,000 Credits', credits: 1000, price: 12 },
   [DODO_PRODUCTS.CREDITS_2000]: { name: '2,000 Credits', credits: 2000, price: 22 },

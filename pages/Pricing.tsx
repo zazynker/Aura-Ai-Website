@@ -1,23 +1,23 @@
 import { initDodoCheckout } from '../utils/dodoOverlayCheckout';
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
-import { Check, Crown, Zap, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Check, Crown, Loader2 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
-import { Modal } from '../components/ui/Modal';
 import { supabase } from '../utils/supabase';
-import { DODO_PRODUCTS, PRODUCT_DETAILS, openDodoOverlayCheckout, isDodoConfigured } from '../utils/dodoPayments';
+import { DODO_PRODUCTS, openDodoOverlayCheckout, isDodoConfigured } from '../utils/dodoPayments';
 
 export const Pricing = () => {
   const navigate = useNavigate();
-  const { user, updateUser, addToast, browsing, saveBrowsingState } = useStore();
-  const [isProcessing, setIsProcessing] = useState<string | null>(null); // Track which product is processing
+  const { user, updateUser, addToast, saveBrowsingState } = useStore();
+  const [isProcessing, setIsProcessing] = useState<string | null>(null);
+  const [billingCycle, setBillingCycle] = useState<'yearly' | 'monthly'>('yearly');
 
-  // 预初始化 Dodo Checkout SDK（页面加载时）
-React.useEffect(() => {
-  initDodoCheckout('live');
-}, []);
-  // Get the success/cancel URL base
+  // 预初始化 Dodo Checkout SDK
+  React.useEffect(() => {
+    initDodoCheckout('live');
+  }, []);
+
   const getBaseUrl = () => {
     if (typeof window !== 'undefined') {
       return window.location.origin;
@@ -25,16 +25,13 @@ React.useEffect(() => {
     return 'https://lazoraai.com';
   };
 
-  // Handle purchase for any product
   const handlePurchase = async (productId: string) => {
-    // Check if user is logged in
     if (!user) {
       saveBrowsingState({ intendedDestination: '/pricing' });
       navigate('/login');
       return;
     }
 
-    // Check if Dodo is configured
     if (!isDodoConfigured()) {
       addToast('error', 'Payment system is not configured. Please try again later.');
       return;
@@ -56,7 +53,7 @@ React.useEffect(() => {
             user_id: user.id,
             user_email: user.email,
           },
-          country: 'US',  // ← 加这一行
+          country: 'US',
         },
         {
           onSuccess: async (paymentId) => {
@@ -64,7 +61,6 @@ React.useEffect(() => {
             addToast('success', 'Payment successful! Your credits will be added shortly.');
             setIsProcessing(null);
             
-            // Refresh user credits after delay (webhook needs time to process)
             setTimeout(async () => {
               if (user?.id) {
                 const { data } = await supabase
@@ -97,18 +93,14 @@ React.useEffect(() => {
     }
   };
 
-  // Check URL params for payment result (on page load)
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.hash.split('?')[1] || '');
     const paymentStatus = params.get('payment');
-    const productId = params.get('product');
 
     if (paymentStatus === 'success') {
       addToast('success', 'Payment successful! Your credits will be added shortly.');
-      // Clean up URL
       window.history.replaceState({}, '', window.location.pathname + '#/pricing');
       
-      // Optionally refresh user data after a short delay
       setTimeout(async () => {
         if (user?.id) {
           const { data } = await supabase
@@ -127,6 +119,12 @@ React.useEffect(() => {
       window.history.replaceState({}, '', window.location.pathname + '#/pricing');
     }
   }, []);
+
+  const getProProductId = () => {
+    return billingCycle === 'yearly' ? DODO_PRODUCTS.PRO_YEARLY : DODO_PRODUCTS.PRO_MONTHLY;
+  };
+
+  const isProProcessing = isProcessing === DODO_PRODUCTS.PRO_YEARLY || isProcessing === DODO_PRODUCTS.PRO_MONTHLY;
 
   return (
     <div className="min-h-screen pt-24 px-4 pb-12">
@@ -165,10 +163,65 @@ React.useEffect(() => {
             Most Popular
           </div>
           {user?.plan === 'Pro' && (
-             <div className="absolute top-4 right-4 text-xs font-bold text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-500/10 px-2 py-1 rounded">Current Plan</div>
+            <div className="absolute top-4 right-4 text-xs font-bold text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-500/10 px-2 py-1 rounded">Current Plan</div>
           )}
-          <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2 flex items-center gap-2">Pro <Crown className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /></h3>
-          <p className="text-3xl font-bold text-slate-900 dark:text-white mb-6">$29<span className="text-sm text-slate-500 dark:text-slate-400 font-normal">/mo</span></p>
+          <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">Pro <Crown className="w-5 h-5 text-yellow-500 dark:text-yellow-400" /></h3>
+          
+          {/* Billing Cycle Toggle */}
+          <div className="flex bg-slate-200/50 dark:bg-slate-800/50 p-1 rounded-lg mb-6">
+            <button 
+              onClick={() => setBillingCycle('yearly')}
+              className={`flex-1 relative py-2 px-3 rounded-md text-sm font-semibold transition-all ${
+                billingCycle === 'yearly' 
+                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' 
+                  : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Yearly
+              {billingCycle === 'yearly' && (
+                <span className="absolute -top-2 -right-2 bg-green-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                  -38%
+                </span>
+              )}
+            </button>
+            <button 
+              onClick={() => setBillingCycle('monthly')}
+              className={`flex-1 py-2 px-3 rounded-md text-sm font-semibold transition-all ${
+                billingCycle === 'monthly' 
+                  ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' 
+                  : 'text-slate-500 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              Monthly
+            </button>
+          </div>
+
+          {/* Price Display */}
+          <div className="mb-6">
+            {billingCycle === 'yearly' ? (
+              <>
+                <div className="flex items-end gap-2">
+                  <p className="text-3xl font-bold text-slate-900 dark:text-white">$19.9</p>
+                  <span className="text-sm text-slate-500 dark:text-slate-400 font-normal mb-1">/mo</span>
+                  <span className="text-sm text-slate-400 line-through mb-1">$29</span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Billed annually at $238.80 · Auto-renews yearly
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="flex items-end gap-2">
+                  <p className="text-3xl font-bold text-slate-900 dark:text-white">$29</p>
+                  <span className="text-sm text-slate-500 dark:text-slate-400 font-normal mb-1">/mo</span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Billed monthly · Auto-renews each month
+                </p>
+              </>
+            )}
+          </div>
+
           <ul className="space-y-4 mb-8 flex-1">
             <li className="flex items-start gap-3 text-slate-700 dark:text-slate-200 text-sm">
               <Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0 mt-0.5" /> 
@@ -179,13 +232,14 @@ React.useEffect(() => {
             <li className="flex items-center gap-3 text-slate-700 dark:text-slate-200 text-sm"><Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" /> Priority generation</li>
             <li className="flex items-center gap-3 text-slate-700 dark:text-slate-200 text-sm"><Check className="w-4 h-4 text-purple-500 dark:text-purple-400 shrink-0" /> Commercial license</li>
           </ul>
+
           <Button 
             variant="gradient" 
             className="w-full mt-auto" 
-            onClick={() => handlePurchase(DODO_PRODUCTS.PRO_MONTHLY)} 
+            onClick={() => handlePurchase(getProProductId())} 
             disabled={user?.plan === 'Pro' || isProcessing !== null}
           >
-            {isProcessing === DODO_PRODUCTS.PRO_MONTHLY ? (
+            {isProProcessing ? (
               <span className="flex items-center justify-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Processing...
@@ -193,9 +247,14 @@ React.useEffect(() => {
             ) : user?.plan === 'Pro' ? (
               'Manage Subscription'
             ) : (
-              'Upgrade to Pro'
+              billingCycle === 'yearly' ? 'Subscribe Yearly' : 'Subscribe Monthly'
             )}
           </Button>
+          
+          {/* Cancel anytime notice */}
+          <p className="text-xs text-center text-slate-400 dark:text-slate-500 mt-3">
+            Cancel anytime from your account settings
+          </p>
         </div>
 
         {/* Credit Packs */}
