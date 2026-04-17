@@ -253,7 +253,7 @@ export const Pricing = () => {
           
           {/* Cancel anytime notice */}
           <p className="text-xs text-center text-slate-400 dark:text-slate-500 mt-3">
-            Cancel anytime from your account settings
+            Cancel anytime
           </p>
         </div>
 
