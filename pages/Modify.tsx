@@ -421,12 +421,7 @@ export const Modify = () => {
   const runGeneration = async (toolName: string, promptText: string) => {
     if (!user) { navigate('/login'); return; }
     
-    // 白名单检查 - 非白名单用户不能生成
-    if (!user.isWhitelisted) {
-      addToast('info', 'Image generation coming soon! Stay tuned.');
-      return;
-    }
-    
+        
     // Determine resolution for credit estimation
     // For Upscale, use the target resolution; for other tools, default to 1K
     let resolution: Resolution = '1K';
@@ -754,12 +749,7 @@ export const Modify = () => {
   const runTextToImage = async () => {
     if (!user) { navigate('/login'); return; }
     
-    // 白名单检查 - 非白名单用户不能生成
-    if (!user.isWhitelisted) {
-      addToast('info', 'Image generation coming soon! Stay tuned.');
-      return;
-    }
-    
+   
     // Pre-check: estimate credits needed
     const t2iResolution = t2iSize as Resolution;
     const estimatedCredits = estimateCredits(t2iResolution, t2iOutputCount);
