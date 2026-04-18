@@ -36,9 +36,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: 'API key not configured', errorCode: 500 });
   }
 
-  // Log that we have the API key (don't log the actual key)
-  console.log('GEMINI_API_KEY configured:', apiKey ? 'YES' : 'NO');
-  console.log('GEMINI_API_KEY length:', apiKey?.length);
+  console.log('GEMINI_API_KEY configured: YES, length:', apiKey?.length);
 
   try {
     // ============================================
@@ -46,9 +44,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ============================================
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      console.log('No auth header provided');
       return res.status(401).json({ 
-        error: 'Authentication required. Please login to generate images.',
+        error: 'Authentication required.',
         errorCode: 401 
       });
     }
@@ -57,9 +54,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
     
     if (authError || !user) {
-      console.error('Auth error:', authError?.message);
       return res.status(401).json({ 
-        error: 'Invalid or expired session. Please login again.',
+        error: 'Invalid or expired session.',
         errorCode: 401 
       });
     }
@@ -77,7 +73,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .single();
 
     if (userError || !userData) {
-      console.error('User not found:', userError?.message);
       return res.status(403).json({ 
         error: 'User account not found.',
         errorCode: 403 
@@ -86,7 +81,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const userPlan = userData.plan || 'Free';
     const userCredits = userData.credits || 0;
-    console.log('User plan:', userPlan, '| Credits:', userCredits, '| Whitelisted:', userData.is_whitelisted);
+    console.log('User plan:', userPlan, '| Credits:', userCredits);
 
     // ============================================
     // STEP 3: Parse Request
@@ -112,7 +107,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ============================================
     const allowedResolutions = RESOLUTION_LIMITS[userPlan] || RESOLUTION_LIMITS['Free'];
     if (!allowedResolutions.includes(imageSize)) {
-      console.log(`User ${userId} (${userPlan}) attempted ${imageSize} - DENIED`);
       return res.status(403).json({ 
         error: `${imageSize} resolution requires Pro subscription.`,
         errorCode: 403,
@@ -159,41 +153,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('Prompt:', prompt.substring(0, 100) + '...');
     console.log('Image size:', imageSize);
     console.log('Number of images:', numImages);
-    console.log('Aspect ratio:', aspectRatio || 'default');
 
     const parts: any[] = [];
 
     // Add base image
     if (imageUrl) {
-      console.log('Fetching base image from:', imageUrl.substring(0, 80) + '...');
       const baseImageData = await fetchImageAsBase64(imageUrl);
       if (baseImageData) {
         parts.push({
-          inline_data: {
-            mime_type: baseImageData.mimeType,
+          inlineData: {
+            mimeType: baseImageData.mimeType,
             data: baseImageData.base64
           }
         });
-        console.log('Added base/scene image, mime:', baseImageData.mimeType, 'size:', baseImageData.base64.length);
-      } else {
-        console.log('Failed to fetch base image');
+        console.log('Added base image, size:', baseImageData.base64.length);
       }
     }
 
     // Add product image
     if (productImageUrl) {
-      console.log('Fetching product image from:', productImageUrl.substring(0, 80) + '...');
       const productImageData = await fetchImageAsBase64(productImageUrl);
       if (productImageData) {
         parts.push({
-          inline_data: {
-            mime_type: productImageData.mimeType,
+          inlineData: {
+            mimeType: productImageData.mimeType,
             data: productImageData.base64
           }
         });
-        console.log('Added product image, mime:', productImageData.mimeType, 'size:', productImageData.base64.length);
-      } else {
-        console.log('Failed to fetch product image');
+        console.log('Added product image, size:', productImageData.base64.length);
       }
     }
 
@@ -201,33 +188,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     parts.push({ text: prompt });
     console.log('Total parts:', parts.length);
 
-    // Build config
-    const imageConfig: any = {};
-    if (['512', '1K', '2K', '4K'].includes(imageSize)) {
-      imageConfig.imageSize = imageSize;
-    }
-    if (aspectRatio) {
-      imageConfig.aspectRatio = aspectRatio;
-    }
-
-    const requestBody: any = {
-      contents: [{ parts }],
-      generationConfig: {
-        responseModalities: ["IMAGE"],
-        temperature: 1,
-        thinkingConfig: { thinkingLevel: "MINIMAL" }
-      },
-      safetySettings: [
-        { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
-      ]
+    // Build generation config - SIMPLIFIED, no thinkingConfig
+    const generationConfig: any = {
+      responseModalities: ["IMAGE", "TEXT"],
+      temperature: 1,
     };
 
-    if (Object.keys(imageConfig).length > 0) {
-      requestBody.generationConfig.imageConfig = imageConfig;
+    // Add image size
+    if (['512', '1K', '2K', '4K'].includes(imageSize)) {
+      generationConfig.imageSize = imageSize;
     }
+
+    const requestBody = {
+      contents: [{ parts }],
+      generationConfig,
+    };
+
+    console.log('Request body keys:', Object.keys(requestBody));
+    console.log('Generation config:', JSON.stringify(generationConfig));
 
     // Generate images
     const images: string[] = [];
@@ -237,27 +215,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log(`Generating image ${i + 1}/${numImages}...`);
       const result = await generateOne(apiKey, requestBody);
       
-      console.log(`Image ${i + 1} result:`, {
-        hasImage: !!result.image,
-        tokensUsed: result.tokensUsed,
-        error: result.error
-      });
-      
       if (result.image) {
         images.push(result.image);
         totalTokensUsed += result.tokensUsed;
       }
       
       if (result.error?.code === 429) {
-        console.log('Rate limit hit');
         if (images.length > 0) {
-          const partialCredits = Math.ceil(totalTokensUsed / 60);
-          await deductCredits(userId, partialCredits);
+          await deductCredits(userId, Math.ceil(totalTokensUsed / 60));
         }
         return res.status(429).json({
           success: images.length > 0,
           images,
-          error: 'Rate limit. Please wait.',
+          error: 'Rate limit.',
           errorCode: 429,
           tokensUsed: totalTokensUsed
         });
@@ -270,7 +240,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (images.length === 0) {
       return res.status(500).json({
         success: false,
-        error: 'All generation attempts failed. Please try again.',
+        error: 'All generation attempts failed.',
         errorCode: 500,
         tokensUsed: 0
       });
@@ -302,7 +272,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 }
 
 // ============================================
-// Generate One Image - WITH DETAILED LOGGING
+// Generate One Image
 // ============================================
 async function generateOne(
   apiKey: string, 
@@ -318,11 +288,11 @@ async function generateOne(
       body: JSON.stringify(requestBody),
     });
 
-    console.log('Gemini API response status:', response.status);
+    console.log('Gemini response status:', response.status);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('Gemini API error response:', response.status, errorText);
+      console.error('Gemini API error:', response.status, errorText.substring(0, 500));
       
       if (response.status === 429) {
         return { image: null, tokensUsed: 0, error: { code: 429, message: 'Rate limit' } };
@@ -332,48 +302,96 @@ async function generateOne(
     }
 
     const data = await response.json();
-    console.log('Gemini API response keys:', Object.keys(data));
+    console.log('Response keys:', Object.keys(data));
     
     // Log candidates info
-    if (data.candidates) {
+    if (data.candidates && data.candidates.length > 0) {
       console.log('Candidates count:', data.candidates.length);
-      data.candidates.forEach((c: any, idx: number) => {
-        console.log(`Candidate ${idx}:`, {
-          hasContent: !!c.content,
-          partsCount: c.content?.parts?.length,
-          finishReason: c.finishReason
+      const candidate = data.candidates[0];
+      console.log('Candidate finishReason:', candidate.finishReason);
+      console.log('Candidate has content:', !!candidate.content);
+      
+      if (candidate.content?.parts) {
+        console.log('Parts count:', candidate.content.parts.length);
+        
+        // Log each part's structure
+        candidate.content.parts.forEach((part: any, idx: number) => {
+          const partKeys = Object.keys(part);
+          console.log(`Part ${idx} keys:`, partKeys);
+          
+          // Check for inlineData (camelCase - Gemini's actual format)
+          if (part.inlineData) {
+            console.log(`Part ${idx} inlineData mimeType:`, part.inlineData.mimeType);
+            if (part.inlineData.mimeType?.startsWith('image/')) {
+              const base64 = part.inlineData.data;
+              const mimeType = part.inlineData.mimeType;
+              console.log('Found image! Size:', base64?.length);
+              
+              const tokensUsed = data.usageMetadata?.candidatesTokenCount || 
+                                 data.usageMetadata?.totalTokenCount || 
+                                 ESTIMATED_TOKENS['1K'];
+              
+              return { 
+                image: `data:${mimeType};base64,${base64}`,
+                tokensUsed 
+              };
+            }
+          }
+          
+          // Check for inline_data (snake_case - just in case)
+          if (part.inline_data) {
+            console.log(`Part ${idx} inline_data mimeType:`, part.inline_data.mimeType);
+            if (part.inline_data.mimeType?.startsWith('image/')) {
+              const base64 = part.inline_data.data;
+              const mimeType = part.inline_data.mimeType;
+              console.log('Found image (snake_case)! Size:', base64?.length);
+              
+              const tokensUsed = data.usageMetadata?.candidatesTokenCount || 
+                                 data.usageMetadata?.totalTokenCount || 
+                                 ESTIMATED_TOKENS['1K'];
+              
+              return { 
+                image: `data:${mimeType};base64,${base64}`,
+                tokensUsed 
+              };
+            }
+          }
+          
+          if (part.text) {
+            console.log(`Part ${idx} is text:`, part.text.substring(0, 100));
+          }
         });
-      });
+      }
     } else {
       console.log('No candidates in response');
-      console.log('Full response:', JSON.stringify(data).substring(0, 500));
+      console.log('Full response:', JSON.stringify(data).substring(0, 1000));
     }
 
-    // Extract token usage
-    const tokensUsed = data.usageMetadata?.candidatesTokenCount || 
-                       data.usageMetadata?.totalTokenCount || 
-                       ESTIMATED_TOKENS['1K'];
-
-    // Extract image
+    // Try to extract image with both naming conventions
     const candidates = data.candidates || [];
     for (const candidate of candidates) {
       const parts = candidate.content?.parts || [];
       for (const part of parts) {
-        if (part.inline_data?.mime_type?.startsWith('image/')) {
-          const base64 = part.inline_data.data;
-          const mimeType = part.inline_data.mime_type;
-          console.log('Found image in response, mime:', mimeType, 'size:', base64?.length);
+        // Try camelCase (inlineData)
+        if (part.inlineData?.mimeType?.startsWith('image/')) {
+          const tokensUsed = data.usageMetadata?.candidatesTokenCount || ESTIMATED_TOKENS['1K'];
           return { 
-            image: `data:${mimeType};base64,${base64}`,
+            image: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
             tokensUsed 
           };
         }
-        // Log what we found instead
-        console.log('Part type:', part.text ? 'text' : part.inline_data ? 'inline_data' : 'unknown');
+        // Try snake_case (inline_data)
+        if (part.inline_data?.mimeType?.startsWith('image/')) {
+          const tokensUsed = data.usageMetadata?.candidatesTokenCount || ESTIMATED_TOKENS['1K'];
+          return { 
+            image: `data:${part.inline_data.mimeType};base64,${part.inline_data.data}`,
+            tokensUsed 
+          };
+        }
       }
     }
 
-    console.log('No image found in response');
+    console.log('No image found in any part');
     return { image: null, tokensUsed: 0 };
   } catch (err) {
     console.error('generateOne exception:', err);
@@ -396,7 +414,6 @@ async function deductCredits(userId: string, amount: number): Promise<number> {
     }
 
     // Fallback
-    console.log('RPC fallback for credit deduction');
     const { data: userData } = await supabaseAdmin
       .from('users')
       .select('credits')
@@ -431,9 +448,7 @@ async function fetchImageAsBase64(imageUrl: string): Promise<{ base64: string; m
       return null;
     }
 
-    console.log('Fetching image URL...');
     const response = await fetch(imageUrl);
-    
     if (!response.ok) {
       console.error('Failed to fetch image, status:', response.status);
       return null;
@@ -443,7 +458,6 @@ async function fetchImageAsBase64(imageUrl: string): Promise<{ base64: string; m
     const arrayBuffer = await response.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     
-    console.log('Image fetched, content-type:', contentType, 'base64 length:', base64.length);
     return { mimeType: contentType, base64 };
   } catch (err) {
     console.error('Error fetching image:', err);
