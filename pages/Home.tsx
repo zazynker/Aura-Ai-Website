@@ -7,8 +7,20 @@ import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 
-// Lazy loading image component with skeleton
-const LazyImage = ({ src, alt, className }: { src: string; alt: string; className?: string }) => {
+// Lazy loading image component with skeleton - 使用 aspect-ratio 防止跳动
+const LazyImage = ({ 
+  src, 
+  alt, 
+  className,
+  width,
+  height 
+}: { 
+  src: string; 
+  alt: string; 
+  className?: string;
+  width?: number;
+  height?: number;
+}) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isInView, setIsInView] = useState(false);
   const imgRef = useRef<HTMLDivElement>(null);
@@ -31,8 +43,15 @@ const LazyImage = ({ src, alt, className }: { src: string; alt: string; classNam
     return () => observer.disconnect();
   }, []);
 
+  // 计算 aspect-ratio，如果有宽高则使用，否则用默认值
+  const aspectRatio = width && height ? `${width} / ${height}` : '3 / 4';
+
   return (
-    <div ref={imgRef} className="relative" style={{ minHeight: isLoaded ? 'auto' : '200px' }}>
+    <div 
+      ref={imgRef} 
+      className="relative w-full"
+      style={{ aspectRatio }}
+    >
       {/* Skeleton placeholder */}
       {!isLoaded && (
         <div className="absolute inset-0 bg-slate-200 dark:bg-slate-700 animate-pulse rounded-2xl" />
@@ -43,7 +62,7 @@ const LazyImage = ({ src, alt, className }: { src: string; alt: string; classNam
           src={src}
           alt={alt}
           onLoad={() => setIsLoaded(true)}
-          className={`${className} ${isLoaded ? 'opacity-100' : 'opacity-0'} transition-opacity duration-300`}
+          className={`absolute inset-0 w-full h-full object-cover ${className} ${isLoaded ? 'opacity-100' : 'opacity-0'} transition-opacity duration-300`}
         />
       )}
     </div>
@@ -113,7 +132,9 @@ export const Home = () => {
           scene: t.scene,
           model: t.model,
           mood: t.mood,
-          holiday: t.holiday
+          holiday: t.holiday,
+          width: t.width || 896,      // 新增
+          height: t.height || 1344    // 新增
         }));
         setTemplates(mapped);
       }
@@ -440,11 +461,13 @@ export const Home = () => {
               className="group relative break-inside-avoid rounded-2xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-900/10"
             >
               <div className="relative">
-                <LazyImage
-                  src={t.thumbUrl || t.imageUrl}
-                  alt={t.name}
-                  className="w-full h-auto object-cover transform transition-transform duration-700 group-hover:scale-105"
-                />
+              <LazyImage
+  src={t.thumbUrl || t.imageUrl}
+  alt={t.name}
+  width={t.width}
+  height={t.height}
+  className="transform transition-transform duration-700 group-hover:scale-105"
+/>
                 <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                 
                 {/* Pro Badge */}
