@@ -69,7 +69,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       productImageUrl, 
       numberOfImages = 1,
       imageSize = '1K',
-      aspectRatio,
       templateId
     } = req.body;
 
@@ -79,7 +78,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const numImages = Math.min(Math.max(1, numberOfImages), 4);
 
-    // Check resolution
+    // Check resolution permission
     const allowed = RESOLUTION_LIMITS[userPlan] || RESOLUTION_LIMITS['Free'];
     if (!allowed.includes(imageSize)) {
       return res.status(403).json({ 
@@ -139,27 +138,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     parts.push({ text: prompt });
 
-    // Build request - CORRECT structure for Gemini
-    const requestBody: any = {
+    // SIMPLEST possible request - just what works
+    const requestBody = {
       contents: [{ parts }],
       generationConfig: {
-        responseModalities: ["IMAGE", "TEXT"],
-        temperature: 1,
+        responseModalities: ["IMAGE"]
       }
     };
 
-    // Add image config if needed (separate object)
-    if (imageSize || aspectRatio) {
-      requestBody.generationConfig.imageGenerationConfig = {};
-      if (imageSize) {
-        requestBody.generationConfig.imageGenerationConfig.outputSize = imageSize;
-      }
-      if (aspectRatio) {
-        requestBody.generationConfig.imageGenerationConfig.aspectRatio = aspectRatio;
-      }
-    }
-
-    console.log('Config:', JSON.stringify(requestBody.generationConfig));
+    console.log('Sending simple request...');
 
     // Generate
     const images: string[] = [];
@@ -187,7 +174,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
     }
 
-    console.log('Done:', images.length, 'images');
+    console.log('Done:', images.length, 'images, tokens:', totalTokens);
 
     if (images.length === 0) {
       return res.status(500).json({
@@ -236,27 +223,45 @@ async function generateOne(apiKey: string, requestBody: any): Promise<{ image: s
     }
 
     const data = await response.json();
+    console.log('Response keys:', Object.keys(data));
+    
     const tokensUsed = data.usageMetadata?.candidatesTokenCount || data.usageMetadata?.totalTokenCount || 1120;
+    console.log('Tokens:', tokensUsed);
 
-    // Extract image
+    // Extract image - check all possible formats
     for (const candidate of (data.candidates || [])) {
+      console.log('Candidate finishReason:', candidate.finishReason);
       for (const part of (candidate.content?.parts || [])) {
-        // Try both naming conventions
-        const inlineData = part.inlineData || part.inline_data;
-        if (inlineData?.mimeType?.startsWith('image/')) {
-          console.log('Found image!');
+        console.log('Part keys:', Object.keys(part));
+        
+        // Try inlineData (camelCase)
+        if (part.inlineData?.mimeType?.startsWith('image/')) {
+          console.log('Found image (inlineData)!');
           return { 
-            image: `data:${inlineData.mimeType};base64,${inlineData.data}`,
+            image: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
             tokensUsed 
           };
         }
+        // Try inline_data (snake_case)
+        if (part.inline_data?.mimeType?.startsWith('image/')) {
+          console.log('Found image (inline_data)!');
+          return { 
+            image: `data:${part.inline_data.mimeType};base64,${part.inline_data.data}`,
+            tokensUsed 
+          };
+        }
+        // Try fileData
+        if (part.fileData) {
+          console.log('Found fileData:', part.fileData);
+        }
+        // Log text if present
         if (part.text) {
-          console.log('Got text:', part.text.substring(0, 100));
+          console.log('Text response:', part.text.substring(0, 200));
         }
       }
     }
 
-    console.log('No image in response');
+    console.log('No image found');
     return { image: null, tokensUsed: 0 };
   } catch (err) {
     console.error('generateOne error:', err);
