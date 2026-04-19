@@ -291,46 +291,55 @@ export async function fetchUserCollections(): Promise<{
   error: string | null 
 }> {
   try {
-    console.log('=== fetchUserCollections called ===');
-    
-    // 获取所有收藏夹
-    const { data: collections, error: colError } = await supabase
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { data: [], error: 'Not authenticated' };
+    }
+
+    // Fetch collections
+    const { data: collections, error: collectionsError } = await supabase
       .from('collections')
       .select('*')
+      .eq('user_id', user.id)
       .order('created_at', { ascending: true });
 
-    if (colError) {
-      console.error('Error fetching collections:', colError);
-      return { data: [], error: colError.message };
+    if (collectionsError) {
+      console.error('Error fetching collections:', collectionsError);
+      return { data: [], error: collectionsError.message };
     }
 
     if (!collections || collections.length === 0) {
       return { data: [], error: null };
     }
 
-    // 获取所有收藏夹中的项目
+    // Fetch all items for these collections
     const collectionIds = collections.map(c => c.id);
     const { data: items, error: itemsError } = await supabase
       .from('collection_items')
       .select('*')
-      .in('collection_id', collectionIds)
-      .order('created_at', { ascending: false });
+      .in('collection_id', collectionIds);
 
     if (itemsError) {
       console.error('Error fetching collection items:', itemsError);
     }
 
-    // 组装数据
-    const result: import('../types').Collection[] = collections.map((col: DbCollection) => ({
+    // Group items by collection
+    const itemsByCollection: Record<string, string[]> = {};
+    (items || []).forEach((item: DbCollectionItem) => {
+      if (!itemsByCollection[item.collection_id]) {
+        itemsByCollection[item.collection_id] = [];
+      }
+      itemsByCollection[item.collection_id].push(item.template_id);
+    });
+
+    // Build result
+    const result = collections.map((col: DbCollection) => ({
       id: col.id,
       userId: col.user_id,
       name: col.name,
-      imageIds: (items || [])
-        .filter((item: DbCollectionItem) => item.collection_id === col.id)
-        .map((item: DbCollectionItem) => item.template_id)
+      imageIds: itemsByCollection[col.id] || []
     }));
 
-    console.log('Fetched collections:', result.length);
     return { data: result, error: null };
   } catch (err) {
     console.error('Unexpected error:', err);
@@ -345,8 +354,6 @@ export async function createCollectionInDb(
   name: string
 ): Promise<{ data: import('../types').Collection | null; error: string | null }> {
   try {
-    console.log('=== createCollectionInDb called ===', name);
-    
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       return { data: null, error: 'Not authenticated' };
@@ -476,6 +483,7 @@ export interface UserCreditsData {
   plan: string;
   maxCredits: number;
   isAdmin: boolean;
+  isWhitelisted: boolean;  // 添加白名单字段
 }
 
 /**
@@ -493,7 +501,7 @@ export async function fetchUserCredits(): Promise<{
 
     const { data, error } = await supabase
       .from('users')
-      .select('credits, plan, max_credits, is_admin')
+      .select('credits, plan, max_credits, is_admin, is_whitelisted')  // 添加 is_whitelisted
       .eq('id', user.id)
       .single();
 
@@ -507,13 +515,14 @@ export async function fetchUserCredits(): Promise<{
           credits: 120,
           plan: 'Free',
           max_credits: 120,
-          is_admin: false
+          is_admin: false,
+          is_whitelisted: true  // 新用户默认白名单
         };
         
         const { data: newUser, error: insertError } = await supabase
           .from('users')
           .insert(newUserData)
-          .select('credits, plan, max_credits, is_admin')
+          .select('credits, plan, max_credits, is_admin, is_whitelisted')
           .single();
         
         if (insertError) {
@@ -526,7 +535,8 @@ export async function fetchUserCredits(): Promise<{
             credits: newUser.credits,
             plan: newUser.plan,
             maxCredits: newUser.max_credits,
-            isAdmin: newUser.is_admin || false
+            isAdmin: newUser.is_admin || false,
+            isWhitelisted: newUser.is_whitelisted ?? true
           }, 
           error: null 
         };
@@ -541,7 +551,8 @@ export async function fetchUserCredits(): Promise<{
         credits: data.credits,
         plan: data.plan,
         maxCredits: data.max_credits,
-        isAdmin: data.is_admin || false
+        isAdmin: data.is_admin || false,
+        isWhitelisted: data.is_whitelisted ?? true  // 默认为 true
       }, 
       error: null 
     };
@@ -553,6 +564,7 @@ export async function fetchUserCredits(): Promise<{
 
 /**
  * 扣除用户积分（原子操作）
+ * 注意：现在主要由后端 generate.ts 处理扣分，这个函数保留用于其他场景
  */
 export async function deductUserCredits(
   amount: number
