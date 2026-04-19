@@ -7,8 +7,9 @@ export interface User {
   plan: Plan;
   credits: number;
   maxCredits: number;
-  avatarUrl?: string;
+  avatar?: string;     
   isAdmin?: boolean;
+  isWhitelisted?: boolean;
 }
 
 export interface Template {
