@@ -12,7 +12,7 @@ import {
   // deductUserCredits - 不再需要，后端已经扣分
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
-import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from 'react';
 import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
@@ -129,6 +129,9 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   
+  // 防止 syncUserFromSession 重复调用的锁
+  const syncingRef = useRef(false);
+  
   // Database-backed generations
   const [dbGenerations, setDbGenerations] = useState<Generation[]>([]);
   const [loadingGenerations, setLoadingGenerations] = useState(false);
@@ -203,38 +206,52 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
 
   // Sync user data from Supabase session
   const syncUserFromSession = async (session: Session) => {
-    const supaUser = session.user;
-    
-    // Fetch credits and plan from database
-    const { data: creditsData, error } = await fetchUserCredits();
-    
-    if (error) {
-      console.error('Failed to fetch user credits:', error);
+    // 防止重复调用
+    if (syncingRef.current) {
+      console.log('Already syncing user, skipping...');
+      return;
     }
+    syncingRef.current = true;
+    
+    try {
+      const supaUser = session.user;
+      
+      // Fetch credits and plan from database
+      const { data: creditsData, error } = await fetchUserCredits();
+      
+      if (error) {
+        console.error('Failed to fetch user credits:', error);
+      }
 
-    const user: User = {
-      id: supaUser.id,
-      email: supaUser.email || '',
-      name: supaUser.user_metadata?.full_name || supaUser.email?.split('@')[0] || 'User',
-      avatar: supaUser.user_metadata?.avatar_url,
-      credits: creditsData?.credits ?? 0,
-      plan: (creditsData?.plan as 'Free' | 'Pro') ?? 'Free',
-      maxCredits: creditsData?.maxCredits ?? 120,
-      isAdmin: creditsData?.isAdmin ?? false,
-      isWhitelisted: creditsData?.isWhitelisted ?? true,
-    };
+      const user: User = {
+        id: supaUser.id,
+        email: supaUser.email || '',
+        name: supaUser.user_metadata?.full_name || supaUser.email?.split('@')[0] || 'User',
+        avatar: supaUser.user_metadata?.avatar_url,
+        credits: creditsData?.credits ?? 0,
+        plan: (creditsData?.plan as 'Free' | 'Pro') ?? 'Free',
+        maxCredits: creditsData?.maxCredits ?? 120,
+        isAdmin: creditsData?.isAdmin ?? false,
+        isWhitelisted: creditsData?.isWhitelisted ?? true,
+      };
 
-    console.log('=== User synced from database ===');
-    console.log('Credits from DB:', user.credits);
-    console.log('Plan from DB:', user.plan);
-    console.log('Is Admin:', user.isAdmin);
+      console.log('=== User synced from database ===');
+      console.log('Credits from DB:', user.credits);
+      console.log('Plan from DB:', user.plan);
+      console.log('Is Admin:', user.isAdmin);
 
-    updateStorage((prev) => ({ ...prev, user }));
-    setData(getStorage());
+      updateStorage((prev) => ({ ...prev, user }));
+      setData(getStorage());
 
-    // Fetch user data
-    fetchUserGenerationsData();
-    fetchUserCollectionsData();
+      // Fetch user data
+      fetchUserGenerationsData();
+      fetchUserCollectionsData();
+    } finally {
+      // 延迟重置，给一点缓冲时间防止快速连续的 auth 事件
+      setTimeout(() => {
+        syncingRef.current = false;
+      }, 1000);
+    }
   };
 
   // Fetch user generations from database
