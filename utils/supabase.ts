@@ -2,7 +2,15 @@ import { createClient } from '@supabase/supabase-js';
 import { env } from '../config/env';
 
 // Create Supabase client
-export const supabase = createClient(env.supabase.url, env.supabase.anonKey);
+export const supabase = createClient(env.supabase.url, env.supabase.anonKey, {
+  auth: {
+    storageKey: 'lazora-auth',
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true,
+    flowType: 'implicit',
+  },
+});
 
 // Database types for templates table
 export interface DbTemplate {
