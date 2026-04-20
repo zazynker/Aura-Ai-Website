@@ -9,7 +9,6 @@ import {
   addItemToCollectionInDb,
   removeItemFromCollectionInDb,
   fetchUserCredits,
-  // deductUserCredits - 不再需要，后端已经扣分
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from 'react';
@@ -19,53 +18,39 @@ import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
 
 // Credit calculation based on actual token usage
-// Formula: credits = ceil(tokensUsed / 50)
-// This ensures ~70% profit margin based on Gemini pricing ($60/M tokens for image output)
-
-// Estimated token consumption per image (for pre-generation credit check)
-// These are approximate values based on Gemini documentation
 export const ESTIMATED_TOKENS_PER_IMAGE = {
-  '512': 747,    // 512px
-  '1K': 1120,    // 1024px  
-  '2K': 1680,    // 2048px
-  '4K': 2520,    // 4096px
+  '512': 747,
+  '1K': 1120,
+  '2K': 1680,
+  '4K': 2520,
 } as const;
 
 export type Resolution = keyof typeof ESTIMATED_TOKENS_PER_IMAGE;
 
-// Estimate credits needed BEFORE generation (for UI display and pre-check)
-// This uses fixed estimates since we don't know actual consumption yet
 export const estimateCredits = (resolution: Resolution, imageCount: number): number => {
   const tokensPerImage = ESTIMATED_TOKENS_PER_IMAGE[resolution];
   const totalTokens = tokensPerImage * imageCount;
   return Math.ceil(totalTokens / 60);
 };
 
-// Calculate actual credits based on REAL token consumption from API
-// This is the authoritative calculation used after generation completes
-// Divisor of 60 yields ~65% profit margin
 export const calculateCreditsFromTokens = (tokensUsed: number): number => {
   if (tokensUsed <= 0) return 0;
   return Math.ceil(tokensUsed / 60);
 };
 
-// Legacy export for backwards compatibility (uses estimation)
 export const CREDIT_COSTS = {
-  '512': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['512'] / 60),   // ~13
-  '1K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['1K'] / 60),     // ~19
-  '2K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['2K'] / 60),     // ~28
-  '4K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['4K'] / 60),     // ~42
+  '512': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['512'] / 60),
+  '1K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['1K'] / 60),
+  '2K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['2K'] / 60),
+  '4K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['4K'] / 60),
 } as const;
 
-// Legacy function for backwards compatibility
 export const calculateCredits = (resolution: Resolution, imageCount: number): number => {
   return estimateCredits(resolution, imageCount);
 };
 
-// Simple ID generator
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
-// Helper: Check if a string is a base64 data URL (these are too large for localStorage)
 const isBase64DataUrl = (str: string): boolean => {
   return str?.startsWith('data:image/') && str.includes('base64');
 };
@@ -78,10 +63,8 @@ interface StoreContextType {
   collections: Collection[];
   theme: 'light' | 'dark';
   authLoading: boolean;
-  // Generations loading state
   loadingGenerations: boolean;
   hasMoreGenerations: boolean;
-  // Collections loading state
   loadingCollections: boolean;
   toggleTheme: () => void;
   logout: () => Promise<void>;
@@ -95,13 +78,11 @@ interface StoreContextType {
   deleteGeneration: (id: string) => Promise<void>;
   loadMoreGenerations: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
-  // Collection Methods (数据库持久化)
   createCollection: (name: string) => Promise<void>;
   deleteCollection: (id: string) => Promise<void>;
   addToCollection: (collectionId: string, templateId: string) => Promise<void>;
   removeFromCollection: (collectionId: string, templateId: string) => Promise<void>;
   refreshCollections: () => Promise<void>;
-  // New: Update credits from backend response
   updateCreditsFromBackend: (newCredits: number) => void;
 }
 
@@ -115,7 +96,6 @@ export const useStore = () => {
   return context;
 };
 
-// Apply theme to document
 const applyTheme = (theme: 'light' | 'dark') => {
   if (theme === 'dark') {
     document.documentElement.classList.add('dark');
@@ -128,9 +108,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [data, setData] = useState<LocalStorageData>(getStorage());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
-  
-  // 防止 syncUserFromSession 重复调用的锁
-  const syncingRef = useRef(false);
   
   // Database-backed generations
   const [dbGenerations, setDbGenerations] = useState<Generation[]>([]);
@@ -154,37 +131,40 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     applyTheme(data.theme);
   }, [data.theme]);
 
-  // Initialize auth and listen for changes
+  // ============================================
+  // 重构后的 Auth 初始化逻辑
+  // 只使用 onAuthStateChange，避免并发请求导致锁冲突
+  // ============================================
   useEffect(() => {
     let mounted = true;
-
-    const initAuth = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (mounted) {
-          if (session?.user) {
-            await syncUserFromSession(session);
-          }
-          setAuthLoading(false);
-        }
-      } catch (error) {
-        console.error('Auth init error:', error);
-        if (mounted) {
-          setAuthLoading(false);
-        }
-      }
-    };
-
-    initAuth();
+    let hasInitialized = false;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
       
       console.log('Auth state changed:', event);
       
-      if (event === 'SIGNED_IN' && session?.user) {
-        await syncUserFromSession(session);
+      // INITIAL_SESSION: 页面首次加载时触发
+      // SIGNED_IN: 用户登录时触发
+      if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user) {
+        // 防止重复初始化（INITIAL_SESSION 后可能紧跟 SIGNED_IN）
+        if (hasInitialized) {
+          console.log('Already initialized, skipping duplicate event');
+          return;
+        }
+        
+        hasInitialized = true;
+        
+        try {
+          await syncUserFromSession(session);
+        } catch (error) {
+          console.error('Error syncing user:', error);
+        }
+        
+        setAuthLoading(false);
+        
       } else if (event === 'SIGNED_OUT') {
+        hasInitialized = false;
         updateStorage((prev) => ({ ...prev, user: null }));
         setData(getStorage());
         setDbGenerations([]);
@@ -192,9 +172,15 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
         setCollections([]);
         setGenerationsOffset(0);
         setHasMoreGenerations(true);
-      } else if (event === 'TOKEN_REFRESHED' && session?.user) {
-        // Just update the session, don't re-fetch everything
+        setAuthLoading(false);
+        
+      } else if (event === 'TOKEN_REFRESHED') {
         console.log('Token refreshed');
+        // Token 刷新时不需要重新获取用户数据
+        
+      } else {
+        // 其他情况（如未登录状态的 INITIAL_SESSION）
+        setAuthLoading(false);
       }
     });
 
@@ -206,52 +192,40 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
 
   // Sync user data from Supabase session
   const syncUserFromSession = async (session: Session) => {
-    // 防止重复调用
-    if (syncingRef.current) {
-      console.log('Already syncing user, skipping...');
-      return;
-    }
-    syncingRef.current = true;
+    const supaUser = session.user;
     
-    try {
-      const supaUser = session.user;
-      
-      // Fetch credits and plan from database
-      const { data: creditsData, error } = await fetchUserCredits();
-      
-      if (error) {
-        console.error('Failed to fetch user credits:', error);
-      }
-
-      const user: User = {
-        id: supaUser.id,
-        email: supaUser.email || '',
-        name: supaUser.user_metadata?.full_name || supaUser.email?.split('@')[0] || 'User',
-        avatar: supaUser.user_metadata?.avatar_url,
-        credits: creditsData?.credits ?? 0,
-        plan: (creditsData?.plan as 'Free' | 'Pro') ?? 'Free',
-        maxCredits: creditsData?.maxCredits ?? 120,
-        isAdmin: creditsData?.isAdmin ?? false,
-        isWhitelisted: creditsData?.isWhitelisted ?? true,
-      };
-
-      console.log('=== User synced from database ===');
-      console.log('Credits from DB:', user.credits);
-      console.log('Plan from DB:', user.plan);
-      console.log('Is Admin:', user.isAdmin);
-
-      updateStorage((prev) => ({ ...prev, user }));
-      setData(getStorage());
-
-      // Fetch user data
-      fetchUserGenerationsData();
-      fetchUserCollectionsData();
-    } finally {
-      // 延迟重置，给一点缓冲时间防止快速连续的 auth 事件
-      setTimeout(() => {
-        syncingRef.current = false;
-      }, 1000);
+    console.log('Syncing user from session...');
+    
+    // Fetch credits and plan from database
+    const { data: creditsData, error } = await fetchUserCredits();
+    
+    if (error) {
+      console.error('Failed to fetch user credits:', error);
     }
+
+    const user: User = {
+      id: supaUser.id,
+      email: supaUser.email || '',
+      name: supaUser.user_metadata?.full_name || supaUser.email?.split('@')[0] || 'User',
+      avatar: supaUser.user_metadata?.avatar_url,
+      credits: creditsData?.credits ?? 0,
+      plan: (creditsData?.plan as 'Free' | 'Pro') ?? 'Free',
+      maxCredits: creditsData?.maxCredits ?? 120,
+      isAdmin: creditsData?.isAdmin ?? false,
+      isWhitelisted: creditsData?.isWhitelisted ?? true,
+    };
+
+    console.log('=== User synced from database ===');
+    console.log('Credits from DB:', user.credits);
+    console.log('Plan from DB:', user.plan);
+    console.log('Is Admin:', user.isAdmin);
+
+    updateStorage((prev) => ({ ...prev, user }));
+    setData(getStorage());
+
+    // Fetch user data - 顺序执行避免并发
+    await fetchUserGenerationsData();
+    await fetchUserCollectionsData();
   };
 
   // Fetch user generations from database
@@ -259,18 +233,22 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     console.log('=== fetchUserGenerations called ===');
     setLoadingGenerations(true);
     
-    const { data: gens, hasMore, error } = await fetchUserGenerations(GENERATIONS_PAGE_SIZE, offset);
-    
-    if (error) {
-      console.error('Failed to fetch generations:', error);
-    } else {
-      if (append) {
-        setDbGenerations(prev => [...prev, ...gens]);
+    try {
+      const { data: gens, hasMore, error } = await fetchUserGenerations(GENERATIONS_PAGE_SIZE, offset);
+      
+      if (error) {
+        console.error('Failed to fetch generations:', error);
       } else {
-        setDbGenerations(gens);
+        if (append) {
+          setDbGenerations(prev => [...prev, ...gens]);
+        } else {
+          setDbGenerations(gens);
+        }
+        setHasMoreGenerations(hasMore);
+        setGenerationsOffset(offset + gens.length);
       }
-      setHasMoreGenerations(hasMore);
-      setGenerationsOffset(offset + gens.length);
+    } catch (err) {
+      console.error('Error in fetchUserGenerationsData:', err);
     }
     
     setLoadingGenerations(false);
@@ -294,13 +272,17 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     console.log('=== fetchUserCollections called ===');
     setLoadingCollections(true);
     
-    const { data: cols, error } = await fetchUserCollections();
-    
-    if (error) {
-      console.error('Failed to fetch collections:', error);
-    } else {
-      setCollections(cols);
-      console.log('Fetched collections:', cols.length);
+    try {
+      const { data: cols, error } = await fetchUserCollections();
+      
+      if (error) {
+        console.error('Failed to fetch collections:', error);
+      } else {
+        setCollections(cols);
+        console.log('Fetched collections:', cols.length);
+      }
+    } catch (err) {
+      console.error('Error in fetchUserCollectionsData:', err);
     }
     
     setLoadingCollections(false);
@@ -357,7 +339,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // --- Update credits from backend ---
-  // This is called after generation to update UI with the new balance from backend
   const updateCreditsFromBackend = (newCredits: number) => {
     console.log('Updating credits from backend:', newCredits);
     updateStorage((prev) => ({
@@ -378,7 +359,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const saveModifySession = (session: ModifySession | null) => {
-    // Clean session before saving - remove base64 images
     let cleanSession = session;
     if (session) {
       cleanSession = {
@@ -402,7 +382,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     if (!data.user) return;
     const genWithUser = { ...gen, userId: data.user.id };
 
-    // If it's a base64 image, only keep in session state (can't save to DB)
     if (isBase64DataUrl(gen.imageUrl)) {
       const sessionGen: Generation = {
         ...genWithUser,
@@ -410,11 +389,9 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
         createdAt: Date.now(),
       };
       setSessionGenerations(prev => [sessionGen, ...prev]);
-      // NOTE: Credits are already deducted by backend, no need to deduct here
       return;
     }
 
-    // Save to database
     const { data: savedGen, error } = await saveGenerationToDb(genWithUser);
     
     if (error) {
@@ -424,9 +401,7 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     }
 
     if (savedGen) {
-      // Add to local state immediately (at the beginning)
       setDbGenerations(prev => [savedGen, ...prev]);
-      // NOTE: Credits are already deducted by backend, no need to deduct here
     }
   };
 
@@ -441,14 +416,12 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     
     const userId = data.user.id;
     
-    // 分离 base64 图片和普通 URL
     const base64Gens = gens.filter(g => isBase64DataUrl(g.imageUrl));
     const regularGens = gens.filter(g => !isBase64DataUrl(g.imageUrl));
     
     console.log('Base64 images to upload:', base64Gens.length);
     console.log('Regular URLs:', regularGens.length);
     
-    // 上传 base64 图片到 Storage
     let uploadedGens: Omit<Generation, 'id' | 'createdAt'>[] = [];
     if (base64Gens.length > 0) {
       const base64Images = base64Gens.map(g => g.imageUrl);
@@ -459,7 +432,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
         addToast('error', `Failed to upload ${errors.length} image(s)`);
       }
       
-      // 将上传成功的图片与原始数据匹配
       uploadedGens = base64Gens
         .map((gen, index) => {
           const url = urls[index];
@@ -473,7 +445,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
       console.log('Successfully uploaded and matched:', uploadedGens.length);
     }
     
-    // 合并上传后的图片和普通 URL 图片
     const allGensToSave = [
       ...uploadedGens,
       ...regularGens.map(g => ({ ...g, userId }))
@@ -481,7 +452,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     
     console.log('Total gens to save to DB:', allGensToSave.length);
     
-    // 保存到数据库
     if (allGensToSave.length > 0) {
       console.log('Calling saveGenerationsToDb...');
       const { data: savedGens, error } = await saveGenerationsToDb(allGensToSave);
@@ -495,11 +465,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
       }
     }
 
-    // ========================================
-    // CREDITS: Use backend's newCredits value
-    // Backend already deducted credits atomically
-    // We just update the UI to show the new balance
-    // ========================================
     if (typeof newCreditsFromBackend === 'number') {
       console.log('Updating credits from backend response:', newCreditsFromBackend);
       updateStorage((prev) => ({
@@ -508,19 +473,15 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
       }));
       setData(getStorage());
     }
-    // If no newCreditsFromBackend provided, credits remain unchanged in UI
-    // (this handles edge cases, but normally backend always returns newCredits)
   };
 
   const deleteGeneration = async (id: string) => {
-    // Check if it's a session-only generation
     if (id.startsWith('session_')) {
       setSessionGenerations(prev => prev.filter(g => g.id !== id));
       addToast('success', 'Image deleted');
       return;
     }
 
-    // Delete from database
     const { success, error } = await deleteGenerationFromDb(id);
     
     if (error) {
@@ -558,24 +519,20 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const deleteCollection = async (id: string) => {
-    // 找到收藏夹
     const collection = collections.find(c => c.id === id);
     if (!collection) return;
     
-    // 不允许删除 Favorites
     if (collection.name === 'Favorites') {
       addToast('info', 'Cannot delete the Favorites collection');
       return;
     }
 
-    // Optimistic update
     setCollections(prev => prev.filter(c => c.id !== id));
 
     const { success, error } = await deleteCollectionFromDb(id);
     
     if (error || !success) {
       console.error('Failed to delete collection:', error);
-      // Revert on error
       setCollections(prev => [...prev, collection]);
       addToast('error', 'Failed to delete collection');
       return;
@@ -590,14 +547,12 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
       return;
     }
 
-    // 检查是否已存在
     const collection = collections.find(c => c.id === collectionId);
     if (collection && collection.imageIds.includes(itemId)) {
       addToast('info', 'Already in collection');
       return;
     }
 
-    // Optimistic update
     setCollections(prev => prev.map(c => 
       c.id === collectionId 
         ? { ...c, imageIds: [...c.imageIds, itemId] }
@@ -608,7 +563,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     
     if (error || !success) {
       console.error('Failed to add to collection:', error);
-      // Revert on error
       setCollections(prev => prev.map(c => 
         c.id === collectionId 
           ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) }
@@ -622,7 +576,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const removeFromCollection = async (collectionId: string, itemId: string) => {
-    // Optimistic update
     setCollections(prev => prev.map(c => 
       c.id === collectionId 
         ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) }
@@ -633,7 +586,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     
     if (error || !success) {
       console.error('Failed to remove from collection:', error);
-      // Revert on error - re-fetch
       await refreshCollections();
       addToast('error', 'Failed to remove from collection');
       return;
