@@ -8,8 +8,7 @@ import {
   deleteCollectionFromDb,
   addItemToCollectionInDb,
   removeItemFromCollectionInDb,
-  fetchUserCredits,
-  deductUserCredits
+  fetchUserCredits
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
@@ -91,7 +90,7 @@ interface StoreContextType {
   saveBrowsingState: (updates: Partial<LocalStorageData['browsing']>) => void;
   saveModifySession: (session: ModifySession | null) => void;
   addGeneration: (gen: Omit<Generation, 'id' | 'createdAt'>) => Promise<void>;
-  addGenerations: (gens: Omit<Generation, 'id' | 'createdAt'>[], newCreditsFromBackend?: number) => Promise<void>;
+  addGenerations: (gens: Omit<Generation, 'id' | 'createdAt'>[]) => Promise<void>;
   deleteGeneration: (id: string) => Promise<void>;
   loadMoreGenerations: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
@@ -209,17 +208,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       email: supaUser.email || '',
       name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
       plan: plan,
-      credits: creditsData?.credits ?? 120,  // 从数据库读取，如果没有则默认 120
+      credits: creditsData?.credits ?? 120,
       maxCredits: creditsData?.maxCredits ?? 120,
       avatar: supaUser.user_metadata?.avatar_url ||
         `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
-      isAdmin: creditsData?.isAdmin ?? false,  // 新增：从数据库读取 admin 状态
+      isAdmin: creditsData?.isAdmin ?? false,
+      isWhitelisted: creditsData?.isWhitelisted ?? false,
     };
 
     console.log('=== User synced from database ===');
     console.log('Credits from DB:', creditsData?.credits);
     console.log('Plan from DB:', creditsData?.plan);
     console.log('Is Admin:', creditsData?.isAdmin);
+    console.log('Is Whitelisted:', creditsData?.isWhitelisted);
 
     updateStorage((prev) => ({
       ...prev,
@@ -373,20 +374,15 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       };
       setSessionGenerations(prev => [sessionGen, ...prev]);
       
-      // Deduct credits - sync to database
-      const { success, newCredits } = await deductUserCredits(gen.creditsUsed);
-      if (success) {
+      // 后端已扣分，刷新本地积分
+      const { data: creditsData } = await fetchUserCredits();
+      if (creditsData) {
         updateStorage((prev) => ({
           ...prev,
-          user: prev.user ? { ...prev.user, credits: newCredits } : null
+          user: prev.user ? { ...prev.user, credits: creditsData.credits } : null
         }));
-      } else {
-        updateStorage((prev) => ({
-          ...prev,
-          user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
-        }));
+        setData(getStorage());
       }
-      setData(getStorage());
       return;
     }
 
@@ -403,24 +399,19 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       // Add to local state immediately (at the beginning)
       setDbGenerations(prev => [savedGen, ...prev]);
       
-      // Deduct credits - sync to database
-      const { success, newCredits } = await deductUserCredits(gen.creditsUsed);
-      if (success) {
+      // 后端已扣分，刷新本地积分
+      const { data: creditsData } = await fetchUserCredits();
+      if (creditsData) {
         updateStorage((prev) => ({
           ...prev,
-          user: prev.user ? { ...prev.user, credits: newCredits } : null
+          user: prev.user ? { ...prev.user, credits: creditsData.credits } : null
         }));
-      } else {
-        updateStorage((prev) => ({
-          ...prev,
-          user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
-        }));
+        setData(getStorage());
       }
-      setData(getStorage());
     }
   };
 
-  const addGenerations = async (gens: Omit<Generation, 'id' | 'createdAt'>[], newCreditsFromBackend?: number) => {
+  const addGenerations = async (gens: Omit<Generation, 'id' | 'createdAt'>[]) => {
     console.log('=== addGenerations called ===');
     console.log('Input gens:', gens);
     
@@ -431,14 +422,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     const userId = data.user.id;
     
-    // 分离 base64 图片和普通 URL 图片
+    // 分离 base64 图片和普通 URL
     const base64Gens = gens.filter(g => isBase64DataUrl(g.imageUrl));
     const regularGens = gens.filter(g => !isBase64DataUrl(g.imageUrl));
     
     console.log('Base64 images to upload:', base64Gens.length);
     console.log('Regular URLs:', regularGens.length);
     
-    // 上传 base64 图片到 Supabase Storage
+    // 上传 base64 图片到 Storage
     let uploadedGens: Omit<Generation, 'id' | 'createdAt'>[] = [];
     if (base64Gens.length > 0) {
       const base64Images = base64Gens.map(g => g.imageUrl);
@@ -484,15 +475,23 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setDbGenerations(prev => [...savedGens, ...prev]);
       }
     }
-  
-    // 更新前端积分显示（后端已经扣过积分，这里只更新显示）
-    if (typeof newCreditsFromBackend === 'number') {
-      console.log('Updating credits from backend:', newCreditsFromBackend);
+
+    // 后端已经扣分了，这里只刷新本地积分状态
+    const totalCredits = gens.reduce((acc, g) => acc + g.creditsUsed, 0);
+    console.log(`Backend deducted ${totalCredits} credits. Syncing local state...`);
+    
+    // 从数据库获取最新积分
+    const { data: creditsData } = await fetchUserCredits();
+    if (creditsData) {
       updateStorage((prev) => ({
         ...prev,
-        user: prev.user ? { ...prev.user, credits: newCreditsFromBackend } : null
+        user: prev.user ? { 
+          ...prev.user, 
+          credits: creditsData.credits
+        } : null
       }));
       setData(getStorage());
+      console.log('Credits synced:', creditsData.credits);
     }
   };
 
