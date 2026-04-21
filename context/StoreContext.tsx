@@ -8,7 +8,6 @@ import {
   deleteCollectionFromDb,
   addItemToCollectionInDb,
   removeItemFromCollectionInDb,
-  fetchUserCredits,
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from 'react';
@@ -126,6 +125,12 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loadingCollections, setLoadingCollections] = useState(false);
 
+  // 🔧 FIX: 使用 useRef 防止重复初始化（普通变量在组件重渲染时会被重置）
+  const hasInitializedRef = useRef(false);
+  
+  // 🔧 FIX: 追踪 generations 是否已经从 syncUser 加载过
+  const generationsLoadedRef = useRef(false);
+
   // Apply theme on mount
   useEffect(() => {
     applyTheme(data.theme);
@@ -137,7 +142,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   // ============================================
   useEffect(() => {
     let mounted = true;
-    let hasInitialized = false;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
@@ -147,13 +151,13 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
       // INITIAL_SESSION: 页面首次加载时触发
       // SIGNED_IN: 用户登录时触发
       if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user) {
-        // 防止重复初始化（INITIAL_SESSION 后可能紧跟 SIGNED_IN）
-        if (hasInitialized) {
+        // 🔧 FIX: 使用 ref 防止重复初始化
+        if (hasInitializedRef.current) {
           console.log('Already initialized, skipping duplicate event');
           return;
         }
         
-        hasInitialized = true;
+        hasInitializedRef.current = true;
         
         try {
           await syncUserFromSession(session);
@@ -164,7 +168,10 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
         setAuthLoading(false);
         
       } else if (event === 'SIGNED_OUT') {
-        hasInitialized = false;
+        // 🔧 FIX: 登出时重置 ref
+        hasInitializedRef.current = false;
+        generationsLoadedRef.current = false;
+        
         updateStorage((prev) => ({ ...prev, user: null }));
         setData(getStorage());
         setDbGenerations([]);
@@ -196,45 +203,28 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     
     console.log('Syncing user from session...');
     
-    // 添加超时机制，防止请求卡住导致页面无法加载
-    const timeoutPromise = new Promise<{ data: null; error: string }>((resolve) => {
-      setTimeout(() => resolve({ data: null, error: 'Timeout' }), 5000);
-    });
-    
-    // Fetch credits and plan from database - 使用 session.user.id 直接查询，避免再次调用 getUser()
-    const fetchCreditsPromise = (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('users')
-          .select('credits, plan, max_credits, is_admin, is_whitelisted')
-          .eq('id', supaUser.id)
-          .single();
-        
-        if (error) {
-          console.error('Failed to fetch user credits:', error);
-          return { data: null, error: error.message };
-        }
-        
-        return { 
-          data: {
-            credits: data.credits,
-            plan: data.plan,
-            maxCredits: data.max_credits,
-            isAdmin: data.is_admin || false,
-            isWhitelisted: data.is_whitelisted ?? true
-          }, 
-          error: null 
+    // 直接查询用户数据，不使用 fetchUserCredits（避免额外的 getUser 调用）
+    let creditsData = null;
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('credits, plan, max_credits, is_admin, is_whitelisted')
+        .eq('id', supaUser.id)
+        .single();
+      
+      if (error) {
+        console.error('Failed to fetch user credits:', error);
+      } else {
+        creditsData = {
+          credits: data.credits,
+          plan: data.plan,
+          maxCredits: data.max_credits,
+          isAdmin: data.is_admin || false,
+          isWhitelisted: data.is_whitelisted ?? true
         };
-      } catch (err) {
-        console.error('Unexpected error fetching credits:', err);
-        return { data: null, error: 'Failed to fetch credits' };
       }
-    })();
-    
-    const { data: creditsData, error } = await Promise.race([fetchCreditsPromise, timeoutPromise]);
-    
-    if (error) {
-      console.warn('Credits fetch failed or timed out, using defaults:', error);
+    } catch (err) {
+      console.error('Unexpected error fetching credits:', err);
     }
 
     const user: User = {
@@ -257,14 +247,36 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     updateStorage((prev) => ({ ...prev, user }));
     setData(getStorage());
 
-    // Fetch user data - 不阻塞主流程，后台加载
-    fetchUserGenerationsData().catch(err => console.error('Failed to fetch generations:', err));
-    fetchUserCollectionsData().catch(err => console.error('Failed to fetch collections:', err));
+    // 🔧 FIX: 顺序执行数据加载，使用 await 确保完成
+    // 并标记已加载，防止 Dashboard 重复触发
+    generationsLoadedRef.current = true;
+    
+    try {
+      await fetchUserGenerationsData(0, false);
+    } catch (err) {
+      console.error('Failed to fetch generations:', err);
+    }
+    
+    try {
+      await fetchUserCollectionsData();
+    } catch (err) {
+      console.error('Failed to fetch collections:', err);
+    }
   };
 
   // Fetch user generations from database
+  // 🔧 FIX: 添加防重复请求的逻辑
+  const fetchingGenerationsRef = useRef(false);
+  
   const fetchUserGenerationsData = async (offset = 0, append = false) => {
+    // 🔧 FIX: 防止并发请求
+    if (fetchingGenerationsRef.current && offset === 0 && !append) {
+      console.log('fetchUserGenerations already in progress, skipping');
+      return;
+    }
+    
     console.log('=== fetchUserGenerations called ===');
+    fetchingGenerationsRef.current = true;
     setLoadingGenerations(true);
     
     try {
@@ -280,22 +292,31 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
         }
         setHasMoreGenerations(hasMore);
         setGenerationsOffset(offset + gens.length);
+        console.log('Fetched generations:', gens.length);
       }
     } catch (err) {
       console.error('Error in fetchUserGenerationsData:', err);
     }
     
     setLoadingGenerations(false);
+    fetchingGenerationsRef.current = false;
   };
 
   // Load more generations (pagination)
   const loadMoreGenerations = async () => {
-    if (loadingGenerations || !hasMoreGenerations) return;
+    if (loadingGenerations || !hasMoreGenerations || fetchingGenerationsRef.current) return;
     await fetchUserGenerationsData(generationsOffset, true);
   };
 
   // Refresh generations (reload from start)
+  // 🔧 FIX: 检查是否已经加载过
   const refreshGenerations = async () => {
+    // 如果已经从 syncUser 加载过且有数据，不重复加载
+    if (generationsLoadedRef.current && dbGenerations.length > 0) {
+      console.log('Generations already loaded, skipping refresh');
+      return;
+    }
+    
     setGenerationsOffset(0);
     setHasMoreGenerations(true);
     await fetchUserGenerationsData(0, false);
