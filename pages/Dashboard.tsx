@@ -139,18 +139,18 @@ export const Dashboard = () => {
   }, [activeTab, collections]); // 🔧 FIX: 移除 fetchTemplatesForCollection 依赖
 
   // Infinite scroll observer
-  useEffect(() => {
-    if (activeTab !== 'history') return;
-    
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMoreGenerations && !loadingGenerations) {
-          loadMoreGenerations();
-        }
-      },
-      { threshold: 0.1 }
-    );
-
+useEffect(() => {
+  if (activeTab !== 'history') return;
+  
+  const observer = new IntersectionObserver(
+    (entries) => {
+      // 🔧 FIX: 只有当已有数据时才触发加载更多
+      if (entries[0].isIntersecting && hasMoreGenerations && !loadingGenerations && generations.length > 0) {
+        loadMoreGenerations();
+      }
+    },
+    { threshold: 0.1 }
+  );
     if (loadMoreRef.current) {
       observer.observe(loadMoreRef.current);
     }
@@ -159,11 +159,11 @@ export const Dashboard = () => {
   }, [activeTab, hasMoreGenerations, loadingGenerations, loadMoreGenerations]);
 
   // Refresh generations when switching to history tab
-  useEffect(() => {
-    if (activeTab === 'history' && generations.length === 0) {
-      refreshGenerations();
-    }
-  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
+useEffect(() => {
+  if (activeTab === 'history' && generations.length === 0 && !loadingGenerations) {
+    refreshGenerations();
+  }
+}, [activeTab, loadingGenerations]);
 
   // Overview Data (Sorted by newest)
   const recentGenerations = useMemo(() => {
