@@ -126,6 +126,9 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loadingCollections, setLoadingCollections] = useState(false);
 
+  // 🔧 NEW: 防止 Auth 重复初始化的 ref
+const hasInitializedRef = useRef(false);
+
   // Apply theme on mount
   useEffect(() => {
     applyTheme(data.theme);
@@ -137,7 +140,7 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   // ============================================
   useEffect(() => {
     let mounted = true;
-    let hasInitialized = false;
+    
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
@@ -148,12 +151,12 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
       // SIGNED_IN: 用户登录时触发
       if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user) {
         // 防止重复初始化（INITIAL_SESSION 后可能紧跟 SIGNED_IN）
-        if (hasInitialized) {
+        if (hasInitializedRef.current) {
           console.log('Already initialized, skipping duplicate event');
           return;
         }
         
-        hasInitialized = true;
+        hasInitializedRef.current = true;  // 🔧 改用 ref
         
         try {
           await syncUserFromSession(session);
@@ -164,7 +167,7 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
         setAuthLoading(false);
         
       } else if (event === 'SIGNED_OUT') {
-        hasInitialized = false;
+        hasInitializedRef.current = false;  // 🔧 改用 ref
         updateStorage((prev) => ({ ...prev, user: null }));
         setData(getStorage());
         setDbGenerations([]);

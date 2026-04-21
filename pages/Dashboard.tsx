@@ -66,17 +66,28 @@ export const Dashboard = () => {
   // Infinite scroll ref
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
-  // Templates cache for collections (fetched from Supabase)
-  const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
+  // 🔧 FIX: 使用 useRef 存储 templates cache，避免无限循环
+  // 原来用 useState 会导致每次更新 cache 都触发重新渲染和 useEffect
+  const templatesCacheRef = useRef<Map<string, Template>>(new Map());
+  const [templatesVersion, setTemplatesVersion] = useState(0); // 用于触发 UI 更新
   const [loadingTemplates, setLoadingTemplates] = useState(false);
+  
+  // 🔧 FIX: 追踪正在获取的 template IDs，防止重复请求
+  const fetchingIdsRef = useRef<Set<string>>(new Set());
 
-  // Fetch templates for collections when needed
+  // 🔧 FIX: 重写 fetchTemplatesForCollection，移除对 cache 的依赖
   const fetchTemplatesForCollection = useCallback(async (templateIds: string[]) => {
     if (templateIds.length === 0) return;
     
-    // Filter out already cached
-    const uncachedIds = templateIds.filter(id => !templatesCache.has(id));
+    // 过滤掉已缓存的和正在获取的
+    const uncachedIds = templateIds.filter(id => 
+      !templatesCacheRef.current.has(id) && !fetchingIdsRef.current.has(id)
+    );
+    
     if (uncachedIds.length === 0) return;
+    
+    // 标记这些 ID 正在获取中
+    uncachedIds.forEach(id => fetchingIdsRef.current.add(id));
     
     setLoadingTemplates(true);
     try {
@@ -88,9 +99,9 @@ export const Dashboard = () => {
       if (error) {
         console.error('Error fetching templates:', error);
       } else if (data) {
-        const newCache = new Map(templatesCache);
+        // 更新 ref（不会触发重新渲染）
         data.forEach(t => {
-          newCache.set(t.id, {
+          templatesCacheRef.current.set(t.id, {
             id: t.id,
             name: t.display_name || t.name,
             imageUrl: t.image_url,
@@ -104,15 +115,19 @@ export const Dashboard = () => {
             holiday: t.holiday
           });
         });
-        setTemplatesCache(newCache);
+        // 触发一次 UI 更新
+        setTemplatesVersion(v => v + 1);
       }
     } catch (err) {
       console.error('Failed to fetch templates:', err);
+    } finally {
+      // 清除正在获取的标记
+      uncachedIds.forEach(id => fetchingIdsRef.current.delete(id));
+      setLoadingTemplates(false);
     }
-    setLoadingTemplates(false);
-  }, [templatesCache]);
+  }, []); // 🔧 FIX: 空依赖数组，函数引用不会变化
 
-  // Fetch templates when collections change or when viewing a collection
+  // 🔧 FIX: 简化 useEffect，移除 fetchTemplatesForCollection 依赖
   useEffect(() => {
     if (activeTab === 'collections') {
       // Get all template IDs from all collections
@@ -121,7 +136,7 @@ export const Dashboard = () => {
         fetchTemplatesForCollection(allTemplateIds);
       }
     }
-  }, [activeTab, collections, fetchTemplatesForCollection]);
+  }, [activeTab, collections]); // 🔧 FIX: 移除 fetchTemplatesForCollection 依赖
 
   // Infinite scroll observer
   useEffect(() => {
@@ -148,7 +163,7 @@ export const Dashboard = () => {
     if (activeTab === 'history' && generations.length === 0) {
       refreshGenerations();
     }
-  }, [activeTab]);
+  }, [activeTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Overview Data (Sorted by newest)
   const recentGenerations = useMemo(() => {
@@ -225,10 +240,10 @@ export const Dashboard = () => {
 
   const activeCollection = collections.find(c => c.id === activeCollectionId);
 
-  // Helper to get template objects from IDs using cache
+  // 🔧 FIX: 使用 ref 获取 cache 数据
   const getCollectionItems = (col: Collection): Template[] => {
       return col.imageIds
-        .map(id => templatesCache.get(id))
+        .map(id => templatesCacheRef.current.get(id))
         .filter((t): t is Template => t !== undefined);
   };
 
@@ -520,56 +535,64 @@ export const Dashboard = () => {
                 )}
              </div>
 
-             {/* Generations Grid */}
+             {/* Grid of Images */}
              {loadingGenerations && generations.length === 0 ? (
-                <div className="flex items-center justify-center py-20">
-                   <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-                </div>
-             ) : (
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                   {filteredGenerations.length > 0 ? (
-                      groupGenerations(filteredGenerations).map((item, idx) => {
-                        if (Array.isArray(item)) {
-                          const group = item;
-                          return (
-                            <div 
-                              key={`history_group_${idx}`}
-                              onClick={() => { setSelectedGroup(group); setSelectedImage(group[0]); }}
-                              className="relative aspect-square cursor-pointer group"
-                            >
-                              <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
-                              <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
-                              <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
-                                <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
-                                <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
-                                  <Layers className="w-3 h-3" /> {group.length}
-                                </div>
-                                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
-                                </div>
-                              </div>
+               <div className="flex items-center justify-center py-20">
+                 <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+               </div>
+             ) : filteredGenerations.length > 0 ? (
+               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+                  {groupGenerations(filteredGenerations).map((item, idx) => {
+                    if (Array.isArray(item)) {
+                      const group = item;
+                      return (
+                        <div 
+                          key={`group_${idx}`}
+                          onClick={() => { setSelectedGroup(group); setSelectedImage(group[0]); }}
+                          className="relative aspect-square cursor-pointer group"
+                        >
+                          <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
+                          <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
+                          <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
+                            <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
+                            <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
+                              <Layers className="w-3 h-3" /> {group.length}
                             </div>
-                          );
-                        } else {
-                          return (
-                            <GenerationCard 
-                              key={item.id} 
-                              gen={item} 
-                              onClick={() => navigateToEdit(item)} 
-                            />
-                          );
-                        }
-                      })
+                            <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px]">
+                              <Button size="sm" variant="gradient" onClick={(e) => { e.stopPropagation(); navigateToEdit(group[0]); }}>
+                                <Edit className="w-3 h-3 mr-2" /> Edit in Studio
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    } else {
+                      return (
+                        <GenerationCard 
+                          key={item.id} 
+                          gen={item} 
+                          onClick={() => navigateToEdit(item)} 
+                        />
+                      );
+                    }
+                  })}
+               </div>
+             ) : (
+                <div className="text-center py-20 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20 bg-white dark:bg-slate-900/20">
+                   <p className="text-slate-500 mb-4">
+                      {generations.length === 0 
+                        ? "No images generated yet." 
+                        : "No results match your filters."}
+                   </p>
+                   {generations.length === 0 ? (
+                      <Button variant="ghost" className="text-purple-500 dark:text-purple-400" onClick={() => navigate('/')}>Start Creating</Button>
                    ) : (
-                      <div>
-                         <p>No results found for current filters.</p>
-                         <button
-                           onClick={() => { setSourceFilter('all'); setSearchQuery(''); }}
-                           className="mt-2 text-purple-500 hover:text-purple-600 dark:text-purple-400"
-                         >
-                           Clear filters
-                         </button>
-                      </div>
+                      <button
+                         onClick={() => { setSourceFilter('all'); setSearchQuery(''); }}
+                         className="text-purple-500 hover:text-purple-600 dark:text-purple-400 dark:hover:text-purple-300"
+                      >
+                         Clear filters
+                      </button>
                    )}
                 </div>
              )}
