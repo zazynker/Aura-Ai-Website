@@ -280,7 +280,9 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
     setLoadingGenerations(true);
     
     try {
-      const { data: gens, hasMore, error } = await fetchUserGenerations(GENERATIONS_PAGE_SIZE, offset);
+      // 计算当前页码（从1开始）
+const page = Math.floor(offset / GENERATIONS_PAGE_SIZE) + 1;
+const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATIONS_PAGE_SIZE);
       
       if (error) {
         console.error('Failed to fetch generations:', error);
