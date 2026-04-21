@@ -91,7 +91,7 @@ interface StoreContextType {
   saveBrowsingState: (updates: Partial<LocalStorageData['browsing']>) => void;
   saveModifySession: (session: ModifySession | null) => void;
   addGeneration: (gen: Omit<Generation, 'id' | 'createdAt'>) => Promise<void>;
-  addGenerations: (gens: Omit<Generation, 'id' | 'createdAt'>[]) => Promise<void>;
+  addGenerations: (gens: Omit<Generation, 'id' | 'createdAt'>[], newCreditsFromBackend?: number) => Promise<void>;
   deleteGeneration: (id: string) => Promise<void>;
   loadMoreGenerations: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
@@ -420,7 +420,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
   };
 
-  const addGenerations = async (gens: Omit<Generation, 'id' | 'createdAt'>[]) => {
+  const addGenerations = async (gens: Omit<Generation, 'id' | 'createdAt'>[], newCreditsFromBackend?: number) => {
     console.log('=== addGenerations called ===');
     console.log('Input gens:', gens);
     
@@ -431,14 +431,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     const userId = data.user.id;
     
-    // 分离 base64 图片和普通 URL
+    // 分离 base64 图片和普通 URL 图片
     const base64Gens = gens.filter(g => isBase64DataUrl(g.imageUrl));
     const regularGens = gens.filter(g => !isBase64DataUrl(g.imageUrl));
     
     console.log('Base64 images to upload:', base64Gens.length);
     console.log('Regular URLs:', regularGens.length);
     
-    // 上传 base64 图片到 Storage
+    // 上传 base64 图片到 Supabase Storage
     let uploadedGens: Omit<Generation, 'id' | 'createdAt'>[] = [];
     if (base64Gens.length > 0) {
       const base64Images = base64Gens.map(g => g.imageUrl);
@@ -484,24 +484,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         setDbGenerations(prev => [...savedGens, ...prev]);
       }
     }
-
-    // 扣除积分 - 同步到数据库
-    const totalCredits = gens.reduce((acc, g) => acc + g.creditsUsed, 0);
-    const { success, newCredits, error: deductError } = await deductUserCredits(totalCredits);
-    
-    if (success) {
-      console.log(`Credits deducted: ${totalCredits}. New balance: ${newCredits}`);
+  
+    // 更新前端积分显示（后端已经扣过积分，这里只更新显示）
+    if (typeof newCreditsFromBackend === 'number') {
+      console.log('Updating credits from backend:', newCreditsFromBackend);
       updateStorage((prev) => ({
         ...prev,
-        user: prev.user ? { ...prev.user, credits: newCredits } : null
-      }));
-      setData(getStorage());
-    } else {
-      console.error('Failed to deduct credits from database:', deductError);
-      // 即使数据库扣除失败，也更新本地（下次登录会同步）
-      updateStorage((prev) => ({
-        ...prev,
-        user: prev.user ? { ...prev.user, credits: prev.user.credits - totalCredits } : null
+        user: prev.user ? { ...prev.user, credits: newCreditsFromBackend } : null
       }));
       setData(getStorage());
     }
