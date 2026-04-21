@@ -126,9 +126,6 @@ export const StoreProvider = ({ children }: { children: ReactNode }) => {
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loadingCollections, setLoadingCollections] = useState(false);
 
-  // 🔧 NEW: 防止 Auth 重复初始化的 ref
-const hasInitializedRef = useRef(false);
-
   // Apply theme on mount
   useEffect(() => {
     applyTheme(data.theme);
@@ -140,7 +137,7 @@ const hasInitializedRef = useRef(false);
   // ============================================
   useEffect(() => {
     let mounted = true;
-    
+    let hasInitialized = false;
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
@@ -151,12 +148,12 @@ const hasInitializedRef = useRef(false);
       // SIGNED_IN: 用户登录时触发
       if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user) {
         // 防止重复初始化（INITIAL_SESSION 后可能紧跟 SIGNED_IN）
-        if (hasInitializedRef.current) {
+        if (hasInitialized) {
           console.log('Already initialized, skipping duplicate event');
           return;
         }
         
-        hasInitializedRef.current = true;  // 🔧 改用 ref
+        hasInitialized = true;
         
         try {
           await syncUserFromSession(session);
@@ -167,7 +164,7 @@ const hasInitializedRef = useRef(false);
         setAuthLoading(false);
         
       } else if (event === 'SIGNED_OUT') {
-        hasInitializedRef.current = false;  // 🔧 改用 ref
+        hasInitialized = false;
         updateStorage((prev) => ({ ...prev, user: null }));
         setData(getStorage());
         setDbGenerations([]);
@@ -199,11 +196,45 @@ const hasInitializedRef = useRef(false);
     
     console.log('Syncing user from session...');
     
-    // Fetch credits and plan from database
-    const { data: creditsData, error } = await fetchUserCredits();
+    // 添加超时机制，防止请求卡住导致页面无法加载
+    const timeoutPromise = new Promise<{ data: null; error: string }>((resolve) => {
+      setTimeout(() => resolve({ data: null, error: 'Timeout' }), 5000);
+    });
+    
+    // Fetch credits and plan from database - 使用 session.user.id 直接查询，避免再次调用 getUser()
+    const fetchCreditsPromise = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('users')
+          .select('credits, plan, max_credits, is_admin, is_whitelisted')
+          .eq('id', supaUser.id)
+          .single();
+        
+        if (error) {
+          console.error('Failed to fetch user credits:', error);
+          return { data: null, error: error.message };
+        }
+        
+        return { 
+          data: {
+            credits: data.credits,
+            plan: data.plan,
+            maxCredits: data.max_credits,
+            isAdmin: data.is_admin || false,
+            isWhitelisted: data.is_whitelisted ?? true
+          }, 
+          error: null 
+        };
+      } catch (err) {
+        console.error('Unexpected error fetching credits:', err);
+        return { data: null, error: 'Failed to fetch credits' };
+      }
+    })();
+    
+    const { data: creditsData, error } = await Promise.race([fetchCreditsPromise, timeoutPromise]);
     
     if (error) {
-      console.error('Failed to fetch user credits:', error);
+      console.warn('Credits fetch failed or timed out, using defaults:', error);
     }
 
     const user: User = {
@@ -226,9 +257,9 @@ const hasInitializedRef = useRef(false);
     updateStorage((prev) => ({ ...prev, user }));
     setData(getStorage());
 
-    // Fetch user data - 顺序执行避免并发
-    await fetchUserGenerationsData();
-    await fetchUserCollectionsData();
+    // Fetch user data - 不阻塞主流程，后台加载
+    fetchUserGenerationsData().catch(err => console.error('Failed to fetch generations:', err));
+    fetchUserCollectionsData().catch(err => console.error('Failed to fetch collections:', err));
   };
 
   // Fetch user generations from database

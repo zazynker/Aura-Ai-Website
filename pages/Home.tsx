@@ -109,35 +109,55 @@ export const Home = () => {
   useEffect(() => {
     const fetchTemplates = async () => {
       setLoading(true);
-      const { data, error } = await supabase
-        .from('templates')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(1000);
       
-      if (error) {
-        console.error('Error fetching templates:', error);
-        addToast('error', 'Failed to load templates');
-      } else {
-        console.log('Fetched templates:', data?.length);
-        // Map database fields to Template type
-        const mapped = (data || []).map(t => ({
-          id: t.id,
-          name: t.display_name || t.name,
-          imageUrl: t.image_url,
-          thumbUrl: t.thumb_url,
-          category: t.category,
-          tags: t.tags || [],
-          isPro: t.is_pro || false,
-          scene: t.scene,
-          model: t.model,
-          mood: t.mood,
-          holiday: t.holiday,
-          width: t.width || 896,      // 新增
-          height: t.height || 1344    // 新增
-        }));
-        setTemplates(mapped);
+      // 添加超时机制
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+      
+      try {
+        const { data, error } = await supabase
+          .from('templates')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(1000)
+          .abortSignal(controller.signal);
+        
+        clearTimeout(timeoutId);
+        
+        if (error) {
+          console.error('Error fetching templates:', error);
+          addToast('error', 'Failed to load templates. Please refresh.');
+        } else {
+          console.log('Fetched templates:', data?.length);
+          // Map database fields to Template type
+          const mapped = (data || []).map(t => ({
+            id: t.id,
+            name: t.display_name || t.name,
+            imageUrl: t.image_url,
+            thumbUrl: t.thumb_url,
+            category: t.category,
+            tags: t.tags || [],
+            isPro: t.is_pro || false,
+            scene: t.scene,
+            model: t.model,
+            mood: t.mood,
+            holiday: t.holiday,
+            width: t.width || 896,
+            height: t.height || 1344
+          }));
+          setTemplates(mapped);
+        }
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+          console.error('Template fetch timed out');
+          addToast('error', 'Loading timed out. Please refresh.');
+        } else {
+          console.error('Unexpected error:', err);
+          addToast('error', 'Failed to load templates.');
+        }
       }
+      
       setLoading(false);
     };
     
