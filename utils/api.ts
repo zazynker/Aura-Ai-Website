@@ -291,55 +291,46 @@ export async function fetchUserCollections(): Promise<{
   error: string | null 
 }> {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return { data: [], error: 'Not authenticated' };
-    }
-
-    // Fetch collections
-    const { data: collections, error: collectionsError } = await supabase
+    console.log('=== fetchUserCollections called ===');
+    
+    // 获取所有收藏夹
+    const { data: collections, error: colError } = await supabase
       .from('collections')
       .select('*')
-      .eq('user_id', user.id)
       .order('created_at', { ascending: true });
 
-    if (collectionsError) {
-      console.error('Error fetching collections:', collectionsError);
-      return { data: [], error: collectionsError.message };
+    if (colError) {
+      console.error('Error fetching collections:', colError);
+      return { data: [], error: colError.message };
     }
 
     if (!collections || collections.length === 0) {
       return { data: [], error: null };
     }
 
-    // Fetch all items for these collections
+    // 获取所有收藏夹中的项目
     const collectionIds = collections.map(c => c.id);
     const { data: items, error: itemsError } = await supabase
       .from('collection_items')
       .select('*')
-      .in('collection_id', collectionIds);
+      .in('collection_id', collectionIds)
+      .order('created_at', { ascending: false });
 
     if (itemsError) {
       console.error('Error fetching collection items:', itemsError);
     }
 
-    // Group items by collection
-    const itemsByCollection: Record<string, string[]> = {};
-    (items || []).forEach((item: DbCollectionItem) => {
-      if (!itemsByCollection[item.collection_id]) {
-        itemsByCollection[item.collection_id] = [];
-      }
-      itemsByCollection[item.collection_id].push(item.template_id);
-    });
-
-    // Build result
-    const result = collections.map((col: DbCollection) => ({
+    // 组装数据
+    const result: import('../types').Collection[] = collections.map((col: DbCollection) => ({
       id: col.id,
       userId: col.user_id,
       name: col.name,
-      imageIds: itemsByCollection[col.id] || []
+      imageIds: (items || [])
+        .filter((item: DbCollectionItem) => item.collection_id === col.id)
+        .map((item: DbCollectionItem) => item.template_id)
     }));
 
+    console.log('Fetched collections:', result.length);
     return { data: result, error: null };
   } catch (err) {
     console.error('Unexpected error:', err);
@@ -354,6 +345,8 @@ export async function createCollectionInDb(
   name: string
 ): Promise<{ data: import('../types').Collection | null; error: string | null }> {
   try {
+    console.log('=== createCollectionInDb called ===', name);
+    
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       return { data: null, error: 'Not authenticated' };
@@ -483,7 +476,6 @@ export interface UserCreditsData {
   plan: string;
   maxCredits: number;
   isAdmin: boolean;
-  isWhitelisted: boolean;  // 添加白名单字段
 }
 
 /**
@@ -501,7 +493,7 @@ export async function fetchUserCredits(): Promise<{
 
     const { data, error } = await supabase
       .from('users')
-      .select('credits, plan, max_credits, is_admin, is_whitelisted')  // 添加 is_whitelisted
+      .select('credits, plan, max_credits, is_admin')
       .eq('id', user.id)
       .single();
 
@@ -515,14 +507,13 @@ export async function fetchUserCredits(): Promise<{
           credits: 120,
           plan: 'Free',
           max_credits: 120,
-          is_admin: false,
-          is_whitelisted: true  // 新用户默认白名单
+          is_admin: false
         };
         
         const { data: newUser, error: insertError } = await supabase
           .from('users')
           .insert(newUserData)
-          .select('credits, plan, max_credits, is_admin, is_whitelisted')
+          .select('credits, plan, max_credits, is_admin')
           .single();
         
         if (insertError) {
@@ -535,8 +526,7 @@ export async function fetchUserCredits(): Promise<{
             credits: newUser.credits,
             plan: newUser.plan,
             maxCredits: newUser.max_credits,
-            isAdmin: newUser.is_admin || false,
-            isWhitelisted: newUser.is_whitelisted ?? true
+            isAdmin: newUser.is_admin || false
           }, 
           error: null 
         };
@@ -551,8 +541,7 @@ export async function fetchUserCredits(): Promise<{
         credits: data.credits,
         plan: data.plan,
         maxCredits: data.max_credits,
-        isAdmin: data.is_admin || false,
-        isWhitelisted: data.is_whitelisted ?? true  // 默认为 true
+        isAdmin: data.is_admin || false
       }, 
       error: null 
     };
@@ -564,7 +553,6 @@ export async function fetchUserCredits(): Promise<{
 
 /**
  * 扣除用户积分（原子操作）
- * 注意：现在主要由后端 generate.ts 处理扣分，这个函数保留用于其他场景
  */
 export async function deductUserCredits(
   amount: number
@@ -610,5 +598,48 @@ export async function deductUserCredits(
   } catch (err) {
     console.error('Unexpected error:', err);
     return { success: false, newCredits: 0, error: 'Failed to deduct credits' };
+  }
+}
+
+/**
+ * 添加用户积分（用于购买或奖励）
+ */
+export async function addUserCredits(
+  amount: number
+): Promise<{ success: boolean; newCredits: number; error: string | null }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { success: false, newCredits: 0, error: 'Not authenticated' };
+    }
+
+    const { data: currentData, error: fetchError } = await supabase
+      .from('users')
+      .select('credits')
+      .eq('id', user.id)
+      .single();
+
+    if (fetchError) {
+      console.error('Error fetching current credits:', fetchError);
+      return { success: false, newCredits: 0, error: fetchError.message };
+    }
+
+    const newCredits = currentData.credits + amount;
+
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ credits: newCredits })
+      .eq('id', user.id);
+
+    if (updateError) {
+      console.error('Error updating credits:', updateError);
+      return { success: false, newCredits: currentData.credits, error: updateError.message };
+    }
+
+    console.log(`Added ${amount} credits. New balance: ${newCredits}`);
+    return { success: true, newCredits, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, newCredits: 0, error: 'Failed to add credits' };
   }
 }

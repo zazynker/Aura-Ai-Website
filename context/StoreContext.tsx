@@ -8,48 +8,64 @@ import {
   deleteCollectionFromDb,
   addItemToCollectionInDb,
   removeItemFromCollectionInDb,
+  fetchUserCredits,
+  deductUserCredits
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
-import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
 
 // Credit calculation based on actual token usage
+// Formula: credits = ceil(tokensUsed / 50)
+// This ensures ~70% profit margin based on Gemini pricing ($60/M tokens for image output)
+
+// Estimated token consumption per image (for pre-generation credit check)
+// These are approximate values based on Gemini documentation
 export const ESTIMATED_TOKENS_PER_IMAGE = {
-  '512': 747,
-  '1K': 1120,
-  '2K': 1680,
-  '4K': 2520,
+  '512': 747,    // 512px
+  '1K': 1120,    // 1024px  
+  '2K': 1680,    // 2048px
+  '4K': 2520,    // 4096px
 } as const;
 
 export type Resolution = keyof typeof ESTIMATED_TOKENS_PER_IMAGE;
 
+// Estimate credits needed BEFORE generation (for UI display and pre-check)
+// This uses fixed estimates since we don't know actual consumption yet
 export const estimateCredits = (resolution: Resolution, imageCount: number): number => {
   const tokensPerImage = ESTIMATED_TOKENS_PER_IMAGE[resolution];
   const totalTokens = tokensPerImage * imageCount;
   return Math.ceil(totalTokens / 60);
 };
 
+// Calculate actual credits based on REAL token consumption from API
+// This is the authoritative calculation used after generation completes
+// Divisor of 60 yields ~65% profit margin
 export const calculateCreditsFromTokens = (tokensUsed: number): number => {
   if (tokensUsed <= 0) return 0;
   return Math.ceil(tokensUsed / 60);
 };
 
+// Legacy export for backwards compatibility (uses estimation)
 export const CREDIT_COSTS = {
-  '512': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['512'] / 60),
-  '1K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['1K'] / 60),
-  '2K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['2K'] / 60),
-  '4K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['4K'] / 60),
+  '512': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['512'] / 60),   // ~13
+  '1K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['1K'] / 60),     // ~19
+  '2K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['2K'] / 60),     // ~28
+  '4K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['4K'] / 60),     // ~42
 } as const;
 
+// Legacy function for backwards compatibility
 export const calculateCredits = (resolution: Resolution, imageCount: number): number => {
   return estimateCredits(resolution, imageCount);
 };
 
+// Simple ID generator
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
+// Helper: Check if a string is a base64 data URL (these are too large for localStorage)
 const isBase64DataUrl = (str: string): boolean => {
   return str?.startsWith('data:image/') && str.includes('base64');
 };
@@ -62,8 +78,10 @@ interface StoreContextType {
   collections: Collection[];
   theme: 'light' | 'dark';
   authLoading: boolean;
+  // Generations loading state
   loadingGenerations: boolean;
   hasMoreGenerations: boolean;
+  // Collections loading state
   loadingCollections: boolean;
   toggleTheme: () => void;
   logout: () => Promise<void>;
@@ -73,284 +91,200 @@ interface StoreContextType {
   saveBrowsingState: (updates: Partial<LocalStorageData['browsing']>) => void;
   saveModifySession: (session: ModifySession | null) => void;
   addGeneration: (gen: Omit<Generation, 'id' | 'createdAt'>) => Promise<void>;
-  addGenerations: (gens: Omit<Generation, 'id' | 'createdAt'>[], newCreditsFromBackend?: number) => Promise<void>;
+  addGenerations: (gens: Omit<Generation, 'id' | 'createdAt'>[]) => Promise<void>;
   deleteGeneration: (id: string) => Promise<void>;
   loadMoreGenerations: () => Promise<void>;
   refreshGenerations: () => Promise<void>;
+  // Collection Methods (数据库持久化)
   createCollection: (name: string) => Promise<void>;
   deleteCollection: (id: string) => Promise<void>;
-  addToCollection: (collectionId: string, templateId: string) => Promise<void>;
-  removeFromCollection: (collectionId: string, templateId: string) => Promise<void>;
-  refreshCollections: () => Promise<void>;
-  updateCreditsFromBackend: (newCredits: number) => void;
+  addToCollection: (collectionId: string, itemId: string) => Promise<void>;
+  removeFromCollection: (collectionId: string, itemId: string) => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
-export const useStore = () => {
-  const context = useContext(StoreContext);
-  if (!context) {
-    throw new Error('useStore must be used within a StoreProvider');
-  }
-  return context;
-};
-
-const applyTheme = (theme: 'light' | 'dark') => {
-  if (theme === 'dark') {
-    document.documentElement.classList.add('dark');
-  } else {
-    document.documentElement.classList.remove('dark');
-  }
-};
-
-export const StoreProvider = ({ children }: { children: ReactNode }) => {
+export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [data, setData] = useState<LocalStorageData>(getStorage());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [authLoading, setAuthLoading] = useState(true);
   
-  // Database-backed generations
+  // Database generations state
   const [dbGenerations, setDbGenerations] = useState<Generation[]>([]);
-  const [loadingGenerations, setLoadingGenerations] = useState(false);
+  const [generationsPage, setGenerationsPage] = useState(1);
   const [hasMoreGenerations, setHasMoreGenerations] = useState(true);
-  const [generationsOffset, setGenerationsOffset] = useState(0);
-  const GENERATIONS_PAGE_SIZE = 20;
+  const [loadingGenerations, setLoadingGenerations] = useState(false);
   
-  // Session-only generations (base64 images not yet uploaded)
+  // Session-only generations (base64 images not saved to DB)
   const [sessionGenerations, setSessionGenerations] = useState<Generation[]>([]);
   
-  // Combined generations (session + DB)
-  const generations = [...sessionGenerations, ...dbGenerations];
-  
-  // Collections
+  // Collections state (database-backed)
   const [collections, setCollections] = useState<Collection[]>([]);
   const [loadingCollections, setLoadingCollections] = useState(false);
 
-  // 🔧 FIX: 使用 useRef 防止重复初始化（普通变量在组件重渲染时会被重置）
-  const hasInitializedRef = useRef(false);
+  // --- Load Generations from Database ---
   
-  // 🔧 FIX: 追踪 generations 是否已经从 syncUser 加载过
-  const generationsLoadedRef = useRef(false);
-
-  // Apply theme on mount
-  useEffect(() => {
-    applyTheme(data.theme);
-  }, [data.theme]);
-
-  // ============================================
-  // 重构后的 Auth 初始化逻辑
-  // 只使用 onAuthStateChange，避免并发请求导致锁冲突
-  // ============================================
-  useEffect(() => {
-    let mounted = true;
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
-      
-      console.log('Auth state changed:', event);
-      
-      // INITIAL_SESSION: 页面首次加载时触发
-      // SIGNED_IN: 用户登录时触发
-      if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN') && session?.user) {
-        // 🔧 FIX: 使用 ref 防止重复初始化
-        if (hasInitializedRef.current) {
-          console.log('Already initialized, skipping duplicate event');
-          return;
-        }
-        
-        hasInitializedRef.current = true;
-        
-        try {
-          await syncUserFromSession(session);
-        } catch (error) {
-          console.error('Error syncing user:', error);
-        }
-        
-        setAuthLoading(false);
-        
-      } else if (event === 'SIGNED_OUT') {
-        // 🔧 FIX: 登出时重置 ref
-        hasInitializedRef.current = false;
-        generationsLoadedRef.current = false;
-        
-        updateStorage((prev) => ({ ...prev, user: null }));
-        setData(getStorage());
-        setDbGenerations([]);
-        setSessionGenerations([]);
-        setCollections([]);
-        setGenerationsOffset(0);
-        setHasMoreGenerations(true);
-        setAuthLoading(false);
-        
-      } else if (event === 'TOKEN_REFRESHED') {
-        console.log('Token refreshed');
-        // Token 刷新时不需要重新获取用户数据
-        
-      } else {
-        // 其他情况（如未登录状态的 INITIAL_SESSION）
-        setAuthLoading(false);
-      }
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  // Sync user data from Supabase session
-  const syncUserFromSession = async (session: Session) => {
-    const supaUser = session.user;
-    
-    console.log('Syncing user from session...');
-    
-    // 直接查询用户数据，不使用 fetchUserCredits（避免额外的 getUser 调用）
-    let creditsData = null;
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('credits, plan, max_credits, is_admin, is_whitelisted')
-        .eq('id', supaUser.id)
-        .single();
-      
-      if (error) {
-        console.error('Failed to fetch user credits:', error);
-      } else {
-        creditsData = {
-          credits: data.credits,
-          plan: data.plan,
-          maxCredits: data.max_credits,
-          isAdmin: data.is_admin || false,
-          isWhitelisted: data.is_whitelisted ?? true
-        };
-      }
-    } catch (err) {
-      console.error('Unexpected error fetching credits:', err);
-    }
-
-    const user: User = {
-      id: supaUser.id,
-      email: supaUser.email || '',
-      name: supaUser.user_metadata?.full_name || supaUser.email?.split('@')[0] || 'User',
-      avatar: supaUser.user_metadata?.avatar_url,
-      credits: creditsData?.credits ?? 0,
-      plan: (creditsData?.plan as 'Free' | 'Pro') ?? 'Free',
-      maxCredits: creditsData?.maxCredits ?? 120,
-      isAdmin: creditsData?.isAdmin ?? false,
-      isWhitelisted: creditsData?.isWhitelisted ?? true,
-    };
-
-    console.log('=== User synced from database ===');
-    console.log('Credits from DB:', user.credits);
-    console.log('Plan from DB:', user.plan);
-    console.log('Is Admin:', user.isAdmin);
-
-    updateStorage((prev) => ({ ...prev, user }));
-    setData(getStorage());
-
-    // 🔧 FIX: 顺序执行数据加载，使用 await 确保完成
-    // 并标记已加载，防止 Dashboard 重复触发
-    generationsLoadedRef.current = true;
-    
-    try {
-      await fetchUserGenerationsData(0, false);
-    } catch (err) {
-      console.error('Failed to fetch generations:', err);
-    }
-    
-    try {
-      await fetchUserCollectionsData();
-    } catch (err) {
-      console.error('Failed to fetch collections:', err);
-    }
-  };
-
-  // Fetch user generations from database
-  // 🔧 FIX: 添加防重复请求的逻辑
-  const fetchingGenerationsRef = useRef(false);
-  
-  const fetchUserGenerationsData = async (offset = 0, append = false) => {
-    // 🔧 FIX: 防止并发请求
-    if (fetchingGenerationsRef.current && offset === 0 && !append) {
-      console.log('fetchUserGenerations already in progress, skipping');
-      return;
-    }
-    
-    console.log('=== fetchUserGenerations called ===');
-    fetchingGenerationsRef.current = true;
+  const loadGenerations = useCallback(async (page: number = 1, reset: boolean = false) => {
+    if (loadingGenerations) return;
     setLoadingGenerations(true);
     
     try {
-      // 计算当前页码（从1开始）
-const page = Math.floor(offset / GENERATIONS_PAGE_SIZE) + 1;
-const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATIONS_PAGE_SIZE);
+      const { data: generations, hasMore, error } = await fetchUserGenerations(page, 20);
       
       if (error) {
-        console.error('Failed to fetch generations:', error);
+        console.error('Failed to load generations:', error);
       } else {
-        if (append) {
-          setDbGenerations(prev => [...prev, ...gens]);
-        } else {
-          setDbGenerations(gens);
-        }
+        setDbGenerations(prev => reset ? generations : [...prev, ...generations]);
         setHasMoreGenerations(hasMore);
-        setGenerationsOffset(offset + gens.length);
-        console.log('Fetched generations:', gens.length);
+        setGenerationsPage(page);
       }
     } catch (err) {
-      console.error('Error in fetchUserGenerationsData:', err);
+      console.error('Error loading generations:', err);
     }
     
     setLoadingGenerations(false);
-    fetchingGenerationsRef.current = false;
-  };
+  }, [loadingGenerations]);
 
-  // Load more generations (pagination)
-  const loadMoreGenerations = async () => {
-    if (loadingGenerations || !hasMoreGenerations || fetchingGenerationsRef.current) return;
-    await fetchUserGenerationsData(generationsOffset, true);
-  };
+  const loadMoreGenerations = useCallback(async () => {
+    if (!hasMoreGenerations || loadingGenerations) return;
+    await loadGenerations(generationsPage + 1, false);
+  }, [hasMoreGenerations, loadingGenerations, generationsPage, loadGenerations]);
 
-  // Refresh generations (reload from start)
-  // 🔧 FIX: 检查是否已经加载过
-  const refreshGenerations = async () => {
-    // 如果已经从 syncUser 加载过且有数据，不重复加载
-    if (generationsLoadedRef.current && dbGenerations.length > 0) {
-      console.log('Generations already loaded, skipping refresh');
-      return;
-    }
-    
-    setGenerationsOffset(0);
+  const refreshGenerations = useCallback(async () => {
+    setGenerationsPage(1);
     setHasMoreGenerations(true);
-    await fetchUserGenerationsData(0, false);
-  };
+    await loadGenerations(1, true);
+  }, [loadGenerations]);
 
-  // Fetch user collections
-  const fetchUserCollectionsData = async () => {
-    console.log('=== fetchUserCollections called ===');
+  // --- Load Collections from Database ---
+  
+  const loadCollections = useCallback(async () => {
+    if (loadingCollections) return;
     setLoadingCollections(true);
     
     try {
       const { data: cols, error } = await fetchUserCollections();
       
       if (error) {
-        console.error('Failed to fetch collections:', error);
+        console.error('Failed to load collections:', error);
       } else {
-        setCollections(cols);
-        console.log('Fetched collections:', cols.length);
+        // 如果没有 Favorites 收藏夹，创建一个默认的
+        const hasFavorites = cols.some(c => c.name === 'Favorites');
+        if (!hasFavorites && cols.length === 0) {
+          // 创建默认的 Favorites 收藏夹
+          const { data: newCol } = await createCollectionInDb('Favorites');
+          if (newCol) {
+            setCollections([newCol, ...cols]);
+          } else {
+            setCollections(cols);
+          }
+        } else {
+          setCollections(cols);
+        }
       }
     } catch (err) {
-      console.error('Error in fetchUserCollectionsData:', err);
+      console.error('Error loading collections:', err);
     }
     
     setLoadingCollections(false);
+  }, [loadingCollections]);
+
+  // --- Supabase Auth ---
+
+  const syncUserFromSession = async (session: Session) => {
+    const supaUser = session.user;
+    
+    // 先从数据库获取用户积分信息
+    const { data: creditsData } = await fetchUserCredits();
+    
+    // 验证 plan 是否为有效值
+    const validPlans = ['Free', 'Pro'] as const;
+    const dbPlan = creditsData?.plan;
+    const plan = (dbPlan && validPlans.includes(dbPlan as any)) 
+      ? (dbPlan as 'Free' | 'Pro') 
+      : 'Free';
+    
+    const newUser: User = {
+      id: supaUser.id,
+      email: supaUser.email || '',
+      name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
+      plan: plan,
+      credits: creditsData?.credits ?? 120,  // 从数据库读取，如果没有则默认 120
+      maxCredits: creditsData?.maxCredits ?? 120,
+      avatar: supaUser.user_metadata?.avatar_url ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
+      isAdmin: creditsData?.isAdmin ?? false,  // 新增：从数据库读取 admin 状态
+    };
+
+    console.log('=== User synced from database ===');
+    console.log('Credits from DB:', creditsData?.credits);
+    console.log('Plan from DB:', creditsData?.plan);
+    console.log('Is Admin:', creditsData?.isAdmin);
+
+    updateStorage((prev) => ({
+      ...prev,
+      user: newUser
+    }));
+    setData(getStorage());
+    
+    // Load user's data from database
+    await Promise.all([
+      loadGenerations(1, true),
+      loadCollections()
+    ]);
   };
 
-  // Refresh collections
-  const refreshCollections = async () => {
-    await fetchUserCollectionsData();
-  };
+  useEffect(() => {
+    // 1. 获取初始 session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        syncUserFromSession(session);
+      }
+      setAuthLoading(false);
+    });
+
+    // 2. 监听 auth 状态变化
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (session?.user) {
+          syncUserFromSession(session);
+        } else {
+          // 用户登出了
+          updateStorage((prev) => ({
+            ...prev,
+            user: null,
+            browsing: { ...prev.browsing, modifySession: null }
+          }));
+          setData(getStorage());
+          setSessionGenerations([]);
+          setDbGenerations([]);
+          setCollections([]);
+          setGenerationsPage(1);
+          setHasMoreGenerations(true);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   // --- Theme ---
+
+  useEffect(() => {
+    const handleStorage = () => setData(getStorage());
+    window.addEventListener('storage-update', handleStorage);
+    applyTheme(data.theme);
+    return () => window.removeEventListener('storage-update', handleStorage);
+  }, []);
+
+  const applyTheme = (theme: 'light' | 'dark') => {
+    const root = window.document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+  };
 
   const toggleTheme = () => {
     const newTheme = data.theme === 'dark' ? 'light' : 'dark';
@@ -395,16 +329,6 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
     setData(getStorage());
   };
 
-  // --- Update credits from backend ---
-  const updateCreditsFromBackend = (newCredits: number) => {
-    console.log('Updating credits from backend:', newCredits);
-    updateStorage((prev) => ({
-      ...prev,
-      user: prev.user ? { ...prev.user, credits: newCredits } : null,
-    }));
-    setData(getStorage());
-  };
-
   // --- Browsing State ---
 
   const saveBrowsingState = (updates: Partial<LocalStorageData['browsing']>) => {
@@ -416,6 +340,7 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
   };
 
   const saveModifySession = (session: ModifySession | null) => {
+    // Clean session before saving - remove base64 images
     let cleanSession = session;
     if (session) {
       cleanSession = {
@@ -439,6 +364,7 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
     if (!data.user) return;
     const genWithUser = { ...gen, userId: data.user.id };
 
+    // If it's a base64 image, only keep in session state (can't save to DB)
     if (isBase64DataUrl(gen.imageUrl)) {
       const sessionGen: Generation = {
         ...genWithUser,
@@ -446,9 +372,25 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
         createdAt: Date.now(),
       };
       setSessionGenerations(prev => [sessionGen, ...prev]);
+      
+      // Deduct credits - sync to database
+      const { success, newCredits } = await deductUserCredits(gen.creditsUsed);
+      if (success) {
+        updateStorage((prev) => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, credits: newCredits } : null
+        }));
+      } else {
+        updateStorage((prev) => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
+        }));
+      }
+      setData(getStorage());
       return;
     }
 
+    // Save to database
     const { data: savedGen, error } = await saveGenerationToDb(genWithUser);
     
     if (error) {
@@ -458,11 +400,27 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
     }
 
     if (savedGen) {
+      // Add to local state immediately (at the beginning)
       setDbGenerations(prev => [savedGen, ...prev]);
+      
+      // Deduct credits - sync to database
+      const { success, newCredits } = await deductUserCredits(gen.creditsUsed);
+      if (success) {
+        updateStorage((prev) => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, credits: newCredits } : null
+        }));
+      } else {
+        updateStorage((prev) => ({
+          ...prev,
+          user: prev.user ? { ...prev.user, credits: prev.user.credits - gen.creditsUsed } : null
+        }));
+      }
+      setData(getStorage());
     }
   };
 
-  const addGenerations = async (gens: Omit<Generation, 'id' | 'createdAt'>[], newCreditsFromBackend?: number) => {
+  const addGenerations = async (gens: Omit<Generation, 'id' | 'createdAt'>[]) => {
     console.log('=== addGenerations called ===');
     console.log('Input gens:', gens);
     
@@ -473,12 +431,14 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
     
     const userId = data.user.id;
     
+    // 分离 base64 图片和普通 URL
     const base64Gens = gens.filter(g => isBase64DataUrl(g.imageUrl));
     const regularGens = gens.filter(g => !isBase64DataUrl(g.imageUrl));
     
     console.log('Base64 images to upload:', base64Gens.length);
     console.log('Regular URLs:', regularGens.length);
     
+    // 上传 base64 图片到 Storage
     let uploadedGens: Omit<Generation, 'id' | 'createdAt'>[] = [];
     if (base64Gens.length > 0) {
       const base64Images = base64Gens.map(g => g.imageUrl);
@@ -489,6 +449,7 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
         addToast('error', `Failed to upload ${errors.length} image(s)`);
       }
       
+      // 将上传成功的图片与原始数据匹配
       uploadedGens = base64Gens
         .map((gen, index) => {
           const url = urls[index];
@@ -502,6 +463,7 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
       console.log('Successfully uploaded and matched:', uploadedGens.length);
     }
     
+    // 合并上传后的图片和普通 URL 图片
     const allGensToSave = [
       ...uploadedGens,
       ...regularGens.map(g => ({ ...g, userId }))
@@ -509,6 +471,7 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
     
     console.log('Total gens to save to DB:', allGensToSave.length);
     
+    // 保存到数据库
     if (allGensToSave.length > 0) {
       console.log('Calling saveGenerationsToDb...');
       const { data: savedGens, error } = await saveGenerationsToDb(allGensToSave);
@@ -522,23 +485,37 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
       }
     }
 
-    if (typeof newCreditsFromBackend === 'number') {
-      console.log('Updating credits from backend response:', newCreditsFromBackend);
+    // 扣除积分 - 同步到数据库
+    const totalCredits = gens.reduce((acc, g) => acc + g.creditsUsed, 0);
+    const { success, newCredits, error: deductError } = await deductUserCredits(totalCredits);
+    
+    if (success) {
+      console.log(`Credits deducted: ${totalCredits}. New balance: ${newCredits}`);
       updateStorage((prev) => ({
         ...prev,
-        user: prev.user ? { ...prev.user, credits: newCreditsFromBackend } : null
+        user: prev.user ? { ...prev.user, credits: newCredits } : null
+      }));
+      setData(getStorage());
+    } else {
+      console.error('Failed to deduct credits from database:', deductError);
+      // 即使数据库扣除失败，也更新本地（下次登录会同步）
+      updateStorage((prev) => ({
+        ...prev,
+        user: prev.user ? { ...prev.user, credits: prev.user.credits - totalCredits } : null
       }));
       setData(getStorage());
     }
   };
 
   const deleteGeneration = async (id: string) => {
+    // Check if it's a session-only generation
     if (id.startsWith('session_')) {
       setSessionGenerations(prev => prev.filter(g => g.id !== id));
       addToast('success', 'Image deleted');
       return;
     }
 
+    // Delete from database
     const { success, error } = await deleteGenerationFromDb(id);
     
     if (error) {
@@ -576,20 +553,24 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
   };
 
   const deleteCollection = async (id: string) => {
+    // 找到收藏夹
     const collection = collections.find(c => c.id === id);
     if (!collection) return;
     
+    // 不允许删除 Favorites
     if (collection.name === 'Favorites') {
       addToast('info', 'Cannot delete the Favorites collection');
       return;
     }
 
+    // Optimistic update
     setCollections(prev => prev.filter(c => c.id !== id));
 
     const { success, error } = await deleteCollectionFromDb(id);
     
     if (error || !success) {
       console.error('Failed to delete collection:', error);
+      // Revert on error
       setCollections(prev => [...prev, collection]);
       addToast('error', 'Failed to delete collection');
       return;
@@ -604,15 +585,17 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
       return;
     }
 
+    // 检查是否已存在
     const collection = collections.find(c => c.id === collectionId);
     if (collection && collection.imageIds.includes(itemId)) {
       addToast('info', 'Already in collection');
       return;
     }
 
+    // Optimistic update
     setCollections(prev => prev.map(c => 
       c.id === collectionId 
-        ? { ...c, imageIds: [...c.imageIds, itemId] }
+        ? { ...c, imageIds: [itemId, ...c.imageIds] } 
         : c
     ));
 
@@ -620,9 +603,10 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
     
     if (error || !success) {
       console.error('Failed to add to collection:', error);
+      // Revert on error
       setCollections(prev => prev.map(c => 
         c.id === collectionId 
-          ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) }
+          ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) } 
           : c
       ));
       addToast('error', 'Failed to add to collection');
@@ -633,9 +617,14 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
   };
 
   const removeFromCollection = async (collectionId: string, itemId: string) => {
+    // 找到原始状态用于回滚
+    const collection = collections.find(c => c.id === collectionId);
+    if (!collection) return;
+
+    // Optimistic update
     setCollections(prev => prev.map(c => 
       c.id === collectionId 
-        ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) }
+        ? { ...c, imageIds: c.imageIds.filter(id => id !== itemId) } 
         : c
     ));
 
@@ -643,7 +632,12 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
     
     if (error || !success) {
       console.error('Failed to remove from collection:', error);
-      await refreshCollections();
+      // Revert on error
+      setCollections(prev => prev.map(c => 
+        c.id === collectionId 
+          ? { ...c, imageIds: [...c.imageIds, itemId] } 
+          : c
+      ));
       addToast('error', 'Failed to remove from collection');
       return;
     }
@@ -651,13 +645,18 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
     addToast('info', 'Removed from collection');
   };
 
+  // Combine database generations with session-only generations
+  const userGenerations = data.user
+    ? [...sessionGenerations, ...dbGenerations]
+    : [];
+
   return (
     <StoreContext.Provider
       value={{
         user: data.user,
         toasts,
         browsing: data.browsing,
-        generations,
+        generations: userGenerations,
         collections,
         theme: data.theme,
         authLoading,
@@ -680,11 +679,15 @@ const { data: gens, hasMore, error } = await fetchUserGenerations(page, GENERATI
         deleteCollection,
         addToCollection,
         removeFromCollection,
-        refreshCollections,
-        updateCreditsFromBackend,
       }}
     >
       {children}
     </StoreContext.Provider>
   );
+};
+
+export const useStore = () => {
+  const context = useContext(StoreContext);
+  if (!context) throw new Error('useStore must be used within StoreProvider');
+  return context;
 };
