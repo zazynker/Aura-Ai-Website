@@ -15,11 +15,23 @@ import { Terms } from './pages/Terms';
 import { About } from './pages/About';
 import { Footer } from './components/Footer';
 import { CreditRules } from './pages/CreditRules';
+import { AuthCallback } from './pages/AuthCallback';
 import Admin from './pages/Admin';
 
 const AppContent = () => {
   const location = useLocation();
-  const isAuthPage = ['/login', '/signup', '/forgot-password', '/reset-password'].includes(location.pathname);
+  
+  // 处理 OAuth 错误回调（用户取消登录等）- 防止白屏
+  React.useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const error = searchParams.get('error');
+    
+    if (error === 'access_denied') {
+      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+    }
+  }, []);
+
+  const isAuthPage = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth/callback'].includes(location.pathname);
   const isEditorPage = location.pathname === '/modify';
   const isAdminPage = location.pathname === '/admin';
   const hideFooter = isAuthPage || isEditorPage || isAdminPage;
@@ -36,6 +48,7 @@ const AppContent = () => {
         <Route path="/signup" element={<Login isSignup />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/privacy" element={<Privacy />} />
