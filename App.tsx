@@ -23,11 +23,10 @@ const AppContent = () => {
   
   // 处理 OAuth 错误回调（用户取消登录等）- 防止白屏
   React.useEffect(() => {
-    const searchParams = new URLSearchParams(window.location.search);
-    const error = searchParams.get('error');
-    
-    if (error === 'access_denied') {
-      window.history.replaceState({}, '', window.location.pathname + window.location.hash);
+    // 检查 hash 中是否包含 error=access_denied（用户取消 Google 登录）
+    if (window.location.hash.includes('error=access_denied')) {
+      window.location.href = '/#/login';
+      return;
     }
   }, []);
 
