@@ -1,41 +1,42 @@
 import { useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../utils/supabase';
 
 export const AuthCallback = () => {
   const navigate = useNavigate();
-  const location = useLocation();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     const handleCallback = async () => {
-      // 检查 URL 中是否有错误参数（用户取消登录等情况）
-      const hashParams = new URLSearchParams(location.hash.replace('#', ''));
-      const error = hashParams.get('error');
-
+      // 检查是否有错误参数（用户取消授权）
+      const error = searchParams.get('error');
+      const errorDescription = searchParams.get('error_description');
+      
       if (error) {
-        console.log('Auth cancelled or error:', error);
-        navigate('/', { replace: true });
+        console.log('OAuth cancelled or error:', error, errorDescription);
+        // 用户取消了授权，返回登录页
+        navigate('/#/login', { replace: true });
         return;
       }
 
-      // 正常处理 session
+      // 正常流程：获取 session
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError) {
-        console.error('Session error:', sessionError);
-        navigate('/login', { replace: true });
+        console.error('Auth callback error:', sessionError);
+        navigate('/#/login', { replace: true });
         return;
       }
 
       if (session) {
-        navigate('/dashboard', { replace: true });
+        navigate('/#/dashboard', { replace: true });
       } else {
-        navigate('/login', { replace: true });
+        navigate('/#/login', { replace: true });
       }
     };
 
     handleCallback();
-  }, [navigate, location]);
+  }, [navigate, searchParams]);
 
   return (
     <div className="min-h-screen flex items-center justify-center">
