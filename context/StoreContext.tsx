@@ -387,7 +387,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     }
 
     // Save to database
-    const { data: savedGen, error } = await saveGenerationToDb(genWithUser);
+    const { data: savedGen, error } = await saveGenerationToDb(genWithUser, data.user?.plan || 'Free');
     
     if (error) {
       console.error('Failed to save generation:', error);
@@ -465,8 +465,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     // 保存到数据库
     if (allGensToSave.length > 0) {
       console.log('Calling saveGenerationsToDb...');
-      const { data: savedGens, error } = await saveGenerationsToDb(allGensToSave);
-      
+      const { data: savedGens, error, deletedOldCount } = await saveGenerationsToDb(allGensToSave, data.user?.plan || 'Free');
+      if (deletedOldCount && deletedOldCount > 0) {
+        console.log(`[GenerationLimit] Auto-deleted ${deletedOldCount} old records`);
+      }
       if (error) {
         console.error('Failed to save generations:', error);
         addToast('error', 'Failed to save to history');

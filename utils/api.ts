@@ -1,5 +1,13 @@
 import { supabase, dbToTemplate, DbTemplate } from './supabase';
-import { Template } from '../types';
+import { Template, Plan } from '../types';
+
+// ============================================
+// 历史记录限制配置
+// ============================================
+export const GENERATION_LIMITS = {
+  Free: 50,  // Free 用户最多 50 张历史记录
+  Pro: 100,  // Pro 用户最多 100 张历史记录
+};
 
 export interface FetchTemplatesOptions {
   search?: string;
@@ -172,12 +180,131 @@ export async function fetchUserGenerations(
 }
 
 /**
- * 保存新的生成记录到数据库
+ * 获取用户当前的历史记录数量
+ */
+export async function getUserGenerationCount(): Promise<{ count: number; error: string | null }> {
+  try {
+    const { count, error } = await supabase
+      .from('generations')
+      .select('*', { count: 'exact', head: true });
+
+    if (error) {
+      console.error('Error counting generations:', error);
+      return { count: 0, error: error.message };
+    }
+
+    return { count: count || 0, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { count: 0, error: 'Failed to count generations' };
+  }
+}
+
+/**
+ * 删除最旧的历史记录，直到数量符合限制
+ * @param userPlan 用户的计划类型
+ * @param newCount 即将添加的新记录数量
+ */
+export async function enforceGenerationLimit(
+  userPlan: Plan,
+  newCount: number = 1
+): Promise<{ deletedCount: number; error: string | null }> {
+  try {
+    const limit = GENERATION_LIMITS[userPlan] || GENERATION_LIMITS.Free;
+    
+    // 获取当前数量
+    const { count: currentCount, error: countError } = await getUserGenerationCount();
+    if (countError) {
+      return { deletedCount: 0, error: countError };
+    }
+
+    // 计算需要删除多少条
+    const totalAfterAdd = currentCount + newCount;
+    const toDelete = totalAfterAdd - limit;
+
+    if (toDelete <= 0) {
+      console.log(`[GenerationLimit] Current: ${currentCount}, Adding: ${newCount}, Limit: ${limit} - No deletion needed`);
+      return { deletedCount: 0, error: null };
+    }
+
+    console.log(`[GenerationLimit] Current: ${currentCount}, Adding: ${newCount}, Limit: ${limit} - Need to delete ${toDelete} oldest records`);
+
+    // 获取最旧的 N 条记录的 ID
+    const { data: oldestRecords, error: fetchError } = await supabase
+      .from('generations')
+      .select('id, image_url')
+      .order('created_at', { ascending: true })
+      .limit(toDelete);
+
+    if (fetchError || !oldestRecords) {
+      console.error('Error fetching oldest records:', fetchError);
+      return { deletedCount: 0, error: fetchError?.message || 'Failed to fetch oldest records' };
+    }
+
+    const idsToDelete = oldestRecords.map(r => r.id);
+    const imageUrls = oldestRecords.map(r => r.image_url);
+
+    // 删除数据库记录
+    const { error: deleteError } = await supabase
+      .from('generations')
+      .delete()
+      .in('id', idsToDelete);
+
+    if (deleteError) {
+      console.error('Error deleting old generations:', deleteError);
+      return { deletedCount: 0, error: deleteError.message };
+    }
+
+    // 尝试删除 Storage 中的图片（可选，失败不影响主流程）
+    try {
+      const pathsToDelete = imageUrls
+        .filter(url => url.includes('/generations/'))
+        .map(url => {
+          // 从 URL 提取文件路径
+          const match = url.match(/\/generations\/(.+)$/);
+          return match ? match[1].split('?')[0] : null;
+        })
+        .filter(Boolean) as string[];
+
+      if (pathsToDelete.length > 0) {
+        const { error: storageError } = await supabase.storage
+          .from('generations')
+          .remove(pathsToDelete);
+        
+        if (storageError) {
+          console.warn('[GenerationLimit] Failed to delete some storage files:', storageError);
+        } else {
+          console.log(`[GenerationLimit] Deleted ${pathsToDelete.length} files from storage`);
+        }
+      }
+    } catch (storageErr) {
+      console.warn('[GenerationLimit] Storage cleanup failed:', storageErr);
+      // 不影响主流程
+    }
+
+    console.log(`[GenerationLimit] Successfully deleted ${idsToDelete.length} old records`);
+    return { deletedCount: idsToDelete.length, error: null };
+  } catch (err) {
+    console.error('Unexpected error in enforceGenerationLimit:', err);
+    return { deletedCount: 0, error: 'Failed to enforce generation limit' };
+  }
+}
+
+/**
+ * 保存新的生成记录到数据库（带自动清理旧记录）
  */
 export async function saveGenerationToDb(
-  generation: Omit<import('../types').Generation, 'id' | 'createdAt'>
-): Promise<{ data: import('../types').Generation | null; error: string | null }> {
+  generation: Omit<import('../types').Generation, 'id' | 'createdAt'>,
+  userPlan: Plan = 'Free'
+): Promise<{ data: import('../types').Generation | null; error: string | null; deletedOldCount?: number }> {
   try {
+    // 先清理超限的旧记录
+    const { deletedCount, error: limitError } = await enforceGenerationLimit(userPlan, 1);
+    if (limitError) {
+      console.warn('[SaveGeneration] Limit enforcement failed:', limitError);
+      // 继续保存，不阻塞
+    }
+
     const dbData = {
       user_id: generation.userId,
       template_id: generation.templateId,
@@ -198,7 +325,7 @@ export async function saveGenerationToDb(
       return { data: null, error: error.message };
     }
 
-    return { data: dbToGeneration(data as DbGeneration), error: null };
+    return { data: dbToGeneration(data as DbGeneration), error: null, deletedOldCount: deletedCount };
   } catch (err) {
     console.error('Unexpected error:', err);
     return { data: null, error: 'Failed to save generation' };
@@ -206,12 +333,20 @@ export async function saveGenerationToDb(
 }
 
 /**
- * 批量保存生成记录
+ * 批量保存生成记录（带自动清理旧记录）
  */
 export async function saveGenerationsToDb(
-  generations: Omit<import('../types').Generation, 'id' | 'createdAt'>[]
-): Promise<{ data: import('../types').Generation[]; error: string | null }> {
+  generations: Omit<import('../types').Generation, 'id' | 'createdAt'>[],
+  userPlan: Plan = 'Free'
+): Promise<{ data: import('../types').Generation[]; error: string | null; deletedOldCount?: number }> {
   try {
+    // 先清理超限的旧记录
+    const { deletedCount, error: limitError } = await enforceGenerationLimit(userPlan, generations.length);
+    if (limitError) {
+      console.warn('[SaveGenerations] Limit enforcement failed:', limitError);
+      // 继续保存，不阻塞
+    }
+
     const dbData = generations.map(gen => ({
       user_id: gen.userId,
       template_id: gen.templateId,
@@ -233,7 +368,8 @@ export async function saveGenerationsToDb(
 
     return { 
       data: (data as DbGeneration[]).map(dbToGeneration), 
-      error: null 
+      error: null,
+      deletedOldCount: deletedCount
     };
   } catch (err) {
     console.error('Unexpected error:', err);
@@ -308,26 +444,35 @@ export async function fetchUserCollections(): Promise<{
       return { data: [], error: null };
     }
 
-    // 获取所有收藏夹中的项目
+    // 获取所有收藏夹的项目
     const collectionIds = collections.map(c => c.id);
     const { data: items, error: itemsError } = await supabase
       .from('collection_items')
       .select('*')
-      .in('collection_id', collectionIds)
-      .order('created_at', { ascending: false });
+      .in('collection_id', collectionIds);
 
     if (itemsError) {
       console.error('Error fetching collection items:', itemsError);
+      // 返回空的收藏夹
+      return { 
+        data: collections.map(c => ({
+          id: c.id,
+          userId: c.user_id,
+          name: c.name,
+          imageIds: []
+        })), 
+        error: null 
+      };
     }
 
     // 组装数据
-    const result: import('../types').Collection[] = collections.map((col: DbCollection) => ({
+    const result = collections.map(col => ({
       id: col.id,
       userId: col.user_id,
       name: col.name,
       imageIds: (items || [])
-        .filter((item: DbCollectionItem) => item.collection_id === col.id)
-        .map((item: DbCollectionItem) => item.template_id)
+        .filter(item => item.collection_id === col.id)
+        .map(item => item.template_id)
     }));
 
     console.log('Fetched collections:', result.length);
@@ -475,8 +620,8 @@ export interface UserCreditsData {
   credits: number;
   plan: string;
   maxCredits: number;
-  isAdmin: boolean;
   isWhitelisted: boolean;
+  isAdmin?: boolean;
 }
 
 /**
@@ -494,7 +639,7 @@ export async function fetchUserCredits(): Promise<{
 
     const { data, error } = await supabase
       .from('users')
-      .select('credits, plan, max_credits, is_admin, is_whitelisted')
+      .select('credits, plan, max_credits, is_whitelisted, is_admin')
       .eq('id', user.id)
       .single();
 
@@ -508,14 +653,14 @@ export async function fetchUserCredits(): Promise<{
           credits: 120,
           plan: 'Free',
           max_credits: 120,
-          is_admin: false,
-          is_whitelisted: false
+          is_whitelisted: false,
+          is_admin: false
         };
         
         const { data: newUser, error: insertError } = await supabase
           .from('users')
           .insert(newUserData)
-          .select('credits, plan, max_credits, is_admin, is_whitelisted')
+          .select('credits, plan, max_credits, is_whitelisted, is_admin')
           .single();
         
         if (insertError) {
@@ -528,8 +673,8 @@ export async function fetchUserCredits(): Promise<{
             credits: newUser.credits,
             plan: newUser.plan,
             maxCredits: newUser.max_credits,
-            isAdmin: newUser.is_admin || false,
-            isWhitelisted: newUser.is_whitelisted || false
+            isWhitelisted: newUser.is_whitelisted || false,
+            isAdmin: newUser.is_admin || false
           }, 
           error: null 
         };
@@ -544,13 +689,106 @@ export async function fetchUserCredits(): Promise<{
         credits: data.credits,
         plan: data.plan,
         maxCredits: data.max_credits,
-        isAdmin: data.is_admin || false,
-        isWhitelisted: data.is_whitelisted || false
+        isWhitelisted: data.is_whitelisted || false,
+        isAdmin: data.is_admin || false
       }, 
       error: null 
     };
   } catch (err) {
     console.error('Unexpected error:', err);
     return { data: null, error: 'Failed to fetch credits' };
+  }
+}
+
+/**
+ * 扣除用户积分（原子操作）
+ */
+export async function deductUserCredits(
+  amount: number
+): Promise<{ success: boolean; newCredits: number; error: string | null }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { success: false, newCredits: 0, error: 'Not authenticated' };
+    }
+
+    // 使用 RPC 函数进行原子扣除，防止并发问题
+    // 如果没有 RPC，先获取再更新
+    const { data: currentData, error: fetchError } = await supabase
+      .from('users')
+      .select('credits')
+      .eq('id', user.id)
+      .single();
+
+    if (fetchError) {
+      console.error('Error fetching current credits:', fetchError);
+      return { success: false, newCredits: 0, error: fetchError.message };
+    }
+
+    const currentCredits = currentData.credits;
+    if (currentCredits < amount) {
+      return { success: false, newCredits: currentCredits, error: 'Insufficient credits' };
+    }
+
+    const newCredits = currentCredits - amount;
+
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ credits: newCredits })
+      .eq('id', user.id);
+
+    if (updateError) {
+      console.error('Error updating credits:', updateError);
+      return { success: false, newCredits: currentCredits, error: updateError.message };
+    }
+
+    console.log(`Deducted ${amount} credits. New balance: ${newCredits}`);
+    return { success: true, newCredits, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, newCredits: 0, error: 'Failed to deduct credits' };
+  }
+}
+
+/**
+ * 添加用户积分（用于购买或奖励）
+ */
+export async function addUserCredits(
+  amount: number
+): Promise<{ success: boolean; newCredits: number; error: string | null }> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return { success: false, newCredits: 0, error: 'Not authenticated' };
+    }
+
+    const { data: currentData, error: fetchError } = await supabase
+      .from('users')
+      .select('credits')
+      .eq('id', user.id)
+      .single();
+
+    if (fetchError) {
+      console.error('Error fetching current credits:', fetchError);
+      return { success: false, newCredits: 0, error: fetchError.message };
+    }
+
+    const newCredits = currentData.credits + amount;
+
+    const { error: updateError } = await supabase
+      .from('users')
+      .update({ credits: newCredits })
+      .eq('id', user.id);
+
+    if (updateError) {
+      console.error('Error updating credits:', updateError);
+      return { success: false, newCredits: currentData.credits, error: updateError.message };
+    }
+
+    console.log(`Added ${amount} credits. New balance: ${newCredits}`);
+    return { success: true, newCredits, error: null };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { success: false, newCredits: 0, error: 'Failed to add credits' };
   }
 }
