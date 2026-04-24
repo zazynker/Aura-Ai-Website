@@ -14,6 +14,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
+    // ============================================
+    // JWT Authentication (Required for all requests)
+    // ============================================
+    const authHeader = req.headers['authorization'];
+    if (!authHeader?.startsWith('Bearer ')) {
+        return res.status(401).json({ 
+            error: 'Authentication required',
+            code: 'AUTH_REQUIRED'
+        });
+    }
+
+    const token = authHeader.substring(7);
+    
+    // Verify Supabase credentials exist
+    if (!supabaseUrl || !supabaseServiceKey) {
+        console.error('Supabase credentials not configured');
+        return res.status(500).json({ 
+            error: 'Server configuration error',
+            code: 'CONFIG_ERROR'
+        });
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user) {
+        console.error('Auth verification failed:', authError?.message);
+        return res.status(401).json({ 
+            error: 'Invalid or expired token',
+            code: 'INVALID_TOKEN'
+        });
+    }
+
+    console.log('Authenticated user:', user.id);
+    // ============================================
+
     // Check for API key
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -28,8 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             productImageUrl, 
             numberOfImages = 4,
             imageSize = '1K',  // Default to 1K, options: "512", "1K", "2K", "4K"
-            aspectRatio,      // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
-            userId            // User ID for permission check
+            aspectRatio       // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
         } = req.body;
 
         if (!prompt) {
@@ -43,37 +78,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('Number of images requested:', numberOfImages);
         console.log('Image size:', imageSize);
         console.log('Aspect ratio:', aspectRatio || 'default');
-        console.log('User ID:', userId || 'not provided');
+        console.log('User ID:', user.id);
 
         // ============================================
-        // 4K Permission Check (Backend Enforcement)
-        // FAIL CLOSED: Any verification failure = reject
+        // 4K Permission Check (Pro/Enterprise only)
+        // Other resolutions are available for all logged-in users
         // ============================================
         if (imageSize === '4K') {
-            // Check if we have Supabase credentials
-            if (!supabaseUrl || !supabaseServiceKey) {
-                console.error('Supabase credentials not configured for permission check');
-                return res.status(500).json({ 
-                    error: 'Server configuration error',
-                    code: 'CONFIG_ERROR'
-                });
-            }
-            
-            if (!userId) {
-                // No user ID provided - reject 4K request
-                console.log('4K requested without user ID - rejecting');
-                return res.status(403).json({ 
-                    error: 'Authentication required for 4K resolution',
-                    code: 'AUTH_REQUIRED'
-                });
-            }
-            
-            // Verify user's plan
-            const supabase = createClient(supabaseUrl, supabaseServiceKey);
             const { data: userData, error: userError } = await supabase
                 .from('users')
                 .select('plan')
-                .eq('id', userId)
+                .eq('id', user.id)
                 .single();
 
             if (userError || !userData) {

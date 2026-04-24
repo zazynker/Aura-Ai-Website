@@ -25,7 +25,7 @@ export interface GenerateResult {
 const ERROR_MESSAGES: Record<number, string> = {
   413: 'Image too large. Please use images under 10MB each, or try compressing them first.',
   400: 'Invalid request. Please check your inputs and try again.',
-  401: 'Authentication error. Please refresh the page and try again.',
+  401: 'Please log in to generate images.',
   403: '4K resolution is available for Pro users only. Upgrade to unlock.',
   429: 'Too many requests. Please wait a moment and try again.',
   500: 'Server error. Please try again in a few moments.',
@@ -53,16 +53,23 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
   console.log('Image size:', imageSize);
 
   try {
-    // Get current user ID for permission check (especially for 4K)
-    const { data: { user } } = await supabase.auth.getUser();
-    const userId = user?.id;
+    // Get current session for auth token
+    const { data: { session } } = await supabase.auth.getSession();
     
-    console.log('User ID for generation:', userId || 'not logged in');
+    if (!session?.access_token) {
+      return {
+        success: false,
+        error: 'Please log in to generate images.',
+      };
+    }
+
+    console.log('User ID for generation:', session.user.id);
 
     const response = await fetch('/api/generate', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
       },
       body: JSON.stringify({
         prompt,
@@ -71,7 +78,7 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
         numberOfImages,
         imageSize,
         aspectRatio,
-        userId,  // Pass user ID for backend permission check
+        // userId no longer needed - backend extracts from JWT
       }),
     });
 
