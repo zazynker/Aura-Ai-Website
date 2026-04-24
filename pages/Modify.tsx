@@ -1950,34 +1950,60 @@ export const Modify = () => {
                             <div className="space-y-2">
                                 <label className="text-xs text-slate-500 dark:text-slate-400 font-medium">Target Resolution</label>
                                 <div className="grid grid-cols-4 gap-2">
-                                    {[
-                                        { label: '1K', size: '1024×1024', value: '1K' },
-                                        { label: '2K', size: '2048×2048', value: '2K' },
-                                        { label: '4K', size: '4096×4096', value: '4K', isPro: true },
-                                    ].map(res => (
-                                        <button
-                                            key={res.value}
-                                            onClick={() => setSelectedResolution(res.value)}
-                                            className={`relative py-2.5 text-xs font-medium rounded-lg border transition-all ${
-                                                selectedResolution === res.value
-                                                    ? 'bg-pink-600 border-pink-500 text-white shadow-lg shadow-pink-900/20'
-                                                    : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
-                                            }`}
-                                        >
-                                            <div>{res.label}</div>
-                                            <div className={`text-[9px] ${selectedResolution === res.value ? 'text-pink-200' : 'text-slate-400'}`}>
-                                                {res.size}
-                                            </div>
-                                            {res.isPro && (
-                                                <div className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded bg-gradient-to-r from-purple-600 to-pink-600 text-[7px] font-bold text-white">
-                                                    PRO
-                                                </div>
-                                            )}
-                                        </button>
-                                    ))}
+                                    {(() => {
+                                        const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
+                                        return [
+                                            { label: '1K', size: '1024×1024', value: '1K' },
+                                            { label: '2K', size: '2048×2048', value: '2K' },
+                                            { label: '4K', size: '4096×4096', value: '4K', isPro: true },
+                                        ].map(res => {
+                                            const isLocked = res.isPro && !isProUser;
+                                            return (
+                                                <button
+                                                    key={res.value}
+                                                    onClick={() => {
+                                                        if (isLocked) {
+                                                            addToast('error', '4K resolution requires Pro plan');
+                                                            return;
+                                                        }
+                                                        setSelectedResolution(res.value);
+                                                    }}
+                                                    className={`relative py-2.5 text-xs font-medium rounded-lg border transition-all ${
+                                                        isLocked
+                                                            ? 'bg-slate-100 dark:bg-slate-800/50 border-slate-200 dark:border-white/5 text-slate-400 dark:text-slate-500 cursor-not-allowed opacity-60'
+                                                            : selectedResolution === res.value
+                                                                ? 'bg-pink-600 border-pink-500 text-white shadow-lg shadow-pink-900/20'
+                                                                : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-white/10 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
+                                                    }`}
+                                                >
+                                                    <div>{res.label}</div>
+                                                    <div className={`text-[9px] ${
+                                                        isLocked
+                                                            ? 'text-slate-400 dark:text-slate-500'
+                                                            : selectedResolution === res.value 
+                                                                ? 'text-pink-200' 
+                                                                : 'text-slate-400'
+                                                    }`}>
+                                                        {res.size}
+                                                    </div>
+                                                    {res.isPro && (
+                                                        <div className={`absolute -top-1.5 -right-1.5 px-1.5 py-0.5 rounded text-[7px] font-bold text-white ${
+                                                            isLocked 
+                                                                ? 'bg-slate-400 dark:bg-slate-600' 
+                                                                : 'bg-gradient-to-r from-purple-600 to-pink-600'
+                                                        }`}>
+                                                            PRO
+                                                        </div>
+                                                    )}
+                                                </button>
+                                            );
+                                        });
+                                    })()}
                                 </div>
                                 <p className="text-[10px] text-slate-400">
-                                    Max: 4096×4096 (4K)
+                                    {user?.plan === 'Pro' || user?.plan === 'Enterprise' 
+                                        ? 'Max: 4096×4096 (4K)' 
+                                        : 'Max: 2048×2048 (2K) · Upgrade to Pro for 4K'}
                                 </p>
                             </div>
 

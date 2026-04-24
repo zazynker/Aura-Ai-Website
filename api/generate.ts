@@ -1,22 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-// Gemini API endpoint
+// Gemini API endpoint - using gemini-3.1-flash-image-preview (Nano Banana 2)
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent';
 
-// Credit calculation: tokens / 60 (same as frontend)
-const calculateCreditsFromTokens = (tokensUsed: number): number => {
-    if (tokensUsed <= 0) return 0;
-    return Math.ceil(tokensUsed / 60);
-};
-
-// Estimated tokens per image (for pre-check)
-const ESTIMATED_TOKENS_PER_IMAGE: Record<string, number> = {
-    '512': 747,
-    '1K': 1120,
-    '2K': 1680,
-    '4K': 2520,
-};
+// Initialize Supabase client for user verification
+const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Only allow POST requests
@@ -24,138 +14,86 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    // ============================================
-    // STEP 1: Validate Environment Variables
-    // ============================================
+    // Check for API key
     const apiKey = process.env.GEMINI_API_KEY;
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-    const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
     if (!apiKey) {
         console.error('GEMINI_API_KEY not configured');
         return res.status(500).json({ error: 'API key not configured' });
     }
 
-    if (!supabaseUrl || !supabaseServiceKey) {
-        console.error('Supabase credentials not configured');
-        return res.status(500).json({ error: 'Server configuration error' });
-    }
-
-    // ============================================
-    // STEP 2: Verify User Authentication (JWT)
-    // ============================================
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        console.error('Missing or invalid Authorization header');
-        return res.status(401).json({ 
-            success: false,
-            error: 'Authentication required. Please login again. [E401]',
-            errorCode: 401
-        });
-    }
-
-    const token = authHeader.replace('Bearer ', '');
-    
-    // Create Supabase client with service role (for database operations)
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-        auth: { persistSession: false }
-    });
-
-    // Verify the JWT token and get user
-    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
-    
-    if (authError || !user) {
-        console.error('JWT verification failed:', authError?.message);
-        return res.status(401).json({ 
-            success: false,
-            error: 'Invalid or expired session. Please login again. [E401]',
-            errorCode: 401
-        });
-    }
-
-    console.log('=== Authenticated User ===');
-    console.log('User ID:', user.id);
-    console.log('Email:', user.email);
-
-    // ============================================
-    // STEP 3: Fetch User Data & Check Permissions
-    // ============================================
-    const { data: userData, error: userError } = await supabaseAdmin
-        .from('users')
-        .select('credits, plan, is_whitelisted, is_admin')
-        .eq('id', user.id)
-        .single();
-
-    if (userError || !userData) {
-        console.error('Failed to fetch user data:', userError?.message);
-        return res.status(403).json({ 
-            success: false,
-            error: 'User account not found. [E403]',
-            errorCode: 403
-        });
-    }
-
-    // Check whitelist (only whitelisted users can generate)
-    if (!userData.is_whitelisted && !userData.is_admin) {
-        console.log('User not whitelisted:', user.email);
-        return res.status(403).json({ 
-            success: false,
-            error: 'Image generation coming soon! Stay tuned. [E403]',
-            errorCode: 403
-        });
-    }
-
-    // ============================================
-    // STEP 4: Parse Request & Estimate Credits
-    // ============================================
     try {
         const { 
             prompt, 
             imageUrl, 
             productImageUrl, 
             numberOfImages = 4,
-            imageSize = '1K',
-            aspectRatio
+            imageSize = '1K',  // Default to 1K, options: "512", "1K", "2K", "4K"
+            aspectRatio,      // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
+            userId            // User ID for permission check
         } = req.body;
 
         if (!prompt) {
             return res.status(400).json({ error: 'Prompt is required' });
         }
 
-        const numToGenerate = Math.min(Math.max(1, numberOfImages), 4);
-        
-        // Estimate credits needed
-        const tokensPerImage = ESTIMATED_TOKENS_PER_IMAGE[imageSize] || ESTIMATED_TOKENS_PER_IMAGE['1K'];
-        const estimatedCredits = Math.ceil((tokensPerImage * numToGenerate) / 60);
-
-        console.log('=== Credit Pre-Check ===');
-        console.log('User credits:', userData.credits);
-        console.log('Estimated credits needed:', estimatedCredits);
-
-        // ============================================
-        // STEP 5: Check Credits BEFORE Generation
-        // ============================================
-        if (userData.credits < estimatedCredits) {
-            return res.status(402).json({ 
-                success: false,
-                error: `Not enough credits. Need ~${estimatedCredits}, have ${userData.credits}. [E402]`,
-                errorCode: 402,
-                creditsNeeded: estimatedCredits,
-                creditsAvailable: userData.credits
-            });
-        }
-
         console.log('=== Generate API called ===');
         console.log('Prompt:', prompt.substring(0, 100) + '...');
         console.log('Has base image:', !!imageUrl);
         console.log('Has product image:', !!productImageUrl);
-        console.log('Number of images requested:', numToGenerate);
+        console.log('Number of images requested:', numberOfImages);
         console.log('Image size:', imageSize);
+        console.log('Aspect ratio:', aspectRatio || 'default');
+        console.log('User ID:', userId || 'not provided');
+
+        // ============================================
+        // 4K Permission Check (Backend Enforcement)
+        // ============================================
+        if (imageSize === '4K') {
+            // Check if we have Supabase credentials
+            if (!supabaseUrl || !supabaseServiceKey) {
+                console.error('Supabase credentials not configured for permission check');
+                // Fall through - allow if we can't verify (fail open for now)
+            } else if (!userId) {
+                // No user ID provided - reject 4K request
+                console.log('4K requested without user ID - rejecting');
+                return res.status(403).json({ 
+                    error: 'Authentication required for 4K resolution',
+                    code: 'AUTH_REQUIRED'
+                });
+            } else {
+                // Verify user's plan
+                const supabase = createClient(supabaseUrl, supabaseServiceKey);
+                const { data: userData, error: userError } = await supabase
+                    .from('users')
+                    .select('plan')
+                    .eq('id', userId)
+                    .single();
+
+                if (userError) {
+                    console.error('Error fetching user plan:', userError);
+                    // Fall through - allow if we can't verify
+                } else {
+                    const userPlan = userData?.plan || 'Free';
+                    console.log('User plan:', userPlan);
+
+                    if (userPlan !== 'Pro' && userPlan !== 'Enterprise') {
+                        console.log('Free user attempted 4K - rejecting');
+                        return res.status(403).json({ 
+                            error: '4K resolution is available for Pro users only',
+                            code: 'PRO_REQUIRED'
+                        });
+                    }
+                }
+            }
+        }
+        // ============================================
 
         // Build the request content parts
+        // IMPORTANT: Order matters! Scene/base image FIRST, then product image, then prompt
+        // This matches Google AI Studio's behavior
         const parts: any[] = [];
 
-        // Add base/scene image FIRST if provided
+        // Add base/scene image FIRST if provided (the model/background photo)
         if (imageUrl) {
             const baseImageData = await fetchImageAsBase64(imageUrl);
             if (baseImageData) {
@@ -169,7 +107,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         }
 
-        // Add product image SECOND if provided
+        // Add product image SECOND if provided (the product to insert)
         if (productImageUrl) {
             const productImageData = await fetchImageAsBase64(productImageUrl);
             if (productImageData) {
@@ -186,22 +124,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Add the text prompt LAST
         parts.push({ text: prompt });
 
-        // Build imageConfig
+        // Determine if this is a pure text-to-image request (no input images)
+        const isPureTextToImage = !imageUrl && !productImageUrl;
+
+        // Build imageConfig for resolution and aspect ratio
+        // Note: Gemini API uses camelCase for these parameters
         const imageConfig: any = {};
         if (imageSize && ['512', '1K', '2K', '4K'].includes(imageSize)) {
-            imageConfig.imageSize = imageSize;
+            imageConfig.imageSize = imageSize;  // camelCase
         }
         if (aspectRatio) {
-            imageConfig.aspectRatio = aspectRatio;
+            imageConfig.aspectRatio = aspectRatio;  // camelCase
+            console.log('Setting aspectRatio:', aspectRatio);
         }
 
         // Build the full request body
         const requestBody: any = {
-            contents: [{ parts: parts }],
+            contents: [{
+                parts: parts
+            }],
             generationConfig: {
+                // Use IMAGE only to avoid text output consuming extra tokens
                 responseModalities: ["IMAGE"],
                 temperature: 1,
-                thinkingConfig: { thinkingLevel: "MINIMAL" }
+                // Minimize thinking tokens to reduce unnecessary token consumption
+                // Thinking tokens are billed even if not requested
+                thinkingConfig: {
+                    thinkingLevel: "MINIMAL"
+                }
             },
             safetySettings: [
                 { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
@@ -211,53 +161,102 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ]
         };
 
+        console.log('Is pure text-to-image:', isPureTextToImage);
+        console.log('Response modalities:', requestBody.generationConfig.responseModalities);
+
+        // Add imageConfig if we have any settings
         if (Object.keys(imageConfig).length > 0) {
             requestBody.generationConfig.imageConfig = imageConfig;
+            console.log('ImageConfig:', imageConfig);
         }
 
-        // ============================================
-        // STEP 6: Generate Images
-        // ============================================
+        console.log('Sending request to Gemini API...');
+        console.log('Request parts count:', parts.length);
+        console.log('Number of images to generate:', numberOfImages);
+
+        // Generate multiple images by calling API multiple times in parallel
+        // With retry mechanism to improve success rate
+        // Returns both image and token usage
         interface GenerationResult {
             image: string | null;
             tokensUsed: number;
-            error?: { code: number; message: string };
         }
         
         const generateOne = async (attempt = 1): Promise<GenerationResult> => {
-            const maxAttempts = 3;
+            const maxAttempts = 3; // Max retry attempts per image
             try {
                 const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
                     body: JSON.stringify(requestBody)
                 });
 
                 if (!response.ok) {
                     const errorText = await response.text();
                     console.error(`Gemini API error (attempt ${attempt}):`, response.status, errorText);
-                    
-                    if (response.status === 429) {
-                        return { 
-                            image: null, 
-                            tokensUsed: 0,
-                            error: { code: 429, message: 'Server is busy. Please wait 30 seconds. [E429]' }
-                        };
-                    }
-                    
                     if (attempt < maxAttempts) {
-                        await new Promise(r => setTimeout(r, 300 * attempt));
+                        await new Promise(r => setTimeout(r, 300 * attempt)); // Increasing delay
                         return generateOne(attempt + 1);
                     }
-                    return { image: null, tokensUsed: 0, error: { code: response.status, message: `API error [E${response.status}]` }};
+                    return { image: null, tokensUsed: 0 };
                 }
 
                 const data = await response.json();
+                
+                // ===== DETAILED TOKEN LOGGING =====
+                // Log the FULL usageMetadata to diagnose token discrepancies
+                console.log('=== Full usageMetadata ===');
+                console.log(JSON.stringify(data.usageMetadata, null, 2));
+                
+                // Extract token usage from usageMetadata
                 const outputTokens = data.usageMetadata?.candidatesTokenCount || 0;
+                const inputTokens = data.usageMetadata?.promptTokenCount || 0;
+                const totalTokens = data.usageMetadata?.totalTokenCount || 0;
+                const thoughtsTokens = data.usageMetadata?.thoughtsTokenCount || 0;
+                
+                // Log per-modality breakdown if available
+                const candidatesDetails = data.usageMetadata?.candidatesTokensDetails;
+                if (candidatesDetails) {
+                    console.log('=== Output Token Breakdown by Modality ===');
+                    for (const detail of candidatesDetails) {
+                        console.log(`  ${detail.modality}: ${detail.tokenCount} tokens`);
+                    }
+                }
+                
+                const promptDetails = data.usageMetadata?.promptTokensDetails;
+                if (promptDetails) {
+                    console.log('=== Input Token Breakdown by Modality ===');
+                    for (const detail of promptDetails) {
+                        console.log(`  ${detail.modality}: ${detail.tokenCount} tokens`);
+                    }
+                }
+                
+                console.log('Token summary:', {
+                    promptTokenCount: inputTokens,
+                    candidatesTokenCount: outputTokens,
+                    thoughtsTokenCount: thoughtsTokens,
+                    totalTokenCount: totalTokens,
+                    billingTokens: outputTokens
+                });
+                // ===== END DETAILED TOKEN LOGGING =====
                 
                 if (data.candidates && data.candidates[0]?.content?.parts) {
-                    for (const part of data.candidates[0].content.parts) {
+                    // Log all parts to see what's being returned
+                    const parts = data.candidates[0].content.parts;
+                    console.log('Response parts count:', parts.length);
+                    
+                    let textContent = '';
+                    let imageFound = false;
+                    
+                    for (const part of parts) {
+                        if (part.text) {
+                            textContent += part.text;
+                            console.log('Found TEXT in response (this consumes tokens!):', part.text.substring(0, 100) + '...');
+                        }
                         if (part.inlineData?.data) {
+                            imageFound = true;
                             const mimeType = part.inlineData.mimeType || 'image/png';
                             return { 
                                 image: `data:${mimeType};base64,${part.inlineData.data}`,
@@ -265,9 +264,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             };
                         }
                     }
+                    
+                    if (textContent && !imageFound) {
+                        console.log('WARNING: Response contains only text, no image!');
+                    }
                 }
                 
+                // No image in response, retry
                 if (attempt < maxAttempts) {
+                    console.log(`No image in response, retrying... (attempt ${attempt + 1})`);
                     await new Promise(r => setTimeout(r, 300 * attempt));
                     return generateOne(attempt + 1);
                 }
@@ -282,81 +287,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             }
         };
 
+        // Run generations and ensure we get the requested number
+        const numToGenerate = Math.min(Math.max(1, numberOfImages), 4);
         let images: string[] = [];
         let totalTokensUsed = 0;
-        let rateLimitError: { code: number; message: string } | null = null;
+        let totalAttempts = 0;
+        const maxTotalAttempts = numToGenerate * 2; // Allow up to 2x attempts to fill quota
         
-        // Generate images in parallel
+        // First batch - parallel
         const promises = Array.from({ length: numToGenerate }, () => generateOne());
         const results = await Promise.all(promises);
         
         for (const result of results) {
-            if (result.image) images.push(result.image);
-            totalTokensUsed += result.tokensUsed;
-            if (result.error?.code === 429) rateLimitError = result.error;
-        }
-
-        // Handle rate limit error
-        if (rateLimitError && images.length === 0) {
-            return res.status(429).json({
-                success: false,
-                error: rateLimitError.message,
-                errorCode: 429,
-                images: [],
-                tokensUsed: 0
-            });
-        }
-
-        // ============================================
-        // STEP 7: Deduct Credits (Atomic Operation)
-        // ============================================
-        const actualCredits = calculateCreditsFromTokens(totalTokensUsed);
-        
-        if (actualCredits > 0 && images.length > 0) {
-            console.log('=== Deducting Credits ===');
-            console.log('Tokens used:', totalTokensUsed);
-            console.log('Credits to deduct:', actualCredits);
-
-            // Use RPC for atomic deduction if available, otherwise manual update
-            const { data: deductResult, error: deductError } = await supabaseAdmin.rpc(
-                'deduct_credits_atomic',
-                { user_id: user.id, amount: actualCredits }
-            ).single();
-
-            if (deductError) {
-                // Fallback: manual deduction with optimistic locking
-                console.warn('RPC not available, using manual deduction:', deductError.message);
-                
-                const { error: updateError } = await supabaseAdmin
-                    .from('users')
-                    .update({ credits: userData.credits - actualCredits })
-                    .eq('id', user.id)
-                    .eq('credits', userData.credits); // Optimistic lock
-                
-                if (updateError) {
-                    console.error('Failed to deduct credits:', updateError.message);
-                    // Still return images but log the error
-                } else {
-                    console.log('Credits deducted successfully (manual)');
-                }
-            } else {
-              console.log('Credits deducted successfully (RPC). New balance:', (deductResult as any)?.new_credits);
+            if (result.image) {
+                images.push(result.image);
             }
+            totalTokensUsed += result.tokensUsed;
         }
-
-        // ============================================
-        // STEP 8: Return Results
-        // ============================================
+        totalAttempts = numToGenerate;
+        
+        // If we didn't get enough, try to fill the gap
+        while (images.length < numToGenerate && totalAttempts < maxTotalAttempts) {
+            const needed = numToGenerate - images.length;
+            console.log(`Only got ${images.length}/${numToGenerate}, generating ${needed} more...`);
+            const extraPromises = Array.from({ length: needed }, () => generateOne());
+            const extraResults = await Promise.all(extraPromises);
+            for (const result of extraResults) {
+                if (result.image) {
+                    images.push(result.image);
+                }
+                totalTokensUsed += result.tokensUsed;
+            }
+            totalAttempts += needed;
+        }
+        
         console.log('=== Generation Summary ===');
-        console.log('Images generated:', images.length);
-        console.log('Total tokens:', totalTokensUsed);
-        console.log('Credits charged:', actualCredits);
+        console.log('Total images generated:', images.length, 'out of', numToGenerate, 'requested');
+        console.log('Image size setting:', imageSize);
+        console.log('Total tokens used:', totalTokensUsed);
 
         if (images.length === 0) {
             return res.status(500).json({
                 success: false,
-                error: 'All generation attempts failed. Please try again. [E500]',
-                errorCode: 500,
+                error: 'All generation attempts failed',
+                images: [],
+                count: 0,
                 tokensUsed: totalTokensUsed
             });
         }
@@ -367,16 +342,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             text: '',
             count: images.length,
             imageSize: imageSize,
-            tokensUsed: totalTokensUsed,
-            creditsUsed: actualCredits
+            tokensUsed: totalTokensUsed
         });
 
     } catch (err) {
         console.error('Generation exception:', err);
         return res.status(500).json({ 
-            success: false,
-            error: 'Generation failed. Please try again. [E500]', 
-            errorCode: 500,
+            error: 'Generation failed', 
             details: err instanceof Error ? err.message : 'Unknown error' 
         });
     }
@@ -385,14 +357,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 // Helper function to fetch and convert image to base64
 async function fetchImageAsBase64(imageUrl: string): Promise<{ base64: string; mimeType: string } | null> {
     try {
+        // If it's already a data URL, extract the base64 part
         if (imageUrl.startsWith('data:')) {
             const matches = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
             if (matches) {
-                return { mimeType: matches[1], base64: matches[2] };
+                return {
+                    mimeType: matches[1],
+                    base64: matches[2]
+                };
             }
             return null;
         }
 
+        // Fetch the image from URL
         const response = await fetch(imageUrl);
         if (!response.ok) {
             console.error('Failed to fetch image:', imageUrl);
@@ -403,7 +380,10 @@ async function fetchImageAsBase64(imageUrl: string): Promise<{ base64: string; m
         const arrayBuffer = await response.arrayBuffer();
         const base64 = Buffer.from(arrayBuffer).toString('base64');
 
-        return { mimeType: contentType, base64: base64 };
+        return {
+            mimeType: contentType,
+            base64: base64
+        };
     } catch (err) {
         console.error('Error fetching image:', err);
         return null;
