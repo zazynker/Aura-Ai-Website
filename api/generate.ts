@@ -47,44 +47,55 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         // ============================================
         // 4K Permission Check (Backend Enforcement)
+        // FAIL CLOSED: Any verification failure = reject
         // ============================================
         if (imageSize === '4K') {
             // Check if we have Supabase credentials
             if (!supabaseUrl || !supabaseServiceKey) {
                 console.error('Supabase credentials not configured for permission check');
-                // Fall through - allow if we can't verify (fail open for now)
-            } else if (!userId) {
+                return res.status(500).json({ 
+                    error: 'Server configuration error',
+                    code: 'CONFIG_ERROR'
+                });
+            }
+            
+            if (!userId) {
                 // No user ID provided - reject 4K request
                 console.log('4K requested without user ID - rejecting');
                 return res.status(403).json({ 
                     error: 'Authentication required for 4K resolution',
                     code: 'AUTH_REQUIRED'
                 });
-            } else {
-                // Verify user's plan
-                const supabase = createClient(supabaseUrl, supabaseServiceKey);
-                const { data: userData, error: userError } = await supabase
-                    .from('users')
-                    .select('plan')
-                    .eq('id', userId)
-                    .single();
-
-                if (userError) {
-                    console.error('Error fetching user plan:', userError);
-                    // Fall through - allow if we can't verify
-                } else {
-                    const userPlan = userData?.plan || 'Free';
-                    console.log('User plan:', userPlan);
-
-                    if (userPlan !== 'Pro' && userPlan !== 'Enterprise') {
-                        console.log('Free user attempted 4K - rejecting');
-                        return res.status(403).json({ 
-                            error: '4K resolution is available for Pro users only',
-                            code: 'PRO_REQUIRED'
-                        });
-                    }
-                }
             }
+            
+            // Verify user's plan
+            const supabase = createClient(supabaseUrl, supabaseServiceKey);
+            const { data: userData, error: userError } = await supabase
+                .from('users')
+                .select('plan')
+                .eq('id', userId)
+                .single();
+
+            if (userError || !userData) {
+                console.error('Error fetching user plan:', userError);
+                return res.status(403).json({ 
+                    error: 'Unable to verify user permissions',
+                    code: 'VERIFICATION_FAILED'
+                });
+            }
+            
+            const userPlan = userData.plan || 'Free';
+            console.log('User plan:', userPlan);
+
+            if (userPlan !== 'Pro' && userPlan !== 'Enterprise') {
+                console.log('Free user attempted 4K - rejecting');
+                return res.status(403).json({ 
+                    error: '4K resolution is available for Pro users only',
+                    code: 'PRO_REQUIRED'
+                });
+            }
+            
+            console.log('4K access granted for', userPlan, 'user');
         }
         // ============================================
 
