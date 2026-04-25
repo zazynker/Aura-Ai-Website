@@ -8,6 +8,12 @@ const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// ============ INPUT VALIDATION CONSTANTS ============
+const VALID_SIZES = ['512', '1K', '2K', '4K'];
+const MAX_PROMPT_LENGTH = 2000;
+const MAX_IMAGES = 4;
+// ====================================================
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     // Only allow POST requests
     if (req.method !== 'POST') {
@@ -90,15 +96,61 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             aspectRatio       // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
         } = req.body;
 
-        if (!prompt) {
-            return res.status(400).json({ error: 'Prompt is required' });
+        // ============================================
+        // INPUT VALIDATION
+        // ============================================
+        
+        // 验证 prompt - 必填且长度限制
+        if (!prompt || typeof prompt !== 'string') {
+            return res.status(400).json({ 
+                error: 'Prompt is required', 
+                code: 'INVALID_INPUT' 
+            });
         }
+        if (prompt.length > MAX_PROMPT_LENGTH) {
+            return res.status(400).json({ 
+                error: `Prompt too long (max ${MAX_PROMPT_LENGTH} characters)`, 
+                code: 'INVALID_INPUT' 
+            });
+        }
+
+        // 验证 imageSize - 只允许指定值
+        if (imageSize && !VALID_SIZES.includes(imageSize)) {
+            return res.status(400).json({ 
+                error: 'Invalid image size. Must be 512, 1K, 2K, or 4K', 
+                code: 'INVALID_INPUT' 
+            });
+        }
+
+        // 验证 numberOfImages - 静默截断到合法范围 (1-4)
+        const validatedNumberOfImages = Math.min(Math.max(1, Number(numberOfImages) || 1), MAX_IMAGES);
+
+        // 验证 imageUrl - 必须是 https:// 或 data: 开头
+        if (imageUrl && typeof imageUrl === 'string') {
+            if (!imageUrl.startsWith('https://') && !imageUrl.startsWith('data:')) {
+                return res.status(400).json({ 
+                    error: 'Invalid image URL. Must start with https:// or data:', 
+                    code: 'INVALID_INPUT' 
+                });
+            }
+        }
+
+        // 验证 productImageUrl - 同样的规则
+        if (productImageUrl && typeof productImageUrl === 'string') {
+            if (!productImageUrl.startsWith('https://') && !productImageUrl.startsWith('data:')) {
+                return res.status(400).json({ 
+                    error: 'Invalid product image URL. Must start with https:// or data:', 
+                    code: 'INVALID_INPUT' 
+                });
+            }
+        }
+        // ============================================
 
         console.log('=== Generate API called ===');
         console.log('Prompt:', prompt.substring(0, 100) + '...');
         console.log('Has base image:', !!imageUrl);
         console.log('Has product image:', !!productImageUrl);
-        console.log('Number of images requested:', numberOfImages);
+        console.log('Number of images requested:', validatedNumberOfImages);
         console.log('Image size:', imageSize);
         console.log('Aspect ratio:', aspectRatio || 'default');
         console.log('User ID:', user.id);
@@ -193,60 +245,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 parts: parts
             }],
             generationConfig: {
-                // Use IMAGE only to avoid text output consuming extra tokens
-                responseModalities: ["IMAGE"],
-                temperature: 1,
-                // Minimize thinking tokens to reduce unnecessary token consumption
-                // Thinking tokens are billed even if not requested
-                thinkingConfig: {
-                    thinkingLevel: "MINIMAL"
-                }
+                // For image generation, we need specific output settings
+                responseModalities: ["image", "text"],
+                // Apply image config if set
+                ...(Object.keys(imageConfig).length > 0 && { imageConfig }),
             },
+            // Safety settings - be permissive for product photography
             safetySettings: [
-                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_MEDIUM_AND_ABOVE" },
-                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_MEDIUM_AND_ABOVE" }
+                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_ONLY_HIGH" },
+                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_ONLY_HIGH" },
+                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_ONLY_HIGH" },
+                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_ONLY_HIGH" }
             ]
         };
 
-        console.log('Is pure text-to-image:', isPureTextToImage);
-        console.log('Response modalities:', requestBody.generationConfig.responseModalities);
+        console.log('Request body imageConfig:', requestBody.generationConfig.imageConfig);
 
-        // Add imageConfig if we have any settings
-        if (Object.keys(imageConfig).length > 0) {
-            requestBody.generationConfig.imageConfig = imageConfig;
-            console.log('ImageConfig:', imageConfig);
-        }
-
-        console.log('Sending request to Gemini API...');
-        console.log('Request parts count:', parts.length);
-        console.log('Number of images to generate:', numberOfImages);
-
-        // Generate multiple images by calling API multiple times in parallel
-        // With retry mechanism to improve success rate
-        // Returns both image and token usage
-        interface GenerationResult {
-            image: string | null;
-            tokensUsed: number;
-        }
-        
-        const generateOne = async (attempt = 1): Promise<GenerationResult> => {
-            const maxAttempts = 3; // Max retry attempts per image
+        // Function to generate a single image with retries
+        const generateOne = async (attempt = 1): Promise<{ image: string | null; tokensUsed: number }> => {
+            const maxAttempts = 2;
             try {
                 const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify(requestBody),
                 });
 
                 if (!response.ok) {
                     const errorText = await response.text();
                     console.error(`Gemini API error (attempt ${attempt}):`, response.status, errorText);
                     if (attempt < maxAttempts) {
-                        await new Promise(r => setTimeout(r, 300 * attempt)); // Increasing delay
+                        await new Promise(r => setTimeout(r, 500 * attempt));
                         return generateOne(attempt + 1);
                     }
                     return { image: null, tokensUsed: 0 };
@@ -337,7 +368,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         };
 
         // Run generations and ensure we get the requested number
-        const numToGenerate = Math.min(Math.max(1, numberOfImages), 4);
+        // Use validatedNumberOfImages instead of numberOfImages
+        const numToGenerate = validatedNumberOfImages;
         let images: string[] = [];
         let totalTokensUsed = 0;
         let totalAttempts = 0;
