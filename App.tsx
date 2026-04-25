@@ -3,6 +3,7 @@ import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-d
 import { StoreProvider } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { ToastContainer } from './components/ui/Toast';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Home } from './pages/Home';
 import { Login } from './pages/Login';
 import { ForgotPassword } from './pages/ForgotPassword';
@@ -21,9 +22,7 @@ import Admin from './pages/Admin';
 const AppContent = () => {
   const location = useLocation();
   
-  // 处理 OAuth 错误回调（用户取消登录等）- 防止白屏
   React.useEffect(() => {
-    // 检查 hash 中是否包含 error=access_denied（用户取消 Google 登录）
     if (window.location.hash.includes('error=access_denied')) {
       window.location.href = '/#/login';
       return;
@@ -63,11 +62,13 @@ const AppContent = () => {
 
 const App = () => {
   return (
-    <StoreProvider>
-      <HashRouter>
-        <AppContent />
-      </HashRouter>
-    </StoreProvider>
+    <ErrorBoundary>
+      <StoreProvider>
+        <HashRouter>
+          <AppContent />
+        </HashRouter>
+      </StoreProvider>
+    </ErrorBoundary>
   );
 };
 
