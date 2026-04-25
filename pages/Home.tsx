@@ -21,7 +21,7 @@ const LazyImage = ({
   width?: number;
   height?: number;
 }) => {
-  throw new Error('Test ErrorBoundary');  // ← 加这行
+  
   const [isLoaded, setIsLoaded] = useState(false);
   const [isInView, setIsInView] = useState(false);
   const imgRef = useRef<HTMLDivElement>(null);
