@@ -50,6 +50,29 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log('Authenticated user:', user.id);
     // ============================================
 
+    // ============================================
+    // Rate Limiting (10 requests per minute)
+    // ============================================
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+    
+    const { count, error: countError } = await supabase
+        .from('generations')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .gte('created_at', oneMinuteAgo);
+
+    if (countError) {
+        console.error('Rate limit check failed:', countError);
+        // Fail open - allow request if we can't check rate limit
+    } else if (count !== null && count >= 10) {
+        console.log(`Rate limit exceeded for user ${user.id}: ${count} requests in last minute`);
+        return res.status(429).json({
+            error: 'Slow down! Please wait a moment before generating more images.',
+            code: 'RATE_LIMITED'
+        });
+    }
+    // ============================================
+
     // Check for API key
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {

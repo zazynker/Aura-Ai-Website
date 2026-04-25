@@ -27,7 +27,7 @@ const ERROR_MESSAGES: Record<number, string> = {
   400: 'Invalid request. Please check your inputs and try again.',
   401: 'Please log in to generate images.',
   403: '4K resolution is available for Pro users only. Upgrade to unlock.',
-  429: 'Too many requests. Please wait a moment and try again.',
+  429: 'Slow down! Please wait a moment before generating more images.',
   500: 'Server error. Please try again in a few moments.',
   502: 'Service temporarily unavailable. Please try again.',
   503: 'Service is busy. Please try again in a few moments.',
