@@ -1,33 +1,142 @@
 <!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <title>Resetting password...</title>
-  <style>
-    body { font-family: -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; background: #f8fafc; color: #64748b; }
-  </style>
-</head>
-<body>
-  <p>Verifying your reset link, please wait...</p>
-  <script>
-    const params = new URLSearchParams(window.location.search);
-    const tokenHash = params.get('token_hash');
-    const type = params.get('type');
-
-    if (tokenHash && type) {
-      // 调用 Supabase 验证端点
-      fetch('https://qdbixebjariupvcvsqff.supabase.co/auth/v1/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': document.cookie ? '' : '' },
-        body: JSON.stringify({ token_hash: tokenHash, type: type })
-      });
-
-      // 直接重定向，让 Supabase JS 客户端在应用内处理 session
-      // 把 token 信息传递给 hash route
-      window.location.href = '/#/reset-password?token_hash=' + encodeURIComponent(tokenHash) + '&type=' + encodeURIComponent(type);
-    } else {
-      window.location.href = '/#/login';
-    }
-  </script>
-</body>
+<html lang="en">
+  <head>
+    <!-- Preconnect for Performance -->
+    <link rel="preconnect" href="https://checkout.dodopayments.com" />
+    <link rel="dns-prefetch" href="https://checkout.dodopayments.com" />
+    <link rel="preconnect" href="https://live.dodopayments.com" />
+    
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    
+    <!-- Primary Meta Tags -->
+    <title>Lazora - AI Product Photography Studio</title>
+    <meta name="title" content="Lazora - AI Product Photography Studio" />
+    <meta name="description" content="Create stunning product photos with AI. No studio, no photographer needed. Upload your product and generate professional shots in seconds." />
+    <meta name="keywords" content="AI product photography, product photos, AI studio, ecommerce photos, product images, AI photo generator" />
+    <meta name="author" content="Lazora" />
+    
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://www.lazoraai.com/" />
+    <meta property="og:title" content="Lazora - AI Product Photography Studio" />
+    <meta property="og:description" content="Create stunning product photos with AI. No studio, no photographer needed." />
+    <meta property="og:image" content="https://www.lazoraai.com/og-image.png" />
+    <meta property="og:site_name" content="Lazora" />
+    
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://www.lazoraai.com/" />
+    <meta name="twitter:title" content="Lazora - AI Product Photography Studio" />
+    <meta name="twitter:description" content="Create stunning product photos with AI. No studio, no photographer needed." />
+    <meta name="twitter:image" content="https://www.lazoraai.com/og-image.png" />
+    
+    <!-- Theme Color -->
+    <meta name="theme-color" content="#7c3aed" />
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              glass: "rgba(255, 255, 255, 0.1)",
+              glassBorder: "rgba(255, 255, 255, 0.2)",
+            },
+            backdropBlur: {
+              xs: '2px',
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+        transition: background-color 0.3s ease, color 0.3s ease;
+      }
+      
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #f3f4f6;
+      }
+      .dark ::-webkit-scrollbar-track {
+        background: #1e293b;
+      }
+      
+      ::-webkit-scrollbar-thumb {
+        background: #9ca3af;
+        border-radius: 4px;
+      }
+      .dark ::-webkit-scrollbar-thumb {
+        background: #475569;
+      }
+      
+      ::-webkit-scrollbar-thumb:hover {
+        background: #6b7280;
+      }
+      .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+      .hide-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      
+      /* Glass Panel */
+      .glass-panel {
+        background: rgba(255, 255, 255, 0.55);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(226, 232, 240, 0.6);
+        box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.05), 0 4px 8px -2px rgba(0, 0, 0, 0.02);
+      }
+      
+      .dark .glass-panel {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: none;
+      }
+      
+      .text-gradient {
+        background-clip: text;
+        -webkit-background-clip: text;
+        color: transparent;
+        background-image: linear-gradient(to right, #c084fc, #ec4899);
+      }
+      .text-gradient-brand {
+        background-clip: text;
+        -webkit-background-clip: text;
+        color: transparent;
+        background-image: linear-gradient(to right, #c084fc, #ec4899); 
+      }
+      .text-gradient-blue {
+        background-clip: text;
+        -webkit-background-clip: text;
+        color: transparent;
+        background-image: linear-gradient(to right, #3b82f6, #06b6d4);
+      }
+    </style>
+    <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react-router-dom": "https://esm.sh/react-router-dom@^7.12.0"
+  }
+}
+</script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
 </html>
