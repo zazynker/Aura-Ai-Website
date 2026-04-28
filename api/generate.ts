@@ -12,6 +12,14 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const VALID_SIZES = ['512', '1K', '2K', '4K'];
 const MAX_PROMPT_LENGTH = 2000;
 const MAX_IMAGES = 4;
+
+// Estimated tokens per image for credit pre-check
+const ESTIMATED_TOKENS_PER_IMAGE: Record<string, number> = {
+    '512': 747,
+    '1K': 1120,
+    '2K': 1680,
+    '4K': 2520,
+};
 // ====================================================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -77,6 +85,43 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             code: 'RATE_LIMITED'
         });
     }
+    // ============================================
+
+    // ============================================
+    // Credit Pre-Check (estimate based on request)
+    // ============================================
+    const requestedImages = Math.min(Math.max(1, Number(req.body.numberOfImages) || 1), MAX_IMAGES);
+    const requestedSize = VALID_SIZES.includes(req.body.imageSize) ? req.body.imageSize : '1K';
+    const estimatedTokens = (ESTIMATED_TOKENS_PER_IMAGE[requestedSize] || 1120) * requestedImages;
+    const estimatedCredits = Math.ceil(estimatedTokens / 60);
+    
+    // Fetch user data for credit check and plan verification
+    const { data: userData, error: userDataError } = await supabase
+        .from('users')
+        .select('credits, plan, is_whitelisted')
+        .eq('id', user.id)
+        .single();
+    
+    if (userDataError || !userData) {
+        console.error('Failed to fetch user data:', userDataError);
+        return res.status(500).json({ 
+            error: 'Failed to verify user credits',
+            code: 'USER_DATA_ERROR'
+        });
+    }
+    
+    // Whitelisted users bypass credit check
+    if (!userData.is_whitelisted && userData.credits < estimatedCredits) {
+        console.log(`Insufficient credits: has ${userData.credits}, needs ~${estimatedCredits}`);
+        return res.status(402).json({
+            error: 'Insufficient credits. Please purchase more credits to continue.',
+            code: 'INSUFFICIENT_CREDITS',
+            required: estimatedCredits,
+            available: userData.credits
+        });
+    }
+    
+    console.log(`Credit pre-check passed: has ${userData.credits}, estimated need ${estimatedCredits}, whitelisted: ${userData.is_whitelisted}`);
     // ============================================
 
     // Check for API key
@@ -160,20 +205,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Other resolutions are available for all logged-in users
         // ============================================
         if (imageSize === '4K') {
-            const { data: userData, error: userError } = await supabase
-                .from('users')
-                .select('plan')
-                .eq('id', user.id)
-                .single();
-
-            if (userError || !userData) {
-                console.error('Error fetching user plan:', userError);
-                return res.status(403).json({ 
-                    error: 'Unable to verify user permissions',
-                    code: 'VERIFICATION_FAILED'
-                });
-            }
-            
             const userPlan = userData.plan || 'Free';
             console.log('User plan:', userPlan);
 
@@ -417,13 +448,47 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             });
         }
 
+        // ============================================
+        // Deduct credits after successful generation
+        // ============================================
+        const creditsToDeduct = Math.ceil(totalTokensUsed / 60);
+        console.log(`Deducting ${creditsToDeduct} credits (from ${totalTokensUsed} tokens)`);
+        
+        let newCredits = userData.credits;
+        
+        // Whitelisted users don't get credits deducted
+        if (!userData.is_whitelisted) {
+            // Call the FIFO deduction RPC function
+            const { data: deductResult, error: deductError } = await supabase
+                .rpc('deduct_credits_fifo', {
+                    p_user_id: user.id,
+                    p_amount: creditsToDeduct
+                });
+            
+            if (deductError) {
+                console.error('Credit deduction failed:', deductError);
+                // Don't fail the request - images were already generated
+                // Log for manual reconciliation
+            } else {
+                console.log('Credit deduction result:', deductResult);
+                if (deductResult && deductResult.success) {
+                    newCredits = deductResult.new_credits;
+                }
+            }
+        } else {
+            console.log('User is whitelisted - skipping credit deduction');
+        }
+        // ============================================
+
         return res.status(200).json({
             success: true,
             images: images,
             text: '',
             count: images.length,
             imageSize: imageSize,
-            tokensUsed: totalTokensUsed
+            tokensUsed: totalTokensUsed,
+            creditsDeducted: userData.is_whitelisted ? 0 : creditsToDeduct,
+            newCredits: newCredits
         });
 
     } catch (err) {
