@@ -17,6 +17,7 @@
     "react-dom": "^19.2.3",
     "react-error-boundary": "^6.1.1",
     "react-router-dom": "^7.12.0",
+    "recharts": "^3.8.1",
     "sharp": "^0.33.5"
   },
   "devDependencies": {

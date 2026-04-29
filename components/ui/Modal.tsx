@@ -6,9 +6,10 @@ interface ModalProps {
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
+  footer?: React.ReactNode;  // 新增
 }
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }) => {
+export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer }) => {
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -35,6 +36,11 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children }
         <div className="p-6">
           {children}
         </div>
+        {footer && (
+          <div className="p-4 border-t border-slate-200/50 dark:border-white/10 bg-slate-50 dark:bg-slate-800/50">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );

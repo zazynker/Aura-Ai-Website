@@ -234,22 +234,28 @@ export const Pricing = () => {
           </ul>
 
           <Button 
-            variant="gradient" 
-            className="w-full mt-auto" 
-            onClick={() => handlePurchase(getProProductId())} 
-            disabled={user?.plan === 'Pro' || isProcessing !== null}
-          >
-            {isProProcessing ? (
-              <span className="flex items-center justify-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Processing...
-              </span>
-            ) : user?.plan === 'Pro' ? (
-              'Manage Subscription'
-            ) : (
-              billingCycle === 'yearly' ? 'Subscribe Yearly' : 'Subscribe Monthly'
-            )}
-          </Button>
+  variant="gradient" 
+  className="w-full mt-auto" 
+  onClick={() => {
+    if (user?.plan === 'Pro') {
+      navigate('/subscription');
+    } else {
+      handlePurchase(getProProductId());
+    }
+  }} 
+  disabled={isProcessing !== null}
+>
+  {isProProcessing ? (
+    <span className="flex items-center justify-center gap-2">
+      <Loader2 className="w-4 h-4 animate-spin" />
+      Processing...
+    </span>
+  ) : user?.plan === 'Pro' ? (
+    'Manage Subscription'
+  ) : (
+    billingCycle === 'yearly' ? 'Subscribe Yearly' : 'Subscribe Monthly'
+  )}
+</Button>
           
           {/* Cancel anytime notice */}
           <p className="text-xs text-center text-slate-400 dark:text-slate-500 mt-3">

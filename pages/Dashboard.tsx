@@ -355,7 +355,10 @@ useEffect(() => {
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                {/* Plan Card */}
-               <div className="relative overflow-hidden group p-6 rounded-2xl border border-slate-200 dark:border-white/10 bg-gradient-to-br from-purple-50 to-white dark:from-purple-500/10 dark:via-slate-900/50 dark:to-slate-900 backdrop-blur-xl transition-all hover:border-purple-500/30">
+               <div 
+               onClick={() => navigate('/subscription')}
+                className="relative overflow-hidden group p-6 rounded-2xl border border-slate-200 dark:border-white/10 bg-gradient-to-br from-purple-50 to-white dark:from-purple-500/10 dark:via-slate-900/50 dark:to-slate-900 backdrop-blur-xl transition-all hover:border-purple-500/30 cursor-pointer"
+                  >
                   <div className="relative z-10">
                     <div className="flex items-center justify-between mb-4">
                       <div className="p-2.5 bg-purple-100 dark:bg-purple-500/10 rounded-xl border border-purple-200 dark:border-purple-500/20">

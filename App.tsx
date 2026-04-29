@@ -22,6 +22,7 @@ const CreditRules = lazy(() => import('./pages/CreditRules').then(m => ({ defaul
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword').then(m => ({ default: m.ForgotPassword })));
 const ResetPassword = lazy(() => import('./pages/ResetPassword').then(m => ({ default: m.ResetPassword })));
 const AuthCallback = lazy(() => import('./pages/AuthCallback').then(m => ({ default: m.AuthCallback })));
+const ManageSubscription = lazy(() => import('./pages/ManageSubscription').then(m => ({ default: m.ManageSubscription })));
 
 // ============ 加载占位符 ============
 const PageLoader = () => (
@@ -46,7 +47,8 @@ const AppContent = () => {
   const isAuthPage = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth/callback'].includes(location.pathname);
   const isEditorPage = location.pathname === '/modify';
   const isAdminPage = location.pathname === '/admin';
-  const hideFooter = isAuthPage || isEditorPage || isAdminPage;
+  const isSubscriptionPage = location.pathname === '/subscription';
+  const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
@@ -68,6 +70,7 @@ const AppContent = () => {
           <Route path="/terms" element={<Terms />} />
           <Route path="/about" element={<About />} />
           <Route path="/credit-rules" element={<CreditRules />} />
+          <Route path="/subscription" element={<ManageSubscription />} />
           <Route path="/admin" element={<Admin />} />
         </Routes>
       </Suspense>
