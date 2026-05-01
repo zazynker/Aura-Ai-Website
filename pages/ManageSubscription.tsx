@@ -71,7 +71,11 @@ export interface ManageSubscriptionPageProps {
 
 export const ManageSubscriptionView: React.FC<ManageSubscriptionPageProps> = (props) => {
   const { user, subscription, stats, usageData, billingHistory, onCancelAutoRenewal, onRequestRefund, onUpgrade, onBuyCredits, onBack } = props;
-
+// 🔴 添加调试日志
+console.log('=== ManageSubscriptionView Props ===');
+console.log('billingHistory prop:', billingHistory);
+console.log('usageData prop:', usageData);
+console.log('stats prop:', stats);
   const [showBillingHistory, setShowBillingHistory] = useState(false);
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly' | 'monthly'>('daily');
 
@@ -700,6 +704,12 @@ export const ManageSubscription = () => {
           fetchUsageStats()
         ]);
         
+        // 🔴 添加调试日志
+        console.log('=== ManageSubscription API Results ===');
+        console.log('subscriptionResult:', subscriptionResult);
+        console.log('billingResult:', billingResult);
+        console.log('usageResult:', usageResult);
+        
         // Check for errors
         if (subscriptionResult.error && billingResult.error && usageResult.error) {
           setError('Failed to load subscription data. Please try again.');
@@ -709,6 +719,12 @@ export const ManageSubscription = () => {
         setActiveSubscription(subscriptionResult.data);
         setBillingHistory(billingResult.data);
         setUsageStats(usageResult.data);
+        
+        // 🔴 添加调试日志
+        console.log('=== State After Set ===');
+        console.log('activeSubscription set to:', subscriptionResult.data);
+        console.log('billingHistory set to:', billingResult.data);
+        console.log('usageStats set to:', usageResult.data);
       } catch (err) {
         console.error('Failed to load subscription data:', err);
         setError('Failed to load subscription data. Please try again.');
