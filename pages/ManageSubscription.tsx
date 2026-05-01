@@ -4,6 +4,17 @@ import { Zap, Image as ImageIcon, Calendar, Crown, ChevronDown, ChevronUp, Arrow
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
+import { useStore } from '../context/StoreContext';
+import { 
+  fetchActiveSubscription, 
+  fetchBillingHistory, 
+  fetchUsageStats, 
+  cancelAutoRenewal, 
+  requestRefund,
+  SubscriptionInfo,
+  BillingHistoryItem,
+  UsageStats
+} from '../utils/subscription_api';
 
 export interface ManageSubscriptionPageProps {
   user: {
@@ -659,18 +670,6 @@ export const ManageSubscriptionView: React.FC<ManageSubscriptionPageProps> = (pr
 };
 
 // Container Component connecting to actual app state
-import { useStore } from '../context/StoreContext';
-import { 
-  fetchActiveSubscription, 
-  fetchBillingHistory, 
-  fetchUsageStats, 
-  cancelAutoRenewal, 
-  requestRefund,
-  SubscriptionInfo,
-  BillingHistoryItem,
-  UsageStats
-} from '../utils/subscription_api';
-
 export const ManageSubscription = () => {
   const { user } = useStore();
   const navigate = useNavigate();
@@ -684,7 +683,7 @@ export const ManageSubscription = () => {
   const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
 
   // Fetch all data on mount
-  React.useEffect(() => {
+  useEffect(() => {
     if (!user) {
       navigate('/login');
       return;
