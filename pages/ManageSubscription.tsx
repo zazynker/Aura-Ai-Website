@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Image as ImageIcon, Calendar, Crown, ChevronDown, ChevronUp, ArrowLeft, CreditCard, AlertCircle, TrendingUp, Copy, Loader2, CheckCircle2 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
@@ -660,177 +660,206 @@ export const ManageSubscriptionView: React.FC<ManageSubscriptionPageProps> = (pr
 
 // Container Component connecting to actual app state
 import { useStore } from '../context/StoreContext';
+import { 
+  fetchActiveSubscription, 
+  fetchBillingHistory, 
+  fetchUsageStats, 
+  cancelAutoRenewal, 
+  requestRefund,
+  SubscriptionInfo,
+  BillingHistoryItem,
+  UsageStats
+} from '../utils/subscription_api';
 
 export const ManageSubscription = () => {
   const { user } = useStore();
   const navigate = useNavigate();
 
-  // If user is not logged in, wait or redirect (usually App Router handles this or we can navigate)
+  // Loading and data states
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  const [activeSubscription, setActiveSubscription] = useState<SubscriptionInfo | null>(null);
+  const [billingHistory, setBillingHistory] = useState<BillingHistoryItem[]>([]);
+  const [usageStats, setUsageStats] = useState<UsageStats | null>(null);
+
+  // Fetch all data on mount
   React.useEffect(() => {
     if (!user) {
       navigate('/login');
+      return;
     }
+
+    const loadData = async () => {
+      setIsLoading(true);
+      setError(null);
+      
+      try {
+        const [subscriptionResult, billingResult, usageResult] = await Promise.all([
+          fetchActiveSubscription(),
+          fetchBillingHistory(),
+          fetchUsageStats()
+        ]);
+        
+        // Check for errors
+        if (subscriptionResult.error && billingResult.error && usageResult.error) {
+          setError('Failed to load subscription data. Please try again.');
+          return;
+        }
+        
+        setActiveSubscription(subscriptionResult.data);
+        setBillingHistory(billingResult.data);
+        setUsageStats(usageResult.data);
+      } catch (err) {
+        console.error('Failed to load subscription data:', err);
+        setError('Failed to load subscription data. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadData();
   }, [user, navigate]);
 
   if (!user) return null;
 
-  // Mock data to supply the required props since real data isn't in StoreContext
-  // In a real app we'd fetch this from the backend
-  
-  const mockSubscription = user.plan === 'Pro' ? {
-    type: 'yearly' as const,
-    nextBillingDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    amount: 238.80,
-    isCancelled: false,
+  // Loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen pt-24 px-4 pb-12 bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-8 h-8 animate-spin text-purple-600 mx-auto mb-4" />
+          <p className="text-slate-500 dark:text-slate-400">Loading subscription data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen pt-24 px-4 pb-12 bg-slate-50 dark:bg-slate-900 flex items-center justify-center">
+        <div className="text-center">
+          <AlertCircle className="w-8 h-8 text-red-500 mx-auto mb-4" />
+          <p className="text-slate-900 dark:text-white font-medium mb-2">Error</p>
+          <p className="text-slate-500 dark:text-slate-400 mb-4">{error}</p>
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Try Again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Transform data for the view component
+  const subscription = activeSubscription ? {
+    type: activeSubscription.type,
+    nextBillingDate: activeSubscription.nextBillingDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    amount: activeSubscription.amount,
+    isCancelled: activeSubscription.isCancelled,
+    cancelledAt: activeSubscription.cancelledAt,
   } : undefined;
 
-  const mockStats = {
-    imagesGeneratedThisMonth: 142,
-    imagesGeneratedLastMonth: 120,
+  const stats = {
+    imagesGeneratedThisMonth: usageStats?.imagesThisMonth || 0,
+    imagesGeneratedLastMonth: usageStats?.imagesLastMonth || 0,
   };
 
-  const mockUsageData = {
-    daily: [
-      { date: 'Apr 15', credits: 45 },
-      { date: 'Apr 16', credits: 120 },
-      { date: 'Apr 17', credits: 85 },
-      { date: 'Apr 18', credits: 200 },
-      { date: 'Apr 19', credits: 65 },
-      { date: 'Apr 20', credits: 180 },
-      { date: 'Apr 21', credits: 95 },
-      { date: 'Apr 22', credits: 150 },
-      { date: 'Apr 23', credits: 110 },
-      { date: 'Apr 24', credits: 75 },
-      { date: 'Apr 25', credits: 220 },
-      { date: 'Apr 26', credits: 135 },
-      { date: 'Apr 27', credits: 90 },
-      { date: 'Apr 28', credits: 165 },
-    ],
-    weekly: [
-      { week: 'W1 Mar', credits: 450 },
-      { week: 'W2 Mar', credits: 680 },
-      { week: 'W3 Mar', credits: 520 },
-      { week: 'W4 Mar', credits: 890 },
-      { week: 'W1 Apr', credits: 720 },
-      { week: 'W2 Apr', credits: 950 },
-      { week: 'W3 Apr', credits: 810 },
-      { week: 'W4 Apr', credits: 1100 },
-    ],
-    monthly: [
-      { month: 'Nov', credits: 1800 },
-      { month: 'Dec', credits: 2200 },
-      { month: 'Jan', credits: 2800 },
-      { month: 'Feb', credits: 2100 },
-      { month: 'Mar', credits: 3200 },
-      { month: 'Apr', credits: 2650 },
-    ]
+  // Transform usage data - handle empty arrays
+  const usageData = {
+    daily: (usageStats?.daily || []).map(d => ({ date: d.date, credits: d.credits })),
+    weekly: (usageStats?.weekly || []).map(w => ({ week: w.week, credits: w.credits })),
+    monthly: (usageStats?.monthly || []).map(m => ({ month: m.month, credits: m.credits })),
   };
 
-  const mockBillingHistory: ManageSubscriptionPageProps['billingHistory'] = [
-    {
-      id: 'pay_abc123def456',
-      orderId: 'ORD-A1B2C3D4',
-      date: '4/24/2026',
-      description: 'Pro Yearly Subscription',
-      amount: 238.80,
-      status: 'active subscription',
-      orderType: 'subscription',
-      productType: 'Pro Yearly',
-      nextBillingDate: '2027-04-24T10:30:00Z',
-      isAutoRenewalCancelled: false,
-      refundEligible: false,
-      refundIneligibleReason: 'Credits have been used (892/3000)',
-      creditsUsed: 892,
-      creditsGranted: 3000,
-      purchaseDate: '2026-04-24T10:30:00Z',
-    },
-    {
-      id: 'pay_xyz789ghi012',
-      orderId: 'ORD-E5F6G7H8',
-      date: '4/20/2026',
-      description: '500 Credits Pack',
-      amount: 7.00,
-      status: 'paid',
-      orderType: 'credits',
-      productType: '500 Credits',
-      refundEligible: true,
-      creditsUsed: 0,
-      creditsGranted: 500,
-      purchaseDate: '2026-04-20T14:20:00Z',
-    },
-    {
-      id: 'pay_old123456789',
-      orderId: 'ORD-I9J0K1L2',
-      date: '3/15/2026',
-      description: '1000 Credits Pack',
-      amount: 12.00,
-      status: 'paid',
-      orderType: 'credits',
-      productType: '1000 Credits',
-      refundEligible: false,
-      refundIneligibleReason: 'Purchase older than 14 days',
-      creditsUsed: 200,
-      creditsGranted: 1000,
-      purchaseDate: '2026-03-15T09:00:00Z',
-    },
-    {
-      id: 'pay_refunded001',
-      orderId: 'ORD-M3N4O5P6',
-      date: '4/10/2026',
-      description: '500 Credits Pack',
-      amount: 7.00,
-      status: 'refunded',
-      orderType: 'credits',
-      productType: '500 Credits',
-      refundEligible: false,
-      refundIneligibleReason: 'Already refunded',
-      creditsUsed: 0,
-      creditsGranted: 500,
-      purchaseDate: '2026-04-10T11:00:00Z',
-    },
-    {
-      id: 'pay_cancelled_sub',
-      orderId: 'ORD-C4N5C6E7',
-      date: '4/01/2026',
-      description: 'Pro Monthly Subscription',
-      amount: 29.00,
-      status: 'cancelled',
-      orderType: 'subscription',
-      productType: 'Pro Monthly',
-      isAutoRenewalCancelled: true,
-      refundEligible: false,
-      refundIneligibleReason: 'Already cancelled',
-      creditsUsed: 1500,
-      creditsGranted: 3000,
-      purchaseDate: '2026-04-01T09:00:00Z',
+  // If no usage data, provide minimal fallback to prevent chart errors
+  if (usageData.daily.length === 0) {
+    usageData.daily = [{ date: 'Today', credits: 0 }];
+  }
+  if (usageData.weekly.length === 0) {
+    usageData.weekly = [{ week: 'This Week', credits: 0 }];
+  }
+  if (usageData.monthly.length === 0) {
+    usageData.monthly = [{ month: 'This Month', credits: 0 }];
+  }
+
+  const formattedBillingHistory: ManageSubscriptionPageProps['billingHistory'] = billingHistory.map(record => ({
+    id: record.id,
+    orderId: record.orderId,
+    date: record.date,
+    description: record.description,
+    amount: record.amount,
+    status: record.status,
+    orderType: record.orderType,
+    productType: record.productType,
+    nextBillingDate: activeSubscription?.nextBillingDate,
+    isAutoRenewalCancelled: activeSubscription?.isCancelled,
+    refundEligible: record.refundEligible,
+    refundIneligibleReason: record.refundIneligibleReason,
+    creditsUsed: record.creditsUsed,
+    creditsGranted: record.creditsGranted,
+    purchaseDate: record.purchaseDate,
+  }));
+
+  const handleCancelAutoRenewal = async (orderId: string) => {
+    // Find the subscription_id from billing history
+    const record = billingHistory.find(r => r.id === orderId);
+    if (!record?.subscriptionId) {
+      throw new Error('Subscription ID not found');
     }
-  ];
+    
+    const result = await cancelAutoRenewal(record.subscriptionId);
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to cancel subscription');
+    }
+    
+    // Refresh data after cancellation
+    const [subscriptionResult, billingResult] = await Promise.all([
+      fetchActiveSubscription(),
+      fetchBillingHistory()
+    ]);
+    setActiveSubscription(subscriptionResult.data);
+    setBillingHistory(billingResult.data);
+  };
+
+  const handleRequestRefund = async (data: {
+    orderId: string;
+    reason: string;
+    details?: string;
+    contactEmail: string;
+  }) => {
+    const result = await requestRefund({
+      purchaseId: data.orderId,
+      reason: data.reason,
+      details: data.details,
+      contactEmail: data.contactEmail,
+    });
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to request refund');
+    }
+    
+    // Refresh billing history after refund request
+    const billingResult = await fetchBillingHistory();
+    setBillingHistory(billingResult.data);
+  };
 
   return (
     <ManageSubscriptionView 
       user={{
         plan: user.plan as 'Free' | 'Pro',
         credits: user.credits,
-        maxCredits: user.maxCredits || (user.plan === 'Pro' ? 2900 : 100),
+        maxCredits: user.maxCredits || (user.plan === 'Pro' ? 3000 : 100),
         email: user.email,
-        createdAt: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString() // Fake 45 days ago if mostly transient
+        createdAt: user.createdAt || new Date().toISOString()
       }}
-      subscription={mockSubscription}
-      stats={mockStats}
-      usageData={mockUsageData}
-      billingHistory={mockBillingHistory}
-      onCancelAutoRenewal={async (orderId) => {
-        return new Promise<void>((resolve) => setTimeout(() => {
-          console.log('Cancel Auto Renewal requested:', orderId);
-          resolve();
-        }, 1500));
-      }}
-      onRequestRefund={async (data) => {
-        return new Promise<void>((resolve) => setTimeout(() => {
-          console.log('Refund requested:', data);
-          resolve();
-        }, 1500));
-      }}
+      subscription={subscription}
+      stats={stats}
+      usageData={usageData}
+      billingHistory={formattedBillingHistory}
+      onCancelAutoRenewal={handleCancelAutoRenewal}
+      onRequestRefund={handleRequestRefund}
       onUpgrade={() => navigate('/pricing')}
       onBuyCredits={() => navigate('/pricing')}
       onBack={() => navigate(-1)}
