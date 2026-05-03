@@ -152,6 +152,9 @@ export async function fetchBillingHistory(): Promise<{
       purchaseDate: item.purchase_date,
       paymentId: item.payment_id,
       subscriptionId: item.subscription_id,
+      // 新增：自动续费取消状态和下次扣费日期
+      isAutoRenewalCancelled: item.is_auto_renewal_cancelled || false,
+      nextBillingDate: item.next_billing_date,
     }));
 
     return { data: billingHistory, error: null };
