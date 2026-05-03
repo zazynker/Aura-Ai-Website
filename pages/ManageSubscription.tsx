@@ -464,7 +464,7 @@ console.log('stats prop:', stats);
                 <Button 
                   variant="gradient" 
                   onClick={handleCancelAutoRenewalSubmit} 
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || selectedOrder.isAutoRenewalCancelled}
                 >
                   {isSubmitting ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Submitting...</> : 'Confirm Cancellation'}
                 </Button>
@@ -499,10 +499,12 @@ console.log('stats prop:', stats);
 
             <div className="space-y-3">
               {selectedOrder.orderType === 'subscription' && (
-                <label className={`block border rounded-xl p-4 cursor-pointer transition-colors ${
-                  cancelType === 'auto-renewal' 
-                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/10' 
-                    : 'border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                <label className={`block border rounded-xl p-4 transition-colors ${
+                  selectedOrder.isAutoRenewalCancelled
+                    ? 'border-slate-200 dark:border-white/5 opacity-60 cursor-not-allowed bg-slate-50 dark:bg-slate-800/30'
+                    : cancelType === 'auto-renewal' 
+                      ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/10 cursor-pointer' 
+                      : 'border-slate-200 dark:border-white/10 hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer'
                 }`}>
                   <div className="flex items-start gap-3">
                     <div className="mt-1">
@@ -510,16 +512,26 @@ console.log('stats prop:', stats);
                         type="radio" 
                         name="cancel_type" 
                         value="auto-renewal"
+                        disabled={selectedOrder.isAutoRenewalCancelled}
                         checked={cancelType === 'auto-renewal'}
                         onChange={() => setCancelType('auto-renewal')}
-                        className="w-4 h-4 text-purple-600 border-slate-300 focus:ring-purple-500 dark:border-slate-600 dark:bg-slate-700"
+                        className="w-4 h-4 text-purple-600 border-slate-300 focus:ring-purple-500 dark:border-slate-600 dark:bg-slate-700 disabled:opacity-50"
                       />
                     </div>
                     <div>
                       <div className="font-semibold text-slate-900 dark:text-white text-sm">Cancel Auto-Renewal</div>
                       <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                        Your Pro benefits will continue until {selectedOrder.nextBillingDate ? new Date(selectedOrder.nextBillingDate).toLocaleDateString() : 'the end of the cycle'}. You won't be charged again.
+                        {selectedOrder.isAutoRenewalCancelled 
+                          ? 'Auto-renewal has already been cancelled for this subscription.'
+                          : `Your Pro benefits will continue until ${selectedOrder.nextBillingDate ? new Date(selectedOrder.nextBillingDate).toLocaleDateString() : 'the end of the cycle'}. You won't be charged again.`
+                        }
                       </div>
+                      {selectedOrder.isAutoRenewalCancelled && (
+                        <div className="text-xs text-amber-600 dark:text-amber-400 mt-2 font-medium flex items-center gap-1">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          Already cancelled
+                        </div>
+                      )}
                     </div>
                   </div>
                 </label>
