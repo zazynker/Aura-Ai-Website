@@ -6,7 +6,7 @@ interface ModalProps {
   onClose: () => void;
   title?: string;
   children: React.ReactNode;
-  footer?: React.ReactNode;  // 新增
+  footer?: React.ReactNode;
 }
 
 export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer }) => {
@@ -33,7 +33,13 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
             <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
           </button>
         </div>
-        <div className="p-6">
+        <div 
+          className="p-6 max-h-[70vh] overflow-y-auto"
+          style={{
+            scrollbarWidth: 'thin',
+            scrollbarColor: '#94a3b8 transparent'
+          }}
+        >
           {children}
         </div>
         {footer && (
