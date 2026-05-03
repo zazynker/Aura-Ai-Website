@@ -107,8 +107,8 @@ console.log('stats prop:', stats);
   const handleOpenCancelModal = (order: ManageSubscriptionPageProps['billingHistory'][0]) => {
     setSelectedOrder(order);
     
-    // Set default cancel type
-    if (order.orderType === 'subscription') {
+    // Set default cancel type - 如果已取消自动续费，默认选中退款选项
+    if (order.orderType === 'subscription' && !order.isAutoRenewalCancelled) {
       setCancelType('auto-renewal');
     } else {
       setCancelType('refund');
