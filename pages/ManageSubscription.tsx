@@ -820,7 +820,7 @@ export const ManageSubscription = () => {
     orderType: record.orderType,
     productType: record.productType,
     nextBillingDate: activeSubscription?.nextBillingDate,
-    isAutoRenewalCancelled: activeSubscription?.isCancelled,
+    isAutoRenewalCancelled: record.isAutoRenewalCancelled,
     refundEligible: record.refundEligible,
     refundIneligibleReason: record.refundIneligibleReason,
     creditsUsed: record.creditsUsed,
