@@ -647,12 +647,13 @@ export async function fetchUserCredits(): Promise<{
       // 如果用户不存在，创建新用户记录
       if (error.code === 'PGRST116') {
         console.log('User not found in users table, creating...');
+        const welcomeCredits = 120;
         const newUserData = {
           id: user.id,
           email: user.email,
-          credits: 120,
+          credits: welcomeCredits,
           plan: 'Free',
-          max_credits: 120,
+          max_credits: welcomeCredits,
           is_whitelisted: false,
           is_admin: false
         };
@@ -666,6 +667,23 @@ export async function fetchUserCredits(): Promise<{
         if (insertError) {
           console.error('Error creating user:', insertError);
           return { data: null, error: insertError.message };
+        }
+        
+        // 创建 free_welcome 类型的 purchase 记录，确保积分有账本记录
+        const { error: purchaseError } = await supabase
+          .from('purchases')
+          .insert({
+            user_id: user.id,
+            user_email: user.email,
+            product_type: 'free_welcome',
+            amount_cents: 0,
+            credits_granted: welcomeCredits,
+            credits_remaining: welcomeCredits,
+          });
+        
+        if (purchaseError) {
+          console.error('Error creating welcome purchase record:', purchaseError);
+          // 不阻止用户创建，只记录错误
         }
         
         return { 
