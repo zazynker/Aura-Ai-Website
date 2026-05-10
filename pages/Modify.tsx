@@ -731,7 +731,7 @@ export const Modify = () => {
           setGeneratedResults(newImages);
           setSelectedGroup(null);
           setCurrentImage(newImages[0]);
-          setShowResults(true);
+          setShowResults(newImages.length > 1);
           setProgress(0);
           addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits.`);
       }, 300);
@@ -862,7 +862,7 @@ export const Modify = () => {
         setCurrentImage(newImages[0]);
         setHasSelectedImage(true);
         setActiveTool(null); // Close T2I panel after success
-        setShowResults(true);
+        setShowResults(newImages.length > 1);
         setProgress(0);
         addToast('success', `Generated ${newImages.length} image(s)! Used ${totalCreditsUsed} credits.`);
       }, 300);
