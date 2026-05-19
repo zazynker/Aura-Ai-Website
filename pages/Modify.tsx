@@ -9,6 +9,14 @@ import { Generation, Template } from '../types';
 import { generateImages } from '../utils/generateService';
 import { uploadUserImage, validateFile } from '../utils/uploadService';
 
+// === Admin Fake Generation Queue ===
+interface FakeQueueItem {
+  id: string;
+  type: 'single' | 'group';
+  images: string[];   // blob URLs from local upload
+  order: number;
+}
+
 // 将同一批生成的图片分组
 const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => {
     const groups: { [key: string]: Generation[] } = {};
@@ -118,6 +126,11 @@ export const Modify = () => {
   const [t2iSize, setT2iSize] = useState('1K');
   const [t2iOutputCount, setT2iOutputCount] = useState(4);
   const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | null>(null);
+
+  // Admin Demo Mode - Fake Generation Queue (never persisted, memory only)
+  const [showFakeQueue, setShowFakeQueue] = useState(false);
+  const [fakeQueue, setFakeQueue] = useState<FakeQueueItem[]>([]);
+  const [fakeQueueIndex, setFakeQueueIndex] = useState(0);
 
   // Templates cache for collections (fetched from Supabase)
   const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
@@ -1023,98 +1036,261 @@ export const Modify = () => {
                 </div>
 
                 <h3 className="text-xs font-bold text-slate-500 dark:text-slate-400 mb-4 uppercase tracking-wider pl-1 flex items-center gap-2 truncate">
-                    {activeTool === 'text2img' ? (
-                        <>
-                            <Type className="w-4 h-4 shrink-0 text-orange-500" /> 
-                            Text to Image
-                        </>
-                    ) : (
-                        <>
-                            <Layers className="w-4 h-4 shrink-0" /> 
-                            {historyTab === 'current' ? 'Session' : 'All History'}
-                        </>
-                    )}
-                </h3>
+    {activeTool === 'text2img' ? (
+        <>
+            <Type className="w-4 h-4 shrink-0 text-orange-500" /> 
+            Text to Image
+        </>
+    ) : (
+        <>
+            <Layers className="w-4 h-4 shrink-0" /> 
+            {historyTab === 'current' ? (
+                <span
+                    onClick={user?.isAdmin ? () => setShowFakeQueue(prev => !prev) : undefined}
+                    style={user?.isAdmin ? { cursor: 'default', userSelect: 'none' } : undefined}
+                >
+                    Session
+                </span>
+            ) : 'All History'}
+        </>
+    )}
+</h3>
                 
                 {historyTab === 'current' ? (
                     // CURRENT SOURCE HISTORY VIEW
                     <>
-                    {history.length > 0 ? (
-                        <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                            {groupGenerations(history).map((item, idx) => {
-                                if (Array.isArray(item)) {
-                                    // 分组显示
-                                    const group = item;
-                                    const isSelected = group.some(g => currentImage === g.imageUrl);
-                                    return (
-                                        <div 
-                                            key={`group_${idx}`} 
-                                            onClick={() => handleGroupClick(group)}
-                                            className="relative aspect-square cursor-pointer group shrink-0"
-                                        >
-                                            {/* 堆叠效果 */}
-                                            <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
-                                            <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
-                                            <div className={`absolute inset-0 rounded-xl overflow-hidden border-2 transition-all z-10 ${
-                                                isSelected
-                                                ? 'border-purple-500 ring-2 ring-purple-500/20' 
-                                                : 'border-transparent group-hover:border-purple-500/50'
+                    {/* Admin Fake Queue Panel - replaces history when active */}
+                    {showFakeQueue && user?.isAdmin ? (
+                        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                            <div className="space-y-3">
+                                {/* Upload Buttons */}
+                                <div className="space-y-2">
+                                    <label className="relative flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-slate-300 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 cursor-pointer transition-all text-xs font-medium text-slate-600 dark:text-slate-300">
+                                        <Plus className="w-3.5 h-3.5" /> Add Single Image
+                                        <input 
+                                            type="file" 
+                                            accept="image/png,image/jpeg,image/webp" 
+                                            className="absolute inset-0 opacity-0 cursor-pointer" 
+                                            onChange={(e) => {
+                                                const file = e.target.files?.[0];
+                                                if (!file) return;
+                                                const url = URL.createObjectURL(file);
+                                                setFakeQueue(prev => [...prev, {
+                                                    id: crypto.randomUUID(),
+                                                    type: 'single',
+                                                    images: [url],
+                                                    order: prev.length
+                                                }]);
+                                                e.target.value = '';
+                                            }}
+                                        />
+                                    </label>
+                                    <label className="relative flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-slate-300 dark:border-white/10 hover:border-purple-500/50 hover:bg-purple-50/50 dark:hover:bg-purple-500/5 cursor-pointer transition-all text-xs font-medium text-slate-600 dark:text-slate-300">
+                                        <Layers className="w-3.5 h-3.5" /> Add Image Group
+                                        <input 
+                                            type="file" 
+                                            accept="image/png,image/jpeg,image/webp" 
+                                            multiple 
+                                            className="absolute inset-0 opacity-0 cursor-pointer" 
+                                            onChange={(e) => {
+                                                const files = e.target.files;
+                                                if (!files || files.length === 0) return;
+                                                const urls = Array.from(files as FileList).map(f => URL.createObjectURL(f));
+                                                setFakeQueue(prev => [...prev, {
+                                                    id: crypto.randomUUID(),
+                                                    type: 'group',
+                                                    images: urls,
+                                                    order: prev.length
+                                                }]);
+                                                e.target.value = '';
+                                            }}
+                                        />
+                                    </label>
+                                </div>
+
+                                {/* Queue List */}
+                                {fakeQueue.length > 0 ? (
+                                    <div className="space-y-2">
+                                        {fakeQueue.map((item, idx) => (
+                                            <div key={item.id} className={`flex items-center gap-2 p-2 rounded-lg border transition-all ${
+                                                idx < fakeQueueIndex 
+                                                    ? 'border-slate-200 dark:border-white/5 opacity-40' 
+                                                    : idx === fakeQueueIndex 
+                                                        ? 'border-purple-500/50 bg-purple-50/50 dark:bg-purple-500/5' 
+                                                        : 'border-slate-200 dark:border-white/10'
                                             }`}>
-                                                <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="history group" />
-                                                {/* 数量徽章 */}
-                                                <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
-                                                    <Layers className="w-3 h-3" /> {group.length}
+                                                {/* Order number */}
+                                                <span className={`text-[10px] font-bold w-5 text-center shrink-0 ${
+                                                    idx === fakeQueueIndex ? 'text-purple-600 dark:text-purple-400' : 'text-slate-400'
+                                                }`}>#{idx + 1}</span>
+
+                                                {/* Thumbnail */}
+                                                <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-200 dark:border-white/10 shrink-0 relative">
+                                                    <img src={item.images[0]} className="w-full h-full object-cover" alt="" />
+                                                    {item.type === 'group' && (
+                                                        <div className="absolute bottom-0 right-0 bg-black/70 text-white text-[8px] px-1 rounded-tl font-bold">{item.images.length}</div>
+                                                    )}
                                                 </div>
-                                                {/* Hover 显示 prompt */}
-                                                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
+
+                                                {/* Type label */}
+                                                <span className="text-[10px] text-slate-500 dark:text-slate-400 flex-1 truncate">
+                                                    {item.type === 'single' ? 'Single' : `Group ×${item.images.length}`}
+                                                </span>
+
+                                                {/* Move & Delete buttons */}
+                                                <div className="flex items-center gap-0.5 shrink-0">
+                                                    <button 
+                                                        onClick={() => {
+                                                            if (idx === 0) return;
+                                                            setFakeQueue(prev => {
+                                                                const arr = [...prev];
+                                                                [arr[idx - 1], arr[idx]] = [arr[idx], arr[idx - 1]];
+                                                                return arr.map((it, i) => ({ ...it, order: i }));
+                                                            });
+                                                        }}
+                                                        disabled={idx === 0}
+                                                        className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded disabled:opacity-20 transition-colors"
+                                                    >
+                                                        <ArrowUp className="w-3 h-3 text-slate-500" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            if (idx === fakeQueue.length - 1) return;
+                                                            setFakeQueue(prev => {
+                                                                const arr = [...prev];
+                                                                [arr[idx], arr[idx + 1]] = [arr[idx + 1], arr[idx]];
+                                                                return arr.map((it, i) => ({ ...it, order: i }));
+                                                            });
+                                                        }}
+                                                        disabled={idx === fakeQueue.length - 1}
+                                                        className="p-1 hover:bg-slate-100 dark:hover:bg-white/5 rounded disabled:opacity-20 transition-colors rotate-180"
+                                                    >
+                                                        <ArrowUp className="w-3 h-3 text-slate-500" />
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => {
+                                                            setFakeQueue(prev => {
+                                                                const filtered = prev.filter(it => it.id !== item.id);
+                                                                return filtered.map((it, i) => ({ ...it, order: i }));
+                                                            });
+                                                            // Adjust index if we removed an item before or at current pointer
+                                                            if (idx < fakeQueueIndex) {
+                                                                setFakeQueueIndex(prev => Math.max(0, prev - 1));
+                                                            } else if (idx === fakeQueueIndex && fakeQueueIndex >= fakeQueue.length - 1) {
+                                                                setFakeQueueIndex(prev => Math.max(0, prev - 1));
+                                                            }
+                                                        }}
+                                                        className="p-1 hover:bg-red-50 dark:hover:bg-red-500/10 rounded transition-colors"
+                                                    >
+                                                        <Trash2 className="w-3 h-3 text-red-400" />
+                                                    </button>
                                                 </div>
                                             </div>
-                                        </div>
-                                    );
-                                } else {
-                                    // 单张显示
-                                    const gen = item;
-                                    return (
-                                        <div
-                                            key={gen.id}
-                                            onClick={() => handleSelectFromHistory(gen.imageUrl)}
-                                            className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${
-                                            currentImage === gen.imageUrl
-                                                ? 'border-purple-500 ring-2 ring-purple-500/20'
-                                                : 'border-transparent hover:border-purple-500/50'
-                                            }`}
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-6 text-xs text-slate-400">
+                                        <p>No items in queue</p>
+                                        <p className="mt-1 text-[10px]">Upload images above</p>
+                                    </div>
+                                )}
+
+                                {/* Queue Status & Reset */}
+                                <div className="pt-2 border-t border-slate-200 dark:border-white/5 space-y-2">
+                                    <div className="flex items-center justify-between text-[10px]">
+                                        <span className="text-slate-400">Queue: {fakeQueue.length} items</span>
+                                        {fakeQueueIndex < fakeQueue.length ? (
+                                            <span className="text-purple-500 font-medium">Next: #{fakeQueueIndex + 1}</span>
+                                        ) : fakeQueue.length > 0 ? (
+                                            <span className="text-red-400 font-medium">Exhausted → Real API</span>
+                                        ) : null}
+                                    </div>
+                                    {fakeQueue.length > 0 && (
+                                        <button 
+                                            onClick={() => { setFakeQueue([]); setFakeQueueIndex(0); }}
+                                            className="w-full py-1.5 text-[10px] font-medium text-red-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/5 rounded-lg transition-colors"
                                         >
-                                            <img
-                                            src={gen.imageUrl}
-                                            className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                                            alt="History item"
-                                            loading="lazy"
-                                            />
-                                            {gen.isOriginal && (
-                                                <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white font-medium border border-white/10">
-                                                Original
-                                                </div>
-                                            )}
-                                            {/* Hover 显示 prompt */}
-                                            <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <p className="text-[10px] text-white truncate">{gen.prompt}</p>
-                                            </div>
-                                        </div>
-                                    );
-                                }
-                            })}
+                                            Reset Queue
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
                         </div>
                     ) : (
-                        <div className="flex-1 flex flex-col items-center justify-center text-center px-4 gap-4">
-                        <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center">
-                            <Layers className="w-8 h-8 text-slate-400 dark:text-white/20" />
-                        </div>
-                        <div>
-                            <p className="text-sm font-medium text-slate-900 dark:text-white">No history for this source</p>
-                            <p className="text-xs text-slate-500 mt-1">Generate some images first</p>
-                        </div>
-                        </div>
+                        /* Original history list - unchanged */
+                        <>
+                        {history.length > 0 ? (
+                            <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                                {groupGenerations(history).map((item, idx) => {
+                                    if (Array.isArray(item)) {
+                                        const group = item;
+                                        const isSelected = group.some(g => currentImage === g.imageUrl);
+                                        return (
+                                            <div 
+                                                key={`group_${idx}`} 
+                                                onClick={() => handleGroupClick(group)}
+                                                className="relative aspect-square cursor-pointer group shrink-0"
+                                            >
+                                                <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
+                                                <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
+                                                <div className={`absolute inset-0 rounded-xl overflow-hidden border-2 transition-all z-10 ${
+                                                    isSelected
+                                                    ? 'border-purple-500 ring-2 ring-purple-500/20' 
+                                                    : 'border-transparent group-hover:border-purple-500/50'
+                                                }`}>
+                                                    <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="history group" />
+                                                    <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
+                                                        <Layers className="w-3 h-3" /> {group.length}
+                                                    </div>
+                                                    <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    } else {
+                                        const gen = item;
+                                        return (
+                                            <div
+                                                key={gen.id}
+                                                onClick={() => handleSelectFromHistory(gen.imageUrl)}
+                                                className={`group relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${
+                                                currentImage === gen.imageUrl
+                                                    ? 'border-purple-500 ring-2 ring-purple-500/20'
+                                                    : 'border-transparent hover:border-purple-500/50'
+                                                }`}
+                                            >
+                                                <img
+                                                src={gen.imageUrl}
+                                                className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                                                alt="History item"
+                                                loading="lazy"
+                                                />
+                                                {gen.isOriginal && (
+                                                    <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-[10px] text-white font-medium border border-white/10">
+                                                    Original
+                                                    </div>
+                                                )}
+                                                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <p className="text-[10px] text-white truncate">{gen.prompt}</p>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+                                })}
+                            </div>
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-center px-4 gap-4">
+                            <div className="w-16 h-16 rounded-full bg-slate-100 dark:bg-white/5 flex items-center justify-center">
+                                <Layers className="w-8 h-8 text-slate-400 dark:text-white/20" />
+                            </div>
+                            <div>
+                                <p className="text-sm font-medium text-slate-900 dark:text-white">No history for this source</p>
+                                <p className="text-xs text-slate-500 mt-1">Generate some images first</p>
+                            </div>
+                            </div>
+                        )}
+                        </>
                     )}
                     </>
                 ) : (
