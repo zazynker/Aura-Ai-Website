@@ -471,6 +471,43 @@ export const Modify = () => {
         return;
     }
 
+    // === Admin Fake Generation: intercept before real API ===
+    if (user?.isAdmin && fakeQueue.length > 0 && fakeQueueIndex < fakeQueue.length) {
+      const currentItem = fakeQueue[fakeQueueIndex];
+      
+      setIsGenerating(true);
+      setShowResults(false);
+      setProgress(0);
+      setGenerationContext(promptText || toolName);
+
+      // Simulate progress animation (same as real flow)
+      const fakeProgressInterval = setInterval(() => {
+        setProgress(prev => Math.min(prev + 1, 90));
+      }, 300);
+
+      // Simulate API delay (3-6 seconds for realism)
+      const delay = 3000 + Math.random() * 3000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+
+      clearInterval(fakeProgressInterval);
+      setProgress(100);
+
+      const fakeImages = currentItem.images;
+      
+      setTimeout(() => {
+        setIsGenerating(false);
+        setGeneratedResults(fakeImages);
+        setSelectedGroup(null);
+        setCurrentImage(fakeImages[0]);
+        setShowResults(true);
+        setProgress(0);
+        addToast('success', `Generated ${fakeImages.length} image(s)!`);
+      }, 300);
+
+      setFakeQueueIndex(prev => prev + 1);
+      return; // Skip real API entirely
+    }
+
     setIsGenerating(true);
     setShowResults(false);
     setProgress(0);
@@ -774,6 +811,40 @@ export const Modify = () => {
 
     if (!t2iPrompt.trim()) {
       addToast('error', 'Please enter a prompt');
+      return;
+    }
+
+    // === Admin Fake Generation: intercept before real API ===
+    if (user?.isAdmin && fakeQueue.length > 0 && fakeQueueIndex < fakeQueue.length) {
+      const currentItem = fakeQueue[fakeQueueIndex];
+      
+      setIsGenerating(true);
+      setShowResults(false);
+      setProgress(0);
+
+      const fakeProgressInterval = setInterval(() => {
+        setProgress(prev => Math.min(prev + Math.random() * 8, 90));
+      }, 500);
+
+      const delay = 3000 + Math.random() * 3000;
+      await new Promise(resolve => setTimeout(resolve, delay));
+
+      clearInterval(fakeProgressInterval);
+      setProgress(100);
+
+      const fakeImages = currentItem.images;
+
+      setTimeout(() => {
+        setIsGenerating(false);
+        setGeneratedResults(fakeImages);
+        setSelectedGroup(null);
+        setCurrentImage(fakeImages[0]);
+        setShowResults(true);
+        setProgress(0);
+        addToast('success', `Generated ${fakeImages.length} image(s)!`);
+      }, 300);
+
+      setFakeQueueIndex(prev => prev + 1);
       return;
     }
 
