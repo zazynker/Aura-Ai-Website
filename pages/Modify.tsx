@@ -487,7 +487,7 @@ export const Modify = () => {
       }, 300);
 
       // Simulate API delay (3-6 seconds for realism)
-      const delay = 3000 + Math.random() * 3000;
+      const delay = 10000;
       await new Promise(resolve => setTimeout(resolve, delay));
 
       clearInterval(fakeProgressInterval);
@@ -827,7 +827,7 @@ export const Modify = () => {
         setProgress(prev => Math.min(prev + Math.random() * 8, 90));
       }, 500);
 
-      const delay = 3000 + Math.random() * 3000;
+      const delay = 10000;
       await new Promise(resolve => setTimeout(resolve, delay));
 
       clearInterval(fakeProgressInterval);
