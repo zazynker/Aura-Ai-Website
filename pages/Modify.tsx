@@ -471,6 +471,7 @@ export const Modify = () => {
         return;
     }
 
+    console.log('=== FAKE CHECK ===', 'isAdmin:', user?.isAdmin, 'queueLen:', fakeQueue.length, 'idx:', fakeQueueIndex, 'queue:', fakeQueue);
     // === Admin Fake Generation: intercept before real API ===
     if (user?.isAdmin && fakeQueue.length > 0 && fakeQueueIndex < fakeQueue.length) {
       const currentItem = fakeQueue[fakeQueueIndex];
