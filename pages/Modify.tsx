@@ -127,10 +127,20 @@ export const Modify = () => {
   const [t2iOutputCount, setT2iOutputCount] = useState(4);
   const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | null>(null);
 
-  // Admin Demo Mode - Fake Generation Queue (never persisted, memory only)
+  // 🔧 CHANGED: Admin Demo Mode - persist to sessionStorage (survives route changes, clears on tab close)
   const [showFakeQueue, setShowFakeQueue] = useState(false);
-  const [fakeQueue, setFakeQueue] = useState<FakeQueueItem[]>([]);
-  const [fakeQueueIndex, setFakeQueueIndex] = useState(0);
+  const [fakeQueue, setFakeQueue] = useState<FakeQueueItem[]>(() => {
+      try {
+          const saved = sessionStorage.getItem('lazora_fake_queue');
+          return saved ? JSON.parse(saved) : [];
+      } catch { return []; }
+  });
+  const [fakeQueueIndex, setFakeQueueIndex] = useState(() => {
+      try {
+          const saved = sessionStorage.getItem('lazora_fake_queue_index');
+          return saved ? parseInt(saved, 10) : 0;
+      } catch { return 0; }
+  });
 
   // Templates cache for collections (fetched from Supabase)
   const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
@@ -250,6 +260,19 @@ export const Modify = () => {
           window.history.replaceState({}, document.title);
       }
   }, []); // Run only once on mount
+
+  // 🔧 CHANGED: Persist fake queue to sessionStorage
+  useEffect(() => {
+      if (fakeQueue.length > 0) {
+          sessionStorage.setItem('lazora_fake_queue', JSON.stringify(fakeQueue));
+      } else {
+          sessionStorage.removeItem('lazora_fake_queue');
+      }
+  }, [fakeQueue]);
+
+  useEffect(() => {
+      sessionStorage.setItem('lazora_fake_queue_index', String(fakeQueueIndex));
+  }, [fakeQueueIndex]);
 
   // Persist Session
   useEffect(() => {
