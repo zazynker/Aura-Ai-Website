@@ -520,11 +520,13 @@ export const Modify = () => {
       
       setTimeout(() => {
         setIsGenerating(false);
-        setGeneratedResults(fakeImages);
-        setSelectedGroup(null);
         setCurrentImage(fakeImages[0]);
-        setShowResults(true);
         setProgress(0);
+        if (fakeImages.length > 1) {
+          setGeneratedResults(fakeImages);
+          setSelectedGroup(null);
+          setShowResults(true);
+        }
         addToast('success', `Generated ${fakeImages.length} image(s)!`);
       }, 300);
 
@@ -860,11 +862,13 @@ export const Modify = () => {
 
       setTimeout(() => {
         setIsGenerating(false);
-        setGeneratedResults(fakeImages);
-        setSelectedGroup(null);
         setCurrentImage(fakeImages[0]);
-        setShowResults(true);
         setProgress(0);
+        if (fakeImages.length > 1) {
+          setGeneratedResults(fakeImages);
+          setSelectedGroup(null);
+          setShowResults(true);
+        }
         addToast('success', `Generated ${fakeImages.length} image(s)!`);
       }, 300);
 
