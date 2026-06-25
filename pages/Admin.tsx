@@ -68,7 +68,7 @@ export const Admin = () => {
   const [userGensTotal, setUserGensTotal] = useState(0);
   const [userGensPage, setUserGensPage] = useState(1);
   const [userGensLoading, setUserGensLoading] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewGen, setPreviewGen] = useState<AdminGeneration | null>(null);
 
   // Check admin status on mount
   useEffect(() => {
@@ -779,7 +779,7 @@ export const Admin = () => {
       {/* User Generations Modal */}
       <Modal
         isOpen={!!viewingUser}
-        onClose={() => { setViewingUser(null); setPreviewImage(null); }}
+        onClose={() => { setViewingUser(null); setPreviewGen(null); }}
         title={`Generations: ${viewingUser?.email}`}
       >
         {viewingUser && (
@@ -794,23 +794,7 @@ export const Admin = () => {
               )}
             </div>
 
-            {/* Image Preview */}
-            {previewImage && (
-              <div className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
-                <button 
-                  className="absolute top-4 right-4 text-white hover:text-slate-300"
-                  onClick={() => setPreviewImage(null)}
-                >
-                  <X className="w-8 h-8" />
-                </button>
-                <img 
-                  src={previewImage} 
-                  alt="Preview" 
-                  className="max-w-full max-h-[90vh] object-contain rounded-lg"
-                  onClick={(e) => e.stopPropagation()}
-                />
-              </div>
-            )}
+
 
             {/* Loading */}
             {userGensLoading ? (
@@ -834,7 +818,7 @@ export const Admin = () => {
                       {/* Thumbnail */}
                       <div 
                         className="relative aspect-square bg-slate-100 dark:bg-slate-800 cursor-pointer"
-                        onClick={() => setPreviewImage(gen.image_url)}
+                        onClick={() => setPreviewGen(gen)}
                       >
                         <img 
                           src={gen.image_url} 
@@ -896,6 +880,71 @@ export const Admin = () => {
           </div>
         )}
       </Modal>
+
+      {/* Fullscreen Image Preview (outside Modal so it's not clipped) */}
+      {previewGen && (
+        <div 
+          className="fixed inset-0 z-[9999] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setPreviewGen(null)}
+        >
+          <button 
+            className="absolute top-4 right-4 z-10 text-white/70 hover:text-white transition-colors"
+            onClick={() => setPreviewGen(null)}
+          >
+            <X className="w-8 h-8" />
+          </button>
+          
+          <div className="flex flex-col lg:flex-row gap-6 max-w-6xl w-full max-h-[90vh] items-center" onClick={(e) => e.stopPropagation()}>
+            {/* Image */}
+            <div className="flex-1 flex items-center justify-center min-h-0">
+              <img 
+                src={previewGen.image_url} 
+                alt={previewGen.template_name || 'Generation'}
+                className="max-w-full max-h-[80vh] object-contain rounded-lg"
+              />
+            </div>
+            
+            {/* Info Panel */}
+            <div className="lg:w-80 w-full bg-white/10 backdrop-blur-sm rounded-xl p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+              <div>
+                <p className="text-xs text-white/50 uppercase tracking-wider mb-1">Template</p>
+                <p className="text-sm text-white font-medium">
+                  {previewGen.template_name || 'Custom prompt'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-white/50 uppercase tracking-wider mb-1">Full Prompt</p>
+                <p className="text-sm text-white/90 whitespace-pre-wrap break-words leading-relaxed">
+                  {previewGen.prompt || '(no prompt)'}
+                </p>
+              </div>
+              <div className="flex gap-4">
+                <div>
+                  <p className="text-xs text-white/50 uppercase tracking-wider mb-1">Credits</p>
+                  <p className="text-sm text-orange-400 font-mono">{previewGen.credits_used}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-white/50 uppercase tracking-wider mb-1">Date</p>
+                  <p className="text-sm text-white/80">
+                    {new Date(previewGen.created_at).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-white/50 uppercase tracking-wider mb-1">Image URL</p>
+                <a 
+                  href={previewGen.image_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-xs text-purple-400 hover:text-purple-300 break-all"
+                >
+                  Open in new tab →
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
