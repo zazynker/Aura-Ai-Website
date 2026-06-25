@@ -256,3 +256,51 @@ export async function adminGetUnusedTemplates(
     return { data: null, error: 'Failed to fetch unused templates' };
   }
 }
+/**
+ * 获取指定用户的生成记录（管理员专用）
+ */
+export interface AdminGeneration {
+  id: string;
+  image_url: string;
+  template_name: string | null;
+  prompt: string;
+  credits_used: number;
+  created_at: string;
+}
+
+export async function adminGetUserGenerations(
+  userId: string,
+  page: number = 1,
+  pageSize: number = 20
+): Promise<{
+  data: { generations: AdminGeneration[]; total: number } | null;
+  error: string | null;
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_get_user_generations', {
+      target_user_id: userId,
+      page_num: page,
+      page_size: pageSize,
+    });
+
+    if (error) {
+      console.error('Error fetching user generations:', error);
+      return { data: null, error: error.message };
+    }
+
+    if (!data.success) {
+      return { data: null, error: data.error || 'Unknown error' };
+    }
+
+    return {
+      data: {
+        generations: data.generations || [],
+        total: data.total || 0,
+      },
+      error: null,
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to fetch user generations' };
+  }
+}
