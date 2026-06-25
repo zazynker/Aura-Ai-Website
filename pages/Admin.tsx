@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Shield, Users, TrendingUp, Zap, Search, Crown, 
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
-  Settings, BarChart3, RefreshCw, Image, AlertTriangle
+  Settings, BarChart3, RefreshCw, Image, AlertTriangle,
+  Eye, X
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
@@ -15,7 +16,9 @@ import {
   adminGetTemplateStats,
   adminGetUnusedTemplates,
   adminUpdateCredits,
-  adminUpdatePlan
+  adminUpdatePlan,
+  adminGetUserGenerations,
+  AdminGeneration
 } from '../utils/adminApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
@@ -58,6 +61,14 @@ export const Admin = () => {
   const [newPlan, setNewPlan] = useState<'Free' | 'Pro'>('Free');
   const [bonusCredits, setBonusCredits] = useState('0');
   const [isUpdating, setIsUpdating] = useState(false);
+
+  // Generations modal state
+  const [viewingUser, setViewingUser] = useState<AdminUser | null>(null);
+  const [userGenerations, setUserGenerations] = useState<AdminGeneration[]>([]);
+  const [userGensTotal, setUserGensTotal] = useState(0);
+  const [userGensPage, setUserGensPage] = useState(1);
+  const [userGensLoading, setUserGensLoading] = useState(false);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   // Check admin status on mount
   useEffect(() => {
@@ -163,6 +174,28 @@ export const Admin = () => {
     setCreditOperation('add');
     setNewPlan(u.plan as 'Free' | 'Pro');
     setBonusCredits('0');
+  };
+
+  // Handle view user generations
+  const openGenerationsModal = async (u: AdminUser) => {
+    setViewingUser(u);
+    setUserGenerations([]);
+    setUserGensPage(1);
+    setUserGensTotal(0);
+    await loadUserGenerations(u.id, 1);
+  };
+
+  const loadUserGenerations = async (userId: string, page: number) => {
+    setUserGensLoading(true);
+    const { data, error } = await adminGetUserGenerations(userId, page, 12);
+    if (error) {
+      addToast('error', `Failed to load generations: ${error}`);
+    } else if (data) {
+      setUserGenerations(data.generations);
+      setUserGensTotal(data.total);
+      setUserGensPage(page);
+    }
+    setUserGensLoading(false);
   };
 
   // Handle update credits
@@ -429,14 +462,24 @@ export const Admin = () => {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <Button 
-                            variant="secondary" 
-                            size="sm"
-                            onClick={() => openEditModal(u)}
-                          >
-                            <Settings className="w-3 h-3 mr-1" />
-                            Edit
-                          </Button>
+                          <div className="flex gap-1 justify-end">
+                            <Button 
+                              variant="secondary" 
+                              size="sm"
+                              onClick={() => openGenerationsModal(u)}
+                            >
+                              <Eye className="w-3 h-3 mr-1" />
+                              View
+                            </Button>
+                            <Button 
+                              variant="secondary" 
+                              size="sm"
+                              onClick={() => openEditModal(u)}
+                            >
+                              <Settings className="w-3 h-3 mr-1" />
+                              Edit
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -729,6 +772,127 @@ export const Admin = () => {
                 Bonus credits will be added when changing plan
               </p>
             </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* User Generations Modal */}
+      <Modal
+        isOpen={!!viewingUser}
+        onClose={() => { setViewingUser(null); setPreviewImage(null); }}
+        title={`Generations: ${viewingUser?.email}`}
+      >
+        {viewingUser && (
+          <div className="space-y-4">
+            {/* Stats bar */}
+            <div className="flex items-center justify-between text-sm text-slate-500">
+              <span>{userGensTotal} total generations</span>
+              {userGensTotal > 0 && (
+                <span>
+                  Page {userGensPage} / {Math.ceil(userGensTotal / 12)}
+                </span>
+              )}
+            </div>
+
+            {/* Image Preview */}
+            {previewImage && (
+              <div className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4" onClick={() => setPreviewImage(null)}>
+                <button 
+                  className="absolute top-4 right-4 text-white hover:text-slate-300"
+                  onClick={() => setPreviewImage(null)}
+                >
+                  <X className="w-8 h-8" />
+                </button>
+                <img 
+                  src={previewImage} 
+                  alt="Preview" 
+                  className="max-w-full max-h-[90vh] object-contain rounded-lg"
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
+            )}
+
+            {/* Loading */}
+            {userGensLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+              </div>
+            ) : userGenerations.length === 0 ? (
+              <div className="text-center py-12">
+                <Image className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+                <p className="text-slate-500">No generations found</p>
+              </div>
+            ) : (
+              <>
+                {/* Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-[60vh] overflow-y-auto pr-1">
+                  {userGenerations.map((gen) => (
+                    <div 
+                      key={gen.id}
+                      className="group glass-panel rounded-xl border border-slate-200 dark:border-white/10 overflow-hidden"
+                    >
+                      {/* Thumbnail */}
+                      <div 
+                        className="relative aspect-square bg-slate-100 dark:bg-slate-800 cursor-pointer"
+                        onClick={() => setPreviewImage(gen.image_url)}
+                      >
+                        <img 
+                          src={gen.image_url} 
+                          alt={gen.template_name || 'Generation'}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                          <Eye className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                      </div>
+                      {/* Info */}
+                      <div className="p-2 space-y-1">
+                        <p className="text-xs font-medium text-slate-900 dark:text-white truncate">
+                          {gen.template_name || 'Custom prompt'}
+                        </p>
+                        <p className="text-[10px] text-slate-400 truncate" title={gen.prompt}>
+                          {gen.prompt}
+                        </p>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono text-orange-500">
+                            {gen.credits_used} cr
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {new Date(gen.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Pagination */}
+                {userGensTotal > 12 && (
+                  <div className="flex justify-center gap-2 pt-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => loadUserGenerations(viewingUser.id, userGensPage - 1)}
+                      disabled={userGensPage === 1 || userGensLoading}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
+                    <span className="px-3 py-1 text-sm text-slate-600 dark:text-slate-300">
+                      {userGensPage} / {Math.ceil(userGensTotal / 12)}
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => loadUserGenerations(viewingUser.id, userGensPage + 1)}
+                      disabled={userGensPage === Math.ceil(userGensTotal / 12) || userGensLoading}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
       </Modal>
