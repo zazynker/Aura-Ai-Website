@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download } from 'lucide-react';
+import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download, Video } from 'lucide-react';
 import { useStore, estimateCredits, calculateCreditsFromTokens, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
@@ -8,6 +8,7 @@ import { Modal } from '../components/ui/Modal';
 import { Generation, Template } from '../types';
 import { generateImages } from '../utils/generateService';
 import { uploadUserImage, validateFile } from '../utils/uploadService';
+import { logVideoInterest } from '../utils/api';
 
 // === Admin Fake Generation Queue ===
 interface FakeQueueItem {
@@ -95,6 +96,7 @@ export const Modify = () => {
 
   // UI State
   const [showLightbox, setShowLightbox] = useState(false);
+  const [showVideoComingSoon, setShowVideoComingSoon] = useState(false);
   // Replace Product is DEFAULT OPEN when image is selected
   const [activeTool, setActiveTool] = useState<string | null>(hasSelectedImage ? 'replace' : null);
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
@@ -2315,11 +2317,49 @@ export const Modify = () => {
                             </p>
                         </div>
                     )}
+                    </div>
+    
+                    {/* 6. GENERATE VIDEO Tool (Coming Soon) */}
+                    <div className="glass-panel rounded-2xl transition-all duration-300">
+                        <button 
+                            onClick={() => {
+                                setShowVideoComingSoon(true);
+                                if (user) {
+                                    logVideoInterest();
+                                }
+                            }}
+                            className="w-full p-4 flex items-center justify-between text-left"
+                        >
+                            <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
+                                <Video className="w-5 h-5 text-emerald-500 dark:text-emerald-400" /> 
+                                Generate Video
+                                <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-full">Soon</span>
+                            </span>
+                            <ChevronDown className="w-4 h-4 text-slate-400"/>
+                        </button>
+                    </div>
                 </div>
+              </div>
+    
+          {/* Video Coming Soon Modal */}
+          <Modal isOpen={showVideoComingSoon} onClose={() => setShowVideoComingSoon(false)} title="Generate Video">
+            <div className="text-center space-y-4 py-4">
+              <div className="w-16 h-16 mx-auto rounded-full bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center">
+                <Video className="w-8 h-8 text-emerald-500" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Coming Next Month!</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
+                  AI video generation is on the way. Transform your product photos into stunning video content with one click.
+                </p>
+              </div>
+              <Button variant="gradient" onClick={() => setShowVideoComingSoon(false)}>
+                Got it
+              </Button>
             </div>
-          </div>
-
-      {/* Unified Image Picker Modal */}
+          </Modal>
+    
+          {/* Unified Image Picker Modal */}
       <Modal isOpen={showImagePicker} onClose={() => setShowImagePicker(false)} title="Change Image">
         <div className="space-y-4">
             {/* Tabs */}

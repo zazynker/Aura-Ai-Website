@@ -304,3 +304,32 @@ export async function adminGetUserGenerations(
     return { data: null, error: 'Failed to fetch user generations' };
   }
 }
+/**
+ * 获取视频兴趣点击统计（管理员专用）
+ */
+export async function adminGetVideoInterestStats(): Promise<{
+  data: { total_clicks: number; unique_users: number; recent_clicks: Array<{ email: string; clicked_at: string; click_count: number }> } | null;
+  error: string | null;
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_get_video_interest_stats');
+    if (error) {
+      console.error('Error fetching video interest stats:', error);
+      return { data: null, error: error.message };
+    }
+    if (!data?.success) {
+      return { data: null, error: data?.error || 'Unknown error' };
+    }
+    return {
+      data: {
+        total_clicks: data.total_clicks || 0,
+        unique_users: data.unique_users || 0,
+        recent_clicks: data.recent_clicks || [],
+      },
+      error: null,
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to fetch video interest stats' };
+  }
+}

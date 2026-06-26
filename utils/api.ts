@@ -810,3 +810,19 @@ export async function addUserCredits(
     return { success: false, newCredits: 0, error: 'Failed to add credits' };
   }
 }
+/**
+ * 记录用户对视频生成功能的兴趣点击
+ */
+export async function logVideoInterest(): Promise<{ success: boolean; error: string | null }> {
+  try {
+    const { data, error } = await supabase.rpc('log_video_interest');
+    if (error) {
+      console.error('Error logging video interest:', error);
+      return { success: false, error: error.message };
+    }
+    return { success: data?.success ?? false, error: data?.error || null };
+  } catch (err) {
+    console.error('Unexpected error logging video interest:', err);
+    return { success: false, error: 'Failed to log video interest' };
+  }
+}
