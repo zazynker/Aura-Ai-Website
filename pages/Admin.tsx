@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Shield, Users, TrendingUp, Zap, Search, Crown, 
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
-  Settings, BarChart3, RefreshCw, Image, AlertTriangle,
+  Settings, BarChart3, RefreshCw, Image, AlertTriangle, Video,
   Eye, X
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
@@ -17,12 +17,13 @@ import {
   adminGetUnusedTemplates,
   adminUpdateCredits,
   adminUpdatePlan,
+  adminGetVideoInterestStats,
   adminGetUserGenerations,
   AdminGeneration
 } from '../utils/adminApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
-type TabType = 'overview' | 'users' | 'templates' | 'unused';
+type TabType = 'overview' | 'users' | 'templates' | 'unused' | 'video';
 
 export const Admin = () => {
   const navigate = useNavigate();
@@ -53,6 +54,10 @@ export const Admin = () => {
   // Unused templates state
   const [unusedTemplates, setUnusedTemplates] = useState<UnusedTemplate[]>([]);
   const [unusedTemplatesLoading, setUnusedTemplatesLoading] = useState(false);
+
+  // Video interest state
+  const [videoInterestStats, setVideoInterestStats] = useState<{ total_clicks: number; unique_users: number; recent_clicks: Array<{ email: string; clicked_at: string; click_count: number }> } | null>(null);
+  const [videoInterestLoading, setVideoInterestLoading] = useState(false);
 
   // Edit user modal state
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -152,8 +157,22 @@ export const Admin = () => {
       loadTemplateStats();
     } else if (activeTab === 'unused' && unusedTemplates.length === 0) {
       loadUnusedTemplates();
+    } else if (activeTab === 'video' && !videoInterestStats) {
+      loadVideoInterestStats();
     }
   }, [activeTab, isAdmin, stats, users.length, templateStats.length, unusedTemplates.length, loadStats, loadUsers, loadTemplateStats, loadUnusedTemplates]);
+
+  // Load video interest stats
+  const loadVideoInterestStats = useCallback(async () => {
+    setVideoInterestLoading(true);
+    const { data, error } = await adminGetVideoInterestStats();
+    if (error) {
+      addToast('error', `Failed to load video interest stats: ${error}`);
+    } else if (data) {
+      setVideoInterestStats(data);
+    }
+    setVideoInterestLoading(false);
+  }, [addToast]);
 
   // Handle user search
   const handleUserSearch = () => {
@@ -300,6 +319,7 @@ export const Admin = () => {
             { id: 'users', label: 'Users', icon: Users },
             { id: 'templates', label: 'Top Templates', icon: TrendingUp },
             { id: 'unused', label: 'Low Usage', icon: AlertTriangle },
+            { id: 'video', label: 'Video Interest', icon: Video },
           ].map(tab => (
             <button
               key={tab.id}
@@ -665,6 +685,74 @@ export const Admin = () => {
           </div>
         )}
       </div>
+
+      {/* Video Interest Tab */}
+      {activeTab === 'video' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                Video Feature Interest
+              </h2>
+              <Button 
+                variant="secondary" 
+                size="sm" 
+                onClick={() => { setVideoInterestStats(null); loadVideoInterestStats(); }}
+                disabled={videoInterestLoading}
+              >
+                <RefreshCw className={`w-4 h-4 mr-2 ${videoInterestLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+
+            {videoInterestLoading && !videoInterestStats ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+              </div>
+            ) : videoInterestStats ? (
+              <>
+                {/* Stat Cards */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="glass-panel rounded-xl p-6 border border-slate-200 dark:border-white/10">
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Total Clicks</p>
+                    <p className="text-3xl font-bold text-slate-900 dark:text-white">{videoInterestStats.total_clicks}</p>
+                  </div>
+                  <div className="glass-panel rounded-xl p-6 border border-slate-200 dark:border-white/10">
+                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Unique Users</p>
+                    <p className="text-3xl font-bold text-slate-900 dark:text-white">{videoInterestStats.unique_users}</p>
+                  </div>
+                </div>
+
+                {/* Recent Clicks Table */}
+                <div className="glass-panel rounded-xl overflow-hidden border border-slate-200 dark:border-white/10">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">User</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Total Clicks</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Last Clicked</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {videoInterestStats.recent_clicks.map((click, idx) => (
+                        <tr key={idx} className="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/5">
+                          <td className="px-4 py-3 text-sm text-slate-900 dark:text-white">{click.email}</td>
+                          <td className="px-4 py-3 text-sm text-right font-mono text-purple-600 dark:text-purple-400">{click.click_count}</td>
+                          <td className="px-4 py-3 text-sm text-right text-slate-500">{new Date(click.clicked_at).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {videoInterestStats.recent_clicks.length === 0 && (
+                    <div className="text-center py-12 text-slate-500">
+                      <Video className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+                      <p>No clicks recorded yet.</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : null}
+          </div>
+        )}
 
       {/* Edit User Modal */}
       <Modal 
