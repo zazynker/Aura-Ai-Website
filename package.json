@@ -11,6 +11,7 @@
   "dependencies": {
     "@sentry/react": "^10.50.0",
     "@supabase/supabase-js": "^2.99.2",
+    "@vercel/analytics": "^2.0.1",
     "dodopayments-checkout": "^1.8.0",
     "lucide-react": "^0.562.0",
     "react": "^19.2.3",

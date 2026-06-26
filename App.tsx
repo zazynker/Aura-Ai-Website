@@ -1,5 +1,6 @@
 import React, { Suspense, lazy } from 'react';
 import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { Analytics } from '@vercel/analytics/react';
 import { StoreProvider } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
 import { ToastContainer } from './components/ui/Toast';
@@ -54,6 +55,7 @@ const AppContent = () => {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
       {!isAuthPage && <Navbar />}
       <ToastContainer />
+      <Analytics />
       <Suspense fallback={<PageLoader />}>
         <Routes>
           <Route path="/" element={<Home />} />
