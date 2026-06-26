@@ -2333,7 +2333,6 @@ export const Modify = () => {
                             <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
                                 <Video className="w-5 h-5 text-emerald-500 dark:text-emerald-400" /> 
                                 Generate Video
-                                <span className="px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 rounded-full">Soon</span>
                             </span>
                             <ChevronDown className="w-4 h-4 text-slate-400"/>
                         </button>
