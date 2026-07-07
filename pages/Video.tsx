@@ -57,7 +57,7 @@ export const Video: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-1 w-full h-full min-h-0 overflow-hidden bg-white dark:bg-slate-900">
+    <div className="flex w-full overflow-hidden bg-white dark:bg-slate-900" style={{ height: 'calc(100vh - 64px)' }}>
       {/* Left Panel */}
       <div className="flex w-[420px] flex-col border-r border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl relative z-10">
         
