@@ -50,7 +50,8 @@ const AppContent = () => {
   const isEditorPage = location.pathname === '/modify';
   const isAdminPage = location.pathname === '/admin';
   const isSubscriptionPage = location.pathname === '/subscription';
-  const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage;
+  const isVideoPage = location.pathname === '/video';
+  const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage || isVideoPage;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
