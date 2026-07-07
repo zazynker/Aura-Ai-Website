@@ -17,14 +17,6 @@ type RequestBody = {
   generationCount?: number;
 };
 
-type FalStatus =
-  | 'IN_QUEUE'
-  | 'IN_PROGRESS'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'CANCELLED'
-  | string;
-
 const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 
 const KLING_ENDPOINTS: Record<VideoMode, string> = {
@@ -36,8 +28,6 @@ const KLING_ENDPOINTS: Record<VideoMode, string> = {
 const MAX_PROMPT_LENGTH = 2000;
 const MIN_VIDEO_CREDITS = 10;
 const RATE_LIMIT_PER_MINUTE = 5;
-const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_ATTEMPTS = 100;
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -132,34 +122,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       requestId,
     });
 
-    await waitForFalCompletion(endpoint, requestId, falKey);
-
-    const result = await getFalResult(endpoint, requestId, falKey);
-    const videoUrl = extractVideoUrl(result);
-
-    if (!videoUrl) {
-      console.error(
-        '[generate-video] Fal result missing video URL:',
-        JSON.stringify(result).slice(0, 1000)
-      );
-
-      return sendError(
-        res,
-        502,
-        'INVALID_FAL_RESULT',
-        'Fal completed but did not return a video URL'
-      );
-    }
-
-    const duration = normalizeDuration(body.duration);
-
     return res.status(200).json({
       success: true,
-      videoUrl,
-      duration,
-      mode,
       requestId,
-      creditsUsed: 0,
+      endpoint,
+      mode,
     });
   } catch (err) {
     if (err instanceof ApiError) {
@@ -437,129 +404,6 @@ async function submitFalJob(
   return requestId;
 }
 
-async function waitForFalCompletion(
-  endpoint: string,
-  requestId: string,
-  falKey: string
-): Promise<void> {
-  for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt += 1) {
-    const statusData = await getFalStatus(endpoint, requestId, falKey);
-    const status = String(statusData.status || '').toUpperCase() as FalStatus;
-
-    console.log('[generate-video] Fal status:', {
-      endpoint,
-      requestId,
-      attempt: attempt + 1,
-      status,
-    });
-
-    if (status === 'COMPLETED') {
-      return;
-    }
-
-    if (status === 'FAILED' || status === 'CANCELLED') {
-      throw new ApiError(
-        502,
-        'FAL_GENERATION_FAILED',
-        `Fal generation ${status.toLowerCase()}: ${extractFalErrorMessage(statusData)}`,
-        statusData
-      );
-    }
-
-    await sleep(POLL_INTERVAL_MS);
-  }
-
-  throw new ApiError(
-    504,
-    'FAL_TIMEOUT',
-    'Video generation timed out. Please try again later.'
-  );
-}
-
-async function getFalStatus(
-  endpoint: string,
-  requestId: string,
-  falKey: string
-): Promise<Record<string, unknown>> {
-  const url = `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}/status`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Key ${falKey}`,
-    },
-  });
-
-  const data = await readJsonOrText(response);
-
-  if (!response.ok) {
-    throw new ApiError(
-      mapFalStatusToHttp(response.status),
-      'FAL_STATUS_FAILED',
-      `Failed to check Fal status: ${extractFalErrorMessage(data)}`,
-      data
-    );
-  }
-
-  if (!isRecord(data)) {
-    throw new ApiError(
-      502,
-      'FAL_STATUS_INVALID_RESPONSE',
-      'Invalid Fal status response',
-      data
-    );
-  }
-
-  return data;
-}
-
-async function getFalResult(
-  endpoint: string,
-  requestId: string,
-  falKey: string
-): Promise<unknown> {
-  const url = `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}`;
-
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Key ${falKey}`,
-    },
-  });
-
-  const data = await readJsonOrText(response);
-
-  if (!response.ok) {
-    throw new ApiError(
-      mapFalStatusToHttp(response.status),
-      'FAL_RESULT_FAILED',
-      `Failed to fetch Fal result: ${extractFalErrorMessage(data)}`,
-      data
-    );
-  }
-
-  return data;
-}
-
-function extractVideoUrl(result: unknown): string | null {
-  const candidates = [
-    ['video', 'url'],
-    ['data', 'video', 'url'],
-    ['output', 'video', 'url'],
-    ['result', 'video', 'url'],
-    ['url'],
-    ['video_url'],
-    ['videoUrl'],
-  ];
-
-  for (const path of candidates) {
-    const value = getNestedString(result, path);
-    if (value) return value;
-  }
-
-  return null;
-}
-
 async function readJsonOrText(response: Response): Promise<unknown> {
   const text = await response.text();
 
@@ -635,8 +479,4 @@ function sendError(
     code,
     ...(details !== undefined ? { details } : {}),
   });
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
