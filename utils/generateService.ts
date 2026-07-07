@@ -137,3 +137,95 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
     };
   }
 }
+// ============================================
+// Video Generation (Kling via Fal)
+// ============================================
+
+export interface VideoGenerateOptions {
+  mode: 'image_to_video' | 'motion_control' | 'lip_sync';
+  prompt?: string;
+  startImageUrl?: string;
+  endImageUrl?: string;
+  videoUrl?: string;
+  audioUrl?: string;
+  duration?: number;
+  resolution?: '720p' | '1080p';
+  characterOrientation?: 'video' | 'image';
+  generationCount?: number;
+}
+
+export interface VideoGenerateResult {
+  success: boolean;
+  videoUrl?: string;
+  duration?: number;
+  error?: string;
+  creditsUsed?: number;
+}
+
+const VIDEO_ERROR_MESSAGES: Record<number, string> = {
+  400: 'Invalid request. Please check your inputs and try again.',
+  401: 'Please log in to generate videos.',
+  402: 'Not enough credits for video generation.',
+  429: 'Slow down! Please wait a moment before generating more videos.',
+  500: 'Video generation server error. Please try again.',
+  503: 'Video service is busy. Please try again in a few moments.',
+};
+
+export async function generateVideo(options: VideoGenerateOptions): Promise<VideoGenerateResult> {
+  const { mode, prompt, startImageUrl, endImageUrl, videoUrl, audioUrl, duration, resolution, characterOrientation, generationCount } = options;
+
+  console.log('=== generateVideo called ===');
+  console.log('Mode:', mode);
+  console.log('Prompt:', prompt?.substring(0, 100));
+
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      return { success: false, error: 'Please log in to generate videos.' };
+    }
+
+    const response = await fetch('/api/generate-video', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        mode,
+        prompt,
+        startImageUrl,
+        endImageUrl,
+        videoUrl,
+        audioUrl,
+        duration,
+        resolution,
+        characterOrientation,
+        generationCount,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const friendlyMessage = errorData.error || VIDEO_ERROR_MESSAGES[response.status] || `Video generation failed (Error ${response.status}).`;
+      return { success: false, error: friendlyMessage };
+    }
+
+    const data = await response.json();
+    if (!data.success) {
+      return { success: false, error: data.error || 'Video generation failed' };
+    }
+
+    return {
+      success: true,
+      videoUrl: data.videoUrl,
+      duration: data.duration,
+      creditsUsed: data.creditsUsed,
+    };
+  } catch (err) {
+    console.error('generateVideo exception:', err);
+    if (err instanceof TypeError && err.message.includes('fetch')) {
+      return { success: false, error: 'Network error. Please check your connection.' };
+    }
+    return { success: false, error: err instanceof Error ? err.message : 'An unexpected error occurred.' };
+  }
+}

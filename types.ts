@@ -40,6 +40,11 @@ export interface Generation {
   isOriginal?: boolean;
   isSessionOnly?: boolean;
   groupId?: string; // 同一批生成的图片共享同一个 groupId
+  mediaType?: 'image' | 'video';
+  videoUrl?: string;
+  videoDuration?: number;
+  videoAspectRatio?: string;
+  videoMode?: 'image_to_video' | 'motion_control' | 'lip_sync';
 }
 
 export interface Collection {
@@ -126,4 +131,25 @@ export interface UnusedTemplate {
   created_at: string;
   usage_count: number;
   total_credits: number;
+}
+
+// ============================================
+// Video Types
+// ============================================
+
+export type VideoMode = 'image_to_video' | 'motion_control' | 'lip_sync';
+
+export type VideoResolution = '720p' | '1080p';
+
+export interface VideoGenerateRequest {
+  mode: VideoMode;
+  prompt: string;
+  startImageUrl?: string;
+  endImageUrl?: string;
+  videoUrl?: string;
+  audioUrl?: string;
+  duration?: number;
+  resolution?: VideoResolution;
+  characterOrientation?: 'video' | 'image';
+  generationCount?: number;
 }

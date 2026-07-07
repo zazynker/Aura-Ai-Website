@@ -134,6 +134,11 @@ interface DbGeneration {
   prompt: string;
   credits_used: number;
   created_at: string;
+  media_type?: string;
+  video_url?: string;
+  video_duration?: number;
+  video_aspect_ratio?: string;
+  video_mode?: string;
 }
 
 // 数据库格式 -> 前端格式
@@ -146,6 +151,11 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   prompt: db.prompt,
   creditsUsed: db.credits_used,
   createdAt: new Date(db.created_at).getTime(),
+  mediaType: (db.media_type as 'image' | 'video') || 'image',
+  videoUrl: db.video_url || undefined,
+  videoDuration: db.video_duration || undefined,
+  videoAspectRatio: db.video_aspect_ratio || undefined,
+  videoMode: (db.video_mode as 'image_to_video' | 'motion_control' | 'lip_sync') || undefined,
 });
 
 /**
@@ -305,13 +315,18 @@ export async function saveGenerationToDb(
       // 继续保存，不阻塞
     }
 
-    const dbData = {
+    const dbData: Record<string, unknown> = {
       user_id: generation.userId,
       template_id: generation.templateId,
       template_name: generation.templateName || null,
       image_url: generation.imageUrl,
       prompt: generation.prompt,
       credits_used: generation.creditsUsed,
+      media_type: generation.mediaType || 'image',
+      video_url: generation.videoUrl || null,
+      video_duration: generation.videoDuration || null,
+      video_aspect_ratio: generation.videoAspectRatio || null,
+      video_mode: generation.videoMode || null,
     };
 
     const { data, error } = await supabase
@@ -354,6 +369,11 @@ export async function saveGenerationsToDb(
       image_url: gen.imageUrl,
       prompt: gen.prompt,
       credits_used: gen.creditsUsed,
+      media_type: gen.mediaType || 'image',
+      video_url: gen.videoUrl || null,
+      video_duration: gen.videoDuration || null,
+      video_aspect_ratio: gen.videoAspectRatio || null,
+      video_mode: gen.videoMode || null,
     }));
 
     const { data, error } = await supabase
