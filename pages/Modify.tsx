@@ -2321,12 +2321,9 @@ export const Modify = () => {
     
                     {/* 6. GENERATE VIDEO Tool (Coming Soon) */}
                     <div className="glass-panel rounded-2xl transition-all duration-300">
-                        <button 
+                    <button 
                             onClick={() => {
-                                setShowVideoComingSoon(true);
-                                if (user) {
-                                    logVideoInterest();
-                                }
+                                navigate('/video', { state: { initialImage: currentImage } });
                             }}
                             className="w-full p-4 flex items-center justify-between text-left"
                         >
