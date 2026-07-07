@@ -13,6 +13,7 @@ import { Login } from './pages/Login';
 
 // ============ 非首屏页面（懒加载）============
 const Modify = lazy(() => import('./pages/Modify').then(m => ({ default: m.Modify })));
+const Video = lazy(() => import('./pages/Video').then(m => ({ default: m.Video })));
 const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
 const Admin = lazy(() => import('./pages/Admin'));
 const Pricing = lazy(() => import('./pages/Pricing').then(m => ({ default: m.Pricing })));
@@ -67,6 +68,7 @@ const AppContent = () => {
           <Route path="/" element={<Home />} />
           <Route path="/template/:id" element={<Navigate to="/" replace />} />
           <Route path="/modify" element={<Modify />} />
+          <Route path="/video" element={<Video />} />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Login isSignup />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />

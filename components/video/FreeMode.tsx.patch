@@ -1,0 +1,206 @@
+--- components/video/FreeMode.tsx
++++ components/video/FreeMode.tsx
+@@ -1,7 +1,7 @@
+-import React, { useState, useRef } from 'react';
+-import { 
+-  Settings, ChevronDown, RefreshCw, Plus, X, Wand2
+-} from 'lucide-react';
++import React, { useState, useRef, useEffect } from 'react';
++import { 
++  Settings, ChevronDown, RefreshCw, Plus, X, Wand2, Video, Image as ImageIcon, Box
++} from 'lucide-react';
+ import { VideoResult, generateFakeVideo } from '../../utils/video';
+ 
+ interface FreeModeProps {
+@@ -9,16 +9,23 @@
+   initialImage?: string | null;
+ }
+ 
++interface Asset {
++  id: string;
++  url: string;
++  type: 'video' | 'image';
++  file: File;
++  name: string;
++}
++
+ export const FreeMode: React.FC<FreeModeProps> = ({ onGenerate, initialImage }) => {
+   const [prompt, setPrompt] = useState('');
+-  const [assets, setAssets] = useState<Array<{id: string, url: string, type: 'video'|'image', file: File}>>([]);
++  const [assets, setAssets] = useState<Asset[]>([]);
+   
+   const [duration, setDuration] = useState<number>(5);
+   
+   const [isParamsOpen, setIsParamsOpen] = useState(false);
+   const [isGenerating, setIsGenerating] = useState(false);
+   
+   const fileInputRef = useRef<HTMLInputElement>(null);
++  
++  // Mention Popover State
++  const [showMentionPopover, setShowMentionPopover] = useState(false);
++  const [mentionQuery, setMentionQuery] = useState('');
++  const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
++  const textareaRef = useRef<HTMLTextAreaElement>(null);
+ 
+   // If there's an initialImage, we could auto-create a fake asset for it
+   // But since we need File objects for proper handling, we'll just use it in the generate function
+@@ -37,7 +44,8 @@
+     setIsGenerating(true);
+     
+     try {
+       // Use the first asset as the source image if available, else a placeholder
+       const sourceUrl = assets.length > 0 ? assets[0].url : (initialImage || 'https://images.unsplash.com/photo-1534447677768-be436bb09401?w=800&q=80');
+       const videoUrl = await generateFakeVideo(sourceUrl, duration);
+       
+@@ -58,9 +66,10 @@
+     if (files.length === 0) return;
+     
+-    const newAssets = files.map(file => ({
++    const newAssets = files.map((file, i) => ({
+       id: Math.random().toString(36).substr(2, 9),
+       url: URL.createObjectURL(file),
+       type: file.type.startsWith('video/') ? 'video' as const : 'image' as const,
+-      file
++      file,
++      name: file.type.startsWith('video/') ? `Video ${assets.length + i + 1}` : `Image ${assets.length + i + 1}`
+     }));
+     
+@@ -74,4 +83,72 @@
+     setAssets(assets.filter(a => a.id !== id));
+   };
+ 
++  const handlePromptChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
++    const value = e.target.value;
++    setPrompt(value);
++    
++    const cursor = e.target.selectionStart;
++    const textBeforeCursor = value.substring(0, cursor);
++    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
++    
++    if (lastAtIndex !== -1) {
++      const charBeforeAt = lastAtIndex > 0 ? textBeforeCursor[lastAtIndex - 1] : ' ';
++      if (/\s/.test(charBeforeAt) || lastAtIndex === 0) {
++        const query = textBeforeCursor.substring(lastAtIndex + 1);
++        if (!/\s/.test(query)) {
++          setShowMentionPopover(true);
++          setMentionQuery(query);
++          setSelectedMentionIndex(0);
++          return;
++        }
++      }
++    }
++    
++    setShowMentionPopover(false);
++  };
++
++  const filteredAssets = assets.filter(a => 
++    a.name.toLowerCase().includes(mentionQuery.toLowerCase()) ||
++    a.type.toLowerCase().includes(mentionQuery.toLowerCase())
++  );
++
++  const insertMention = (asset: Asset) => {
++    if (!textareaRef.current) return;
++    
++    const cursor = textareaRef.current.selectionStart;
++    const textBeforeCursor = prompt.substring(0, cursor);
++    const lastAtIndex = textBeforeCursor.lastIndexOf('@');
++    
++    const textBeforeMention = prompt.substring(0, lastAtIndex);
++    const textAfterCursor = prompt.substring(cursor);
++    
++    const mentionText = `@${asset.name} `;
++    
++    setPrompt(textBeforeMention + mentionText + textAfterCursor);
++    setShowMentionPopover(false);
++    
++    setTimeout(() => {
++      textareaRef.current?.focus();
++      const newCursor = lastAtIndex + mentionText.length;
++      textareaRef.current?.setSelectionRange(newCursor, newCursor);
++    }, 0);
++  };
++
++  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
++    if (showMentionPopover) {
++      if (e.key === 'ArrowDown') {
++        e.preventDefault();
++        setSelectedMentionIndex(prev => (prev + 1) % (filteredAssets.length || 1));
++      } else if (e.key === 'ArrowUp') {
++        e.preventDefault();
++        setSelectedMentionIndex(prev => (prev - 1 + (filteredAssets.length || 1)) % (filteredAssets.length || 1));
++      } else if (e.key === 'Enter') {
++        e.preventDefault();
++        if (filteredAssets[selectedMentionIndex]) {
++          insertMention(filteredAssets[selectedMentionIndex]);
++        }
++      } else if (e.key === 'Escape') {
++        setShowMentionPopover(false);
++      }
++    }
++  };
++
+   return (
+     <>
+@@ -81,14 +158,54 @@
+         <div className="flex-1 flex flex-col gap-4">
+-          <div className="flex-1 min-h-[250px] relative rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/50 overflow-hidden flex flex-col focus-within:ring-1 focus-within:ring-amber-500 transition-shadow">
++          <div className="flex-1 min-h-[250px] relative rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900/50 flex flex-col focus-within:ring-1 focus-within:ring-amber-500 transition-shadow">
+             <textarea
++              ref={textareaRef}
+               value={prompt}
+-              onChange={(e) => setPrompt(e.target.value)}
++              onChange={handlePromptChange}
++              onKeyDown={handleKeyDown}
+               placeholder="Describe your scene in detail... Use @ to reference uploaded assets."
+-              className="flex-1 w-full resize-none bg-transparent p-4 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100"
++              className="flex-1 w-full resize-none bg-transparent p-4 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none dark:text-slate-100 rounded-t-xl z-10"
+             />
+             
++            {/* Mention Popover */}
++            {showMentionPopover && (
++              <div className="absolute top-14 left-4 z-50 w-64 rounded-xl border border-slate-700 bg-[#222222] text-slate-200 shadow-2xl p-1.5 animate-in fade-in zoom-in-95">
++                <div className="px-3 py-2 text-xs font-medium text-slate-400 flex items-center gap-2 border-b border-slate-700/50 mb-1">
++                  <Box className="w-3.5 h-3.5" /> Add from subject library
++                </div>
++                {assets.length === 0 ? (
++                  <div className="px-3 py-4 text-xs text-center text-slate-500">
++                    Upload assets first
++                  </div>
++                ) : filteredAssets.length === 0 ? (
++                  <div className="px-3 py-4 text-xs text-center text-slate-500">
++                    No matching assets
++                  </div>
++                ) : (
++                  <div className="max-h-[200px] overflow-y-auto no-scrollbar">
++                    {filteredAssets.map((asset, index) => (
++                      <button
++                        key={asset.id}
++                        onClick={() => insertMention(asset)}
++                        className={`w-full flex items-center gap-3 px-2 py-1.5 rounded-lg text-left transition-colors ${
++                          index === selectedMentionIndex ? 'bg-slate-700/80 text-white' : 'hover:bg-slate-800'
++                        }`}
++                      >
++                        <div className="w-8 h-8 rounded shrink-0 overflow-hidden bg-black/50">
++                          {asset.type === 'video' ? (
++                            <video src={asset.url} className="w-full h-full object-cover" />
++                          ) : (
++                            <img src={asset.url} className="w-full h-full object-cover" />
++                          )}
++                        </div>
++                        <div className="flex-1 min-w-0 text-sm font-medium truncate">
++                          {asset.name}
++                        </div>
++                      </button>
++                    ))}
++                  </div>
++                )}
++                <div className="mt-1 px-3 py-1.5 text-[10px] text-slate-500 border-t border-slate-700/50">
++                  Type name to reference asset directly
++                </div>
++              </div>
++            )}
++
+             {/* Assets Strip */}
+-            <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 p-3 flex gap-3 overflow-x-auto no-scrollbar items-center">
++            <div className="border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 p-3 flex gap-3 overflow-x-auto no-scrollbar items-center rounded-b-xl z-10">
+               {assets.map((asset, index) => (
