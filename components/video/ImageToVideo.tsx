@@ -3,7 +3,9 @@ import {
   Settings, ChevronDown, History, ArrowRightLeft, ImagePlus, 
   Image as ImageIcon, RefreshCw, Sparkles 
 } from 'lucide-react';
-import { VideoResult, generateFakeVideo } from '../../utils/video';
+import { VideoResult } from '../../utils/video';
+import { generateVideo } from '../../utils/generateService';
+import { supabase } from '../../utils/supabase';
 
 interface ImageToVideoProps {
   onGenerate: (result: VideoResult) => void;
@@ -22,6 +24,8 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, initialI
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endFileInputRef = useRef<HTMLInputElement>(null);
+  const [startImageFile, setStartImageFile] = useState<File | null>(null);
+  const [endImageFile, setEndImageFile] = useState<File | null>(null);
 
   useEffect(() => {
     if (initialImage) {
@@ -42,25 +46,82 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, initialI
     setIsGenerating(true);
     
     try {
-      const videoUrl = await generateFakeVideo(selectedImage, duration);
-      
+      // Step 1: Upload image(s) to Supabase Storage to get public URL
+      let startImageUrl = selectedImage;
+      let endImageUrl: string | undefined;
+
+      // If it's a blob URL, we need to upload the file
+      if (startImageFile && selectedImage.startsWith('blob:')) {
+        const timestamp = Date.now();
+        const filePath = `video-inputs/${timestamp}-start.${startImageFile.name.split('.').pop()}`;
+        const { error: uploadError } = await supabase.storage
+          .from('generations')
+          .upload(filePath, startImageFile, { contentType: startImageFile.type });
+        
+        if (uploadError) {
+          alert('Failed to upload image. Please try again.');
+          console.error('Upload error:', uploadError);
+          return;
+        }
+        
+        const { data: urlData } = supabase.storage
+          .from('generations')
+          .getPublicUrl(filePath);
+        startImageUrl = urlData.publicUrl;
+      }
+
+      if (endImageFile && selectedEndImage?.startsWith('blob:')) {
+        const timestamp = Date.now();
+        const filePath = `video-inputs/${timestamp}-end.${endImageFile.name.split('.').pop()}`;
+        const { error: uploadError } = await supabase.storage
+          .from('generations')
+          .upload(filePath, endImageFile, { contentType: endImageFile.type });
+        
+        if (uploadError) {
+          console.error('End frame upload error:', uploadError);
+          // Non-critical, continue without end frame
+        } else {
+          const { data: urlData } = supabase.storage
+            .from('generations')
+            .getPublicUrl(filePath);
+          endImageUrl = urlData.publicUrl;
+        }
+      }
+
+      // Step 2: Call real API
+      const result = await generateVideo({
+        mode: 'image_to_video',
+        prompt,
+        startImageUrl,
+        endImageUrl,
+        duration,
+        resolution,
+      });
+
+      if (!result.success || !result.videoUrl) {
+        alert(result.error || 'Video generation failed. Please try again.');
+        return;
+      }
+
+      // Step 3: Create result for feed
       const newResult: VideoResult = {
         id: `gen-${Date.now()}`,
         type: 'Image to Video',
         model: 'Kling 3.0',
         resolution: resolution,
         prompt: prompt,
-        duration: `00:${duration.toString().padStart(2, '0')}`,
+        duration: `00:${(result.duration || duration).toString().padStart(2, '0')}`,
         aspectRatio: '16:9',
         timestamp: 'Just now',
         bgColor: 'bg-slate-900/50',
-        videoUrl,
-        sourceImage: selectedImage
+        videoUrl: result.videoUrl,
+        sourceImage: startImageUrl
       };
       
       onGenerate(newResult);
     } catch (error) {
-      console.error(error);
+      console.error('Video generation error:', error);
+      alert('Video generation failed. Please try again.');
     } finally {
       setIsGenerating(false);
     }
@@ -72,8 +133,10 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, initialI
       const url = URL.createObjectURL(file);
       if (isEndFrame) {
         setSelectedEndImage(url);
+        setEndImageFile(file);
       } else {
         setSelectedImage(url);
+        setStartImageFile(file);
       }
     }
   };
