@@ -1,18 +1,20 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-type VideoMode = 'image_to_video' | 'motion_control' | 'lip_sync';
-
 type RequestBody = {
   requestId?: string;
   endpoint?: string;
+  statusUrl?: string;
+  responseUrl?: string;
 };
 
 const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 
 const ALLOWED_ENDPOINTS = new Set<string>([
   'fal-ai/kling-video/v3/standard/image-to-video',
+  'fal-ai/kling-video/v3/pro/image-to-video',
   'fal-ai/kling-video/v3/standard/motion-control',
+  'fal-ai/kling-video/v3/pro/motion-control',
   'fal-ai/kling-video/lipsync/audio-to-video',
 ]);
 
@@ -41,12 +43,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const falKey = process.env.FAL_KEY;
     if (!falKey) {
-      console.error('FAL_KEY not configured');
+      console.error('[video-status] FAL_KEY not configured');
       return sendError(res, 500, 'CONFIG_ERROR', 'Fal API key not configured');
     }
 
     if (!supabaseUrl || !supabaseServiceKey) {
-      console.error('Supabase credentials not configured');
+      console.error('[video-status] Supabase credentials not configured');
       return sendError(res, 500, 'CONFIG_ERROR', 'Server configuration error');
     }
 
@@ -68,15 +70,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } = await supabase.auth.getUser(token);
 
     if (authError || !user) {
-      console.error('Auth verification failed:', authError?.message);
+      console.error('[video-status] Auth verification failed:', authError?.message);
       return sendError(res, 401, 'INVALID_TOKEN', 'Invalid or expired token');
     }
 
     const body = parseBody(req.body);
     const requestId = validateRequestId(body.requestId);
     const endpoint = validateEndpoint(body.endpoint);
+    const statusUrl = validateOptionalFalQueueUrl(body.statusUrl, 'statusUrl');
+    const responseUrl = validateOptionalFalQueueUrl(body.responseUrl, 'responseUrl');
 
-    const statusData = await getFalStatus(endpoint, requestId, falKey);
+    const statusData = await getFalStatus(endpoint, requestId, falKey, statusUrl);
     const status = String(statusData.status || '').toUpperCase();
 
     console.log('[video-status] Fal status:', {
@@ -84,16 +88,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       requestId,
       endpoint,
       status,
+      usingReturnedStatusUrl: Boolean(statusUrl),
     });
 
     if (status === 'COMPLETED') {
-      const result = await getFalResult(endpoint, requestId, falKey);
+      const result = await getFalResult(endpoint, requestId, falKey, responseUrl);
       const videoUrl = extractVideoUrl(result);
 
       if (!videoUrl) {
         console.error(
           '[video-status] Fal result missing video URL:',
-          JSON.stringify(result).slice(0, 1000)
+          safeStringify(result).slice(0, 1500)
         );
 
         return res.status(200).json({
@@ -181,6 +186,23 @@ function validateEndpoint(value: unknown): string {
   return endpoint;
 }
 
+function validateOptionalFalQueueUrl(value: unknown, fieldName: string): string | undefined {
+  if (!value) return undefined;
+
+  if (typeof value !== 'string') {
+    throw new ApiError(400, 'INVALID_INPUT', `${fieldName} must be a string`);
+  }
+
+  const url = value.trim();
+  if (!url) return undefined;
+
+  if (!url.startsWith(FAL_QUEUE_BASE_URL)) {
+    throw new ApiError(400, 'INVALID_INPUT', `${fieldName} must be a Fal queue URL`);
+  }
+
+  return url;
+}
+
 function getHeaderValue(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0];
   return value;
@@ -189,9 +211,10 @@ function getHeaderValue(value: string | string[] | undefined): string | undefine
 async function getFalStatus(
   endpoint: string,
   requestId: string,
-  falKey: string
+  falKey: string,
+  statusUrl?: string
 ): Promise<Record<string, unknown>> {
-  const url = `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}/status`;
+  const url = statusUrl || `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}/status`;
 
   const response = await fetch(url, {
     method: 'GET',
@@ -203,11 +226,27 @@ async function getFalStatus(
   const data = await readJsonOrText(response);
 
   if (!response.ok) {
+    console.error('[video-status] Fal status HTTP error:', {
+      falHttpStatus: response.status,
+      falStatusText: response.statusText,
+      url,
+      endpoint,
+      requestId,
+      falBody: data,
+    });
+
     throw new ApiError(
       mapFalStatusToHttp(response.status),
       'FAL_STATUS_FAILED',
-      `Failed to check Fal status: ${extractFalErrorMessage(data)}`,
-      data
+      `Fal status failed. HTTP ${response.status} ${response.statusText}: ${extractFalErrorMessage(data)}`,
+      {
+        falHttpStatus: response.status,
+        falStatusText: response.statusText,
+        url,
+        endpoint,
+        requestId,
+        falBody: data,
+      }
     );
   }
 
@@ -226,9 +265,10 @@ async function getFalStatus(
 async function getFalResult(
   endpoint: string,
   requestId: string,
-  falKey: string
+  falKey: string,
+  responseUrl?: string
 ): Promise<unknown> {
-  const url = `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}`;
+  const url = responseUrl || `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}`;
 
   const response = await fetch(url, {
     method: 'GET',
@@ -240,11 +280,27 @@ async function getFalResult(
   const data = await readJsonOrText(response);
 
   if (!response.ok) {
+    console.error('[video-status] Fal result HTTP error:', {
+      falHttpStatus: response.status,
+      falStatusText: response.statusText,
+      url,
+      endpoint,
+      requestId,
+      falBody: data,
+    });
+
     throw new ApiError(
       mapFalStatusToHttp(response.status),
       'FAL_RESULT_FAILED',
-      `Failed to fetch Fal result: ${extractFalErrorMessage(data)}`,
-      data
+      `Fal result failed. HTTP ${response.status} ${response.statusText}: ${extractFalErrorMessage(data)}`,
+      {
+        falHttpStatus: response.status,
+        falStatusText: response.statusText,
+        url,
+        endpoint,
+        requestId,
+        falBody: data,
+      }
     );
   }
 
@@ -320,6 +376,14 @@ function getNestedString(obj: unknown, path: string[]): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function mapFalStatusToHttp(status: number): number {

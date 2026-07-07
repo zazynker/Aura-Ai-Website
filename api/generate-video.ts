@@ -17,12 +17,27 @@ type RequestBody = {
   generationCount?: number;
 };
 
+type FalSubmitResult = {
+  requestId: string;
+  statusUrl?: string;
+  responseUrl?: string;
+  cancelUrl?: string;
+};
+
 const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 
 const KLING_ENDPOINTS: Record<VideoMode, string> = {
-  image_to_video: 'fal-ai/kling-video/v3/standard/image-to-video',
-  motion_control: 'fal-ai/kling-video/v3/standard/motion-control',
-  lip_sync: 'fal-ai/kling-video/lipsync/audio-to-video',
+  // If you later want Pro, you can set this env var in Vercel:
+  // FAL_KLING_IMAGE_TO_VIDEO_ENDPOINT=fal-ai/kling-video/v3/pro/image-to-video
+  image_to_video:
+    process.env.FAL_KLING_IMAGE_TO_VIDEO_ENDPOINT ||
+    'fal-ai/kling-video/v3/standard/image-to-video',
+  motion_control:
+    process.env.FAL_KLING_MOTION_CONTROL_ENDPOINT ||
+    'fal-ai/kling-video/v3/standard/motion-control',
+  lip_sync:
+    process.env.FAL_KLING_LIP_SYNC_ENDPOINT ||
+    'fal-ai/kling-video/lipsync/audio-to-video',
 };
 
 const MAX_PROMPT_LENGTH = 2000;
@@ -54,12 +69,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const falKey = process.env.FAL_KEY;
     if (!falKey) {
-      console.error('FAL_KEY not configured');
+      console.error('[generate-video] FAL_KEY not configured');
       return sendError(res, 500, 'CONFIG_ERROR', 'Fal API key not configured');
     }
 
     if (!supabaseUrl || !supabaseServiceKey) {
-      console.error('Supabase credentials not configured');
+      console.error('[generate-video] Supabase credentials not configured');
       return sendError(res, 500, 'CONFIG_ERROR', 'Server configuration error');
     }
 
@@ -81,7 +96,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     } = await supabase.auth.getUser(token);
 
     if (authError || !user) {
-      console.error('Auth verification failed:', authError?.message);
+      console.error('[generate-video] Auth verification failed:', authError?.message);
       return sendError(res, 401, 'INVALID_TOKEN', 'Invalid or expired token');
     }
 
@@ -110,22 +125,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       endpoint,
       userId: user.id,
       duration: body.duration,
+      normalizedDuration: mode === 'image_to_video' ? normalizeDuration(body.duration) : undefined,
       resolution: body.resolution,
       isWhitelisted: userData.is_whitelisted,
+      payloadKeys: Object.keys(payload),
     });
 
-    const requestId = await submitFalJob(endpoint, payload, falKey);
+    const falJob = await submitFalJob(endpoint, payload, falKey);
 
     console.log('[generate-video] Fal request submitted:', {
       mode,
       endpoint,
-      requestId,
+      requestId: falJob.requestId,
+      statusUrl: falJob.statusUrl,
+      responseUrl: falJob.responseUrl,
+      cancelUrl: falJob.cancelUrl,
     });
 
     return res.status(200).json({
       success: true,
-      requestId,
+      requestId: falJob.requestId,
       endpoint,
+      statusUrl: falJob.statusUrl,
+      responseUrl: falJob.responseUrl,
+      cancelUrl: falJob.cancelUrl,
       mode,
     });
   } catch (err) {
@@ -245,6 +268,8 @@ function buildFalPayload(mode: VideoMode, body: RequestBody): Record<string, unk
         ? validateFalFileUrl(body.endImageUrl, 'endImageUrl')
         : undefined;
 
+      // Keep the Kling v3 standard field names you already used.
+      // Do not convert duration to 5/10; Kling v3 accepts the 3-15s UI range in your current setup.
       const payload: Record<string, unknown> = {
         prompt,
         start_image_url: startImageUrl,
@@ -365,7 +390,7 @@ async function submitFalJob(
   endpoint: string,
   payload: Record<string, unknown>,
   falKey: string
-): Promise<string> {
+): Promise<FalSubmitResult> {
   const url = `${FAL_QUEUE_BASE_URL}/${endpoint}`;
 
   const response = await fetch(url, {
@@ -380,17 +405,45 @@ async function submitFalJob(
   const data = await readJsonOrText(response);
 
   if (!response.ok) {
+    console.error('[generate-video] Fal submit HTTP error:', {
+      falHttpStatus: response.status,
+      falStatusText: response.statusText,
+      url,
+      endpoint,
+      falBody: data,
+    });
+
     throw new ApiError(
       mapFalStatusToHttp(response.status),
       'FAL_SUBMIT_FAILED',
-      `Fal submit failed: ${extractFalErrorMessage(data)}`,
-      data
+      `Fal submit failed. HTTP ${response.status} ${response.statusText}: ${extractFalErrorMessage(data)}`,
+      {
+        falHttpStatus: response.status,
+        falStatusText: response.statusText,
+        url,
+        endpoint,
+        falBody: data,
+      }
     );
   }
+
+  console.log('[generate-video] Raw Fal submit response:', data);
 
   const requestId =
     getNestedString(data, ['request_id']) ||
     getNestedString(data, ['requestId']);
+
+  const statusUrl =
+    getNestedString(data, ['status_url']) ||
+    getNestedString(data, ['statusUrl']);
+
+  const responseUrl =
+    getNestedString(data, ['response_url']) ||
+    getNestedString(data, ['responseUrl']);
+
+  const cancelUrl =
+    getNestedString(data, ['cancel_url']) ||
+    getNestedString(data, ['cancelUrl']);
 
   if (!requestId) {
     throw new ApiError(
@@ -401,7 +454,12 @@ async function submitFalJob(
     );
   }
 
-  return requestId;
+  return {
+    requestId,
+    statusUrl: statusUrl || undefined,
+    responseUrl: responseUrl || undefined,
+    cancelUrl: cancelUrl || undefined,
+  };
 }
 
 async function readJsonOrText(response: Response): Promise<unknown> {

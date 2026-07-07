@@ -167,6 +167,9 @@ interface VideoSubmitResponse {
   success: boolean;
   requestId?: string;
   endpoint?: string;
+  statusUrl?: string;
+  responseUrl?: string;
+  cancelUrl?: string;
   mode?: VideoGenerateOptions['mode'];
   error?: string;
   code?: string;
@@ -269,6 +272,8 @@ export async function generateVideo(options: VideoGenerateOptions): Promise<Vide
     console.log('Video job submitted:', {
       requestId: submitData.requestId,
       endpoint: submitData.endpoint,
+      statusUrl: submitData.statusUrl,
+      responseUrl: submitData.responseUrl,
       mode: submitData.mode,
     });
 
@@ -285,11 +290,15 @@ export async function generateVideo(options: VideoGenerateOptions): Promise<Vide
         body: JSON.stringify({
           requestId: submitData.requestId,
           endpoint: submitData.endpoint,
+          statusUrl: submitData.statusUrl,
+          responseUrl: submitData.responseUrl,
         }),
       });
 
       if (!statusResponse.ok) {
         const errorData = await statusResponse.json().catch(() => ({}));
+        console.error('Video status API error:', statusResponse.status, errorData);
+
         const friendlyMessage =
           errorData.error ||
           VIDEO_ERROR_MESSAGES[statusResponse.status] ||
