@@ -26,19 +26,36 @@ type FalSubmitResult = {
 
 const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 
-const KLING_ENDPOINTS: Record<VideoMode, string> = {
-  // If you later want Pro, you can set this env var in Vercel:
-  // FAL_KLING_IMAGE_TO_VIDEO_ENDPOINT=fal-ai/kling-video/v3/pro/image-to-video
-  image_to_video:
-    process.env.FAL_KLING_IMAGE_TO_VIDEO_ENDPOINT ||
-    'fal-ai/kling-video/v3/standard/image-to-video',
-  motion_control:
-    process.env.FAL_KLING_MOTION_CONTROL_ENDPOINT ||
-    'fal-ai/kling-video/v3/standard/motion-control',
-  lip_sync:
-    process.env.FAL_KLING_LIP_SYNC_ENDPOINT ||
-    'fal-ai/kling-video/lipsync/audio-to-video',
-};
+const KLING_IMAGE_TO_VIDEO_ENDPOINT =
+  process.env.FAL_KLING_IMAGE_TO_VIDEO_ENDPOINT ||
+  'fal-ai/kling-video/v3/standard/image-to-video';
+
+const KLING_MOTION_CONTROL_ENDPOINT =
+  process.env.FAL_KLING_MOTION_CONTROL_ENDPOINT ||
+  'fal-ai/kling-video/v3/standard/motion-control';
+
+const KLING_LIP_SYNC_VIDEO_ENDPOINT =
+  process.env.FAL_KLING_LIP_SYNC_VIDEO_ENDPOINT ||
+  'fal-ai/kling-video/lipsync/audio-to-video';
+
+const KLING_LIP_SYNC_IMAGE_ENDPOINT =
+  process.env.FAL_KLING_LIP_SYNC_IMAGE_ENDPOINT ||
+  'fal-ai/kling-video/ai-avatar/v2/standard';
+
+function getKlingEndpoint(mode: VideoMode, body: RequestBody): string {
+  if (mode === 'image_to_video') return KLING_IMAGE_TO_VIDEO_ENDPOINT;
+  if (mode === 'motion_control') return KLING_MOTION_CONTROL_ENDPOINT;
+
+  // Lip Sync has two Fal endpoints:
+  // - image + audio: fal-ai/kling-video/ai-avatar/v2/standard
+  // - video + audio: fal-ai/kling-video/lipsync/audio-to-video
+  if (mode === 'lip_sync') {
+    if (body.videoUrl) return KLING_LIP_SYNC_VIDEO_ENDPOINT;
+    return KLING_LIP_SYNC_IMAGE_ENDPOINT;
+  }
+
+  throw new ApiError(400, 'INVALID_MODE', 'Unsupported video mode');
+}
 
 const MAX_PROMPT_LENGTH = 2000;
 const MIN_VIDEO_CREDITS = 10;
@@ -117,7 +134,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     await checkRateLimit(supabase, user.id);
     const userData = await checkCredits(supabase, user.id);
 
-    const endpoint = KLING_ENDPOINTS[mode];
+    const endpoint = getKlingEndpoint(mode, body);
     const payload = buildFalPayload(mode, body);
 
     console.log('[generate-video] Submitting Fal job:', {
@@ -302,12 +319,25 @@ function buildFalPayload(mode: VideoMode, body: RequestBody): Record<string, unk
     }
 
     case 'lip_sync': {
-      const videoUrl = validateFalFileUrl(body.videoUrl, 'videoUrl');
       const audioUrl = validateFalFileUrl(body.audioUrl, 'audioUrl');
 
+      // Video + audio lip sync endpoint: fal-ai/kling-video/lipsync/audio-to-video
+      if (body.videoUrl) {
+        const videoUrl = validateFalFileUrl(body.videoUrl, 'videoUrl');
+        return {
+          video_url: videoUrl,
+          audio_url: audioUrl,
+        };
+      }
+
+      // Image + audio avatar endpoint: fal-ai/kling-video/ai-avatar/v2/standard
+      const imageUrl = validateFalFileUrl(body.startImageUrl, 'startImageUrl');
+      const prompt = validatePrompt(body.prompt, false);
+
       return {
-        video_url: videoUrl,
+        image_url: imageUrl,
         audio_url: audioUrl,
+        ...(prompt ? { prompt } : {}),
       };
     }
 

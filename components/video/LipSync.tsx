@@ -11,10 +11,13 @@ import {
   GripVertical,
   Sparkles,
 } from 'lucide-react';
-import { VideoResult, generateFakeVideo } from '../../utils/video';
+import { VideoResult } from '../../utils/video';
+import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
+import { supabase } from '../../utils/supabase';
 
 interface LipSyncProps {
   onGenerate: (result: VideoResult) => void;
+  onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
 }
 
@@ -39,7 +42,7 @@ const formatTime = (timeInSeconds: number) => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
-export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, initialImage }) => {
+export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage }) => {
   const [selectedMedia, setSelectedMedia] = useState<MediaState | null>(
     initialImage ? { url: initialImage, type: 'image' } : null
   );
@@ -49,6 +52,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, initialImage }) =>
   const [videoDuration, setVideoDuration] = useState<number>(0);
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [pendingJob, setPendingJob] = useState<PendingVideoJob | null>(null);
 
   const [prompt, setPrompt] = useState(
     'Keep the camera fixed. The character speaks naturally, smiles slightly, and uses subtle hand gestures.'
@@ -73,6 +77,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, initialImage }) =>
   const timelineContentRef = useRef<HTMLDivElement>(null);
   const dragSessionRef = useRef<DragSession | null>(null);
   const createdObjectUrlsRef = useRef<string[]>([]);
+  const restoredPendingRef = useRef(false);
 
   const timelineDuration = Math.max(videoDuration || 0, selectedMedia?.type === 'video' ? 3 : 0);
   const minAudioClipLength = Math.min(2, Math.max(0.2, audioDuration || 0.2));
@@ -98,6 +103,41 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, initialImage }) =>
       createdObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     };
   }, []);
+
+  useEffect(() => {
+    const existing = getPendingVideoJob();
+    if (!existing || existing.mode !== 'lip_sync' || restoredPendingRef.current) return;
+
+    restoredPendingRef.current = true;
+    setPendingJob(existing);
+
+    if (existing.startImageUrl) {
+      setSelectedMedia({ url: existing.startImageUrl, type: 'image' });
+    } else if (existing.inputVideoUrl) {
+      setSelectedMedia({ url: existing.inputVideoUrl, type: 'video' });
+    }
+    if (existing.audioUrl) setAudioUrl(existing.audioUrl);
+    if (existing.prompt) setPrompt(existing.prompt);
+
+    onGenerate({
+      id: existing.clientJobId,
+      type: 'Lip Sync',
+      model: existing.startImageUrl ? 'Kling AI Avatar' : 'Kling Lip Sync',
+      resolution: '720p',
+      prompt: existing.prompt || 'Lip sync generation',
+      duration: formatTime(existing.duration || 0),
+      aspectRatio: existing.startImageUrl ? '1:1' : '16:9',
+      timestamp: 'Pending',
+      bgColor: 'bg-emerald-900/50',
+      sourceImage: existing.startImageUrl,
+      sourceVideo: existing.inputVideoUrl,
+      audioUrl: existing.audioUrl,
+      status: 'pending',
+      requestId: existing.requestId,
+      mode: 'lip_sync',
+      error: 'This lip sync job was already submitted. Click Resume to check the same Fal job.',
+    });
+  }, [onGenerate]);
 
   useEffect(() => {
     const el = timelineScrollRef.current;
@@ -189,46 +229,177 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, initialImage }) =>
     };
   }, [selectedMedia?.url, selectedMedia?.type]);
 
+  const uploadFileIfNeeded = async (url: string, file: File | undefined | null, label: string): Promise<string> => {
+    if (!file || !url.startsWith('blob:')) return url;
+
+    const fileExt = file.name.split('.').pop() || (file.type.startsWith('audio/') ? 'mp3' : file.type.startsWith('video/') ? 'mp4' : 'jpg');
+    const safeLabel = label.replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
+    const filePath = `video-inputs/${Date.now()}-${safeLabel}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from('generations')
+      .upload(filePath, file, { contentType: file.type || 'application/octet-stream' });
+
+    if (uploadError) {
+      console.error(`${label} upload error:`, uploadError);
+      throw new Error(`Failed to upload ${label}. Please try again.`);
+    }
+
+    const { data: urlData } = supabase.storage
+      .from('generations')
+      .getPublicUrl(filePath);
+
+    return urlData.publicUrl;
+  };
+
+  const applyLipSyncResult = (placeholderId: string, result: Awaited<ReturnType<typeof generateVideo>>) => {
+    if (result.success && result.videoUrl) {
+      setPendingJob(null);
+      onUpdate?.(placeholderId, {
+        status: 'completed',
+        videoUrl: result.videoUrl,
+        timestamp: 'Just now',
+        error: undefined,
+        requestId: result.requestId,
+      });
+      return;
+    }
+
+    if (result.pending) {
+      if (result.pendingJob) setPendingJob(result.pendingJob);
+      onUpdate?.(placeholderId, {
+        status: 'pending',
+        error: result.error || 'Lip sync was submitted. Status check failed. Click Resume instead of Generate.',
+        requestId: result.requestId || result.pendingJob?.requestId,
+      });
+      alert(result.error || 'Lip sync was submitted. Please click Resume instead of generating again.');
+      return;
+    }
+
+    setPendingJob(null);
+    onUpdate?.(placeholderId, {
+      status: 'failed',
+      error: result.error || 'Lip sync generation failed.',
+      timestamp: 'Failed',
+      requestId: result.requestId,
+    });
+    alert(result.error || 'Lip sync generation failed. Please try again.');
+  };
+
+  const handleResumePending = async () => {
+    const existing = pendingJob || getPendingVideoJob();
+    if (!existing || existing.mode !== 'lip_sync') return;
+
+    setPendingJob(existing);
+    setIsGenerating(true);
+
+    try {
+      const result = await pollPendingVideoJob();
+      applyLipSyncResult(existing.clientJobId, result);
+    } catch (error) {
+      console.error('Resume lip sync job error:', error);
+      onUpdate?.(existing.clientJobId, {
+        status: 'pending',
+        error: error instanceof Error ? error.message : 'Failed to resume status check.',
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleGenerate = async () => {
+    const existing = getPendingVideoJob();
+    if (existing && existing.mode === 'lip_sync') {
+      await handleResumePending();
+      return;
+    }
+
+    if (existing && existing.mode !== 'lip_sync') {
+      alert(`A ${existing.mode} job is already pending. Resume that job before submitting a new one.`);
+      return;
+    }
+
     if (!selectedMedia) {
       alert('Please upload a character image or video.');
       return;
     }
-    if (!audioFile) {
+    if (!audioFile || !audioUrl) {
       alert('Please upload an audio track.');
       return;
     }
 
+    const resultDuration = Math.ceil(
+      selectedMedia.type === 'video' ? timelineDuration || effectiveAudioLength || 5 : audioDuration || 5
+    );
+
+    const placeholderId = `lip-${Date.now()}`;
+    const promptText =
+      selectedMedia.type === 'video'
+        ? `Audio Sync: ${audioFile.name} • Person ${selectedPerson} • audio ${formatTime(audioStartTime)}-${formatTime(
+            audioStartTime + effectiveAudioLength
+          )}`
+        : `AI Avatar: ${audioFile.name} • ${prompt}`;
+
+    onGenerate({
+      id: placeholderId,
+      type: 'Lip Sync',
+      model: selectedMedia.type === 'image' ? 'Kling AI Avatar' : 'Kling Lip Sync',
+      resolution: '720p',
+      prompt: promptText,
+      duration: formatTime(resultDuration),
+      aspectRatio: selectedMedia.type === 'image' ? '1:1' : '16:9',
+      timestamp: 'Uploading',
+      bgColor: 'bg-emerald-900/50',
+      sourceImage: selectedMedia.type === 'image' ? selectedMedia.url : undefined,
+      sourceVideo: selectedMedia.type === 'video' ? selectedMedia.url : undefined,
+      status: 'pending',
+      mode: 'lip_sync',
+    });
+
     setIsGenerating(true);
 
     try {
-      const resultDuration = Math.ceil(
-        selectedMedia.type === 'video' ? timelineDuration || effectiveAudioLength || 5 : audioDuration || 5
+      const uploadedAudioUrl = await uploadFileIfNeeded(audioUrl, audioFile, 'audio');
+      const uploadedMediaUrl = await uploadFileIfNeeded(
+        selectedMedia.url,
+        selectedMedia.file,
+        selectedMedia.type === 'video' ? 'lip-sync-video' : 'avatar-image'
       );
-      const videoUrl = await generateFakeVideo(selectedMedia.url, resultDuration);
 
-      const newResult: VideoResult = {
-        id: `gen-${Date.now()}`,
-        type: 'Lip Sync',
-        model: 'Kling Lip Sync',
-        resolution: '1080p',
-        prompt:
-          selectedMedia.type === 'video'
-            ? `Audio Sync: ${audioFile.name} • Person ${selectedPerson} • audio ${formatTime(audioStartTime)}-${formatTime(
-                audioStartTime + effectiveAudioLength
-              )}`
-            : `Audio Sync: ${audioFile.name} • ${prompt}`,
-        duration: formatTime(resultDuration),
-        aspectRatio: '1:1',
-        timestamp: 'Just now',
-        bgColor: 'bg-emerald-900/50',
-        videoUrl,
-        sourceImage: selectedMedia.type === 'image' ? selectedMedia.url : undefined,
-      };
+      onUpdate?.(placeholderId, {
+        timestamp: 'Generating',
+        sourceImage: selectedMedia.type === 'image' ? uploadedMediaUrl : undefined,
+        sourceVideo: selectedMedia.type === 'video' ? uploadedMediaUrl : undefined,
+        audioUrl: uploadedAudioUrl,
+      });
 
-      onGenerate(newResult);
+      const result = await generateVideo({
+        mode: 'lip_sync',
+        prompt: selectedMedia.type === 'image' ? prompt : undefined,
+        startImageUrl: selectedMedia.type === 'image' ? uploadedMediaUrl : undefined,
+        videoUrl: selectedMedia.type === 'video' ? uploadedMediaUrl : undefined,
+        audioUrl: uploadedAudioUrl,
+        duration: resultDuration,
+        resolution: '720p',
+        clientJobId: placeholderId,
+        onJobSubmitted: (job) => {
+          setPendingJob(job);
+          onUpdate?.(placeholderId, {
+            status: 'pending',
+            requestId: job.requestId,
+          });
+        },
+      });
+
+      applyLipSyncResult(placeholderId, result);
     } catch (error) {
-      console.error(error);
+      console.error('Lip sync generation error:', error);
+      onUpdate?.(placeholderId, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Lip sync generation failed. Please try again.',
+        timestamp: 'Failed',
+      });
+      alert(error instanceof Error ? error.message : 'Lip sync generation failed. Please try again.');
     } finally {
       setIsGenerating(false);
     }
@@ -867,22 +1038,28 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, initialImage }) =>
         </div>
       </div>
 
+      {pendingJob && (
+        <div className="mx-5 mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+          A Fal lip sync job is already submitted. Use Resume to check the same job. Do not generate again.
+        </div>
+      )}
+
       {/* Bottom Bar */}
       <div className="relative w-full shrink-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-4px_24px_rgba(0,0,0,0.05)] backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]">
         <button
           onClick={handleGenerate}
-          disabled={isGenerating || !selectedMedia || !audioFile}
+          disabled={isGenerating || (!pendingJob && (!selectedMedia || !audioFile))}
           className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 text-sm font-semibold text-white shadow-md transition-all hover:from-emerald-600 hover:to-teal-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-slate-900"
         >
           {isGenerating ? (
             <>
               <RefreshCw className="h-4 w-4 animate-spin text-white" />
-              <span>Syncing...</span>
+              <span>{pendingJob ? 'Checking...' : 'Syncing...'}</span>
             </>
           ) : (
             <>
               <Sparkles className="h-4 w-4 text-white" />
-              <span>36 Generate</span>
+              <span>{pendingJob ? 'Resume' : '36 Generate'}</span>
             </>
           )}
         </button>

@@ -16,6 +16,7 @@ const ALLOWED_ENDPOINTS = new Set<string>([
   'fal-ai/kling-video/v3/standard/motion-control',
   'fal-ai/kling-video/v3/pro/motion-control',
   'fal-ai/kling-video/lipsync/audio-to-video',
+  'fal-ai/kling-video/ai-avatar/v2/standard',
 ]);
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -92,28 +93,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     if (status === 'COMPLETED') {
-      const statusVideoUrl = extractVideoUrl(statusData);
-      if (statusVideoUrl) {
-        return res.status(200).json({
-          status: 'COMPLETED',
-          videoUrl: statusVideoUrl,
-        });
-      }
-
+      // Do not use status_url / response_url as the playable video URL.
+      // Fal status payloads often include response_url, and using that URL in a <video> tag causes a visible-but-unplayable card.
       const result = await getFalResult(endpoint, requestId, falKey, responseUrl);
-      const videoUrl = extractVideoUrl(result);
+      const videoUrl = extractVideoUrl(result) || extractVideoUrlFromCompletedStatus(statusData);
 
       if (!videoUrl) {
         console.error(
-          '[video-status] Fal result missing video URL:',
-          safeStringify(result).slice(0, 2500)
+          '[video-status] Fal result missing playable video URL:',
+          safeStringify({ statusData, result }).slice(0, 3500)
         );
 
         return res.status(200).json({
           status: 'FAILED',
-          error: 'Fal completed but did not return a video URL',
+          error: 'Fal completed but did not return a playable video URL',
         });
       }
+
+      console.log('[video-status] Extracted playable video URL:', videoUrl);
 
       return res.status(200).json({
         status: 'COMPLETED',
@@ -374,33 +371,57 @@ function extractVideoUrl(result: unknown): string | null {
     ['result', 'video', 'url'],
     ['data', 'result', 'video', 'url'],
     ['response', 'video', 'url'],
-    ['url'],
     ['video_url'],
     ['videoUrl'],
     ['data', 'video_url'],
     ['data', 'videoUrl'],
     ['output', 'video_url'],
     ['result', 'video_url'],
+    ['videos', '0', 'url'],
+    ['data', 'videos', '0', 'url'],
+    ['output', 'videos', '0', 'url'],
   ];
 
   for (const path of candidates) {
     const value = getNestedString(result, path);
-    if (isLikelyVideoUrl(value)) return value;
+    if (isPlayableVideoUrl(value, path)) return value;
   }
 
-  return findVideoUrlDeep(result);
+  return findVideoUrlDeep(result, []);
 }
 
-function findVideoUrlDeep(value: unknown): string | null {
+function extractVideoUrlFromCompletedStatus(statusData: unknown): string | null {
+  // Only accept explicit output video fields from the status response.
+  // Never accept response_url/status_url/cancel_url here.
+  const candidates = [
+    ['video', 'url'],
+    ['data', 'video', 'url'],
+    ['output', 'video', 'url'],
+    ['result', 'video', 'url'],
+    ['video_url'],
+    ['videoUrl'],
+    ['data', 'video_url'],
+    ['data', 'videoUrl'],
+  ];
+
+  for (const path of candidates) {
+    const value = getNestedString(statusData, path);
+    if (isPlayableVideoUrl(value, path)) return value;
+  }
+
+  return null;
+}
+
+function findVideoUrlDeep(value: unknown, path: string[]): string | null {
   if (!value) return null;
 
   if (typeof value === 'string') {
-    return isLikelyVideoUrl(value) ? value : null;
+    return isPlayableVideoUrl(value, path) ? value : null;
   }
 
   if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findVideoUrlDeep(item);
+    for (let index = 0; index < value.length; index += 1) {
+      const found = findVideoUrlDeep(value[index], [...path, String(index)]);
       if (found) return found;
     }
     return null;
@@ -408,13 +429,14 @@ function findVideoUrlDeep(value: unknown): string | null {
 
   if (isRecord(value)) {
     for (const [key, nested] of Object.entries(value)) {
-      if (typeof nested === 'string' && /url/i.test(key) && isLikelyVideoUrl(nested)) {
-        return nested;
-      }
+      const nextPath = [...path, key];
+      if (shouldSkipUrlKey(key)) continue;
+      if (typeof nested === 'string' && isPlayableVideoUrl(nested, nextPath)) return nested;
     }
 
-    for (const nested of Object.values(value)) {
-      const found = findVideoUrlDeep(nested);
+    for (const [key, nested] of Object.entries(value)) {
+      if (shouldSkipUrlKey(key)) continue;
+      const found = findVideoUrlDeep(nested, [...path, key]);
       if (found) return found;
     }
   }
@@ -422,11 +444,25 @@ function findVideoUrlDeep(value: unknown): string | null {
   return null;
 }
 
-function isLikelyVideoUrl(value: string | null): value is string {
+function shouldSkipUrlKey(key: string): boolean {
+  return /^(status_url|response_url|cancel_url|logs_url|request_url|queue_url|webhook_url)$/i.test(key);
+}
+
+function isPlayableVideoUrl(value: string | null, path: string[] = []): value is string {
   if (!value || typeof value !== 'string') return false;
   const url = value.trim();
   if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
-  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url) || /fal\.media|fal\.run/i.test(url);
+
+  // Queue/API URLs are JSON endpoints, not playable media files.
+  if (/queue\.fal\.run/i.test(url) || /\/requests\//i.test(url)) return false;
+  if (/status_url|response_url|cancel_url|request_url|queue_url/i.test(path.join('.'))) return false;
+
+  const pathText = path.join('.').toLowerCase();
+  const pathLooksLikeVideo = /video|output|result|file/.test(pathText);
+  const urlLooksLikeVideo = /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url);
+  const isFalMedia = /fal\.media/i.test(url);
+
+  return urlLooksLikeVideo || (isFalMedia && pathLooksLikeVideo);
 }
 
 async function readJsonOrText(response: Response): Promise<unknown> {

@@ -1,4 +1,5 @@
 export type VideoCardStatus = 'pending' | 'completed' | 'failed';
+export type VideoMode = 'image_to_video' | 'motion_control' | 'lip_sync';
 
 export interface VideoResult {
   id: string;
@@ -12,9 +13,112 @@ export interface VideoResult {
   bgColor: string;
   videoUrl?: string;
   sourceImage?: string;
+  sourceVideo?: string;
+  audioUrl?: string;
   status?: VideoCardStatus;
   error?: string;
   requestId?: string;
+  mode?: VideoMode;
+  createdAt?: number;
+}
+
+const VIDEO_RESULTS_CACHE_KEY = 'lazora-video-results-cache-v1';
+const MAX_CACHED_VIDEO_RESULTS = 60;
+
+const canUseLocalStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+
+function readAllCachedResults(): Record<string, VideoResult[]> {
+  if (!canUseLocalStorage()) return {};
+  const raw = window.localStorage.getItem(VIDEO_RESULTS_CACHE_KEY);
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed as Record<string, VideoResult[]>;
+  } catch {
+    window.localStorage.removeItem(VIDEO_RESULTS_CACHE_KEY);
+    return {};
+  }
+}
+
+function writeAllCachedResults(value: Record<string, VideoResult[]>) {
+  if (!canUseLocalStorage()) return;
+  window.localStorage.setItem(VIDEO_RESULTS_CACHE_KEY, JSON.stringify(value));
+}
+
+export function getCachedVideoResults(userId?: string | null): VideoResult[] {
+  if (!userId) return [];
+  const all = readAllCachedResults();
+  const list = Array.isArray(all[userId]) ? all[userId] : [];
+  return list
+    .filter((item) => item && item.id)
+    .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+}
+
+export function saveCachedVideoResults(userId: string | undefined | null, results: VideoResult[]) {
+  if (!userId) return;
+  const all = readAllCachedResults();
+  all[userId] = dedupeVideoResults(results)
+    .slice(0, MAX_CACHED_VIDEO_RESULTS)
+    .map((item) => ({ ...item, createdAt: item.createdAt || Date.now() }));
+  writeAllCachedResults(all);
+}
+
+export function upsertCachedVideoResult(userId: string | undefined | null, result: VideoResult) {
+  if (!userId) return;
+  const existing = getCachedVideoResults(userId);
+  const next = upsertVideoResult(existing, { ...result, createdAt: result.createdAt || Date.now() });
+  saveCachedVideoResults(userId, next);
+}
+
+export function updateCachedVideoResult(
+  userId: string | undefined | null,
+  id: string,
+  updates: Partial<VideoResult>
+): VideoResult | null {
+  if (!userId) return null;
+  const existing = getCachedVideoResults(userId);
+  let updated: VideoResult | null = null;
+  const next = existing.map((item) => {
+    if (item.id !== id) return item;
+    updated = { ...item, ...updates, createdAt: item.createdAt || Date.now() };
+    return updated;
+  });
+  if (updated) saveCachedVideoResults(userId, next);
+  return updated;
+}
+
+export function removeCachedVideoResult(userId: string | undefined | null, id: string) {
+  if (!userId) return;
+  const next = getCachedVideoResults(userId).filter((item) => item.id !== id);
+  saveCachedVideoResults(userId, next);
+}
+
+export function upsertVideoResult(results: VideoResult[], result: VideoResult): VideoResult[] {
+  const exists = results.some((item) => item.id === result.id);
+  const next = exists
+    ? results.map((item) => (item.id === result.id ? { ...item, ...result } : item))
+    : [result, ...results];
+  return dedupeVideoResults(next);
+}
+
+export function dedupeVideoResults(results: VideoResult[]): VideoResult[] {
+  const seen = new Set<string>();
+  const output: VideoResult[] = [];
+
+  for (const item of results) {
+    const key = item.requestId
+      ? `request:${item.requestId}`
+      : item.videoUrl
+        ? `video:${item.videoUrl}`
+        : `id:${item.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(item);
+  }
+
+  return output;
 }
 
 export const generateFakeVideo = async (imageUrl: string, durationSeconds: number): Promise<string> => {

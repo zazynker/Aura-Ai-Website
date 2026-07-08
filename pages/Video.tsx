@@ -1,10 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { 
-  Copy, Edit2, RefreshCw,
-  Download, ImagePlus, Trash2, AlertTriangle
+import {
+  Copy,
+  Edit2,
+  RefreshCw,
+  Download,
+  ImagePlus,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
-import { VideoResult } from '../utils/video';
+import {
+  VideoResult,
+  getCachedVideoResults,
+  saveCachedVideoResults,
+  upsertCachedVideoResult,
+  updateCachedVideoResult,
+  removeCachedVideoResult,
+  dedupeVideoResults,
+} from '../utils/video';
+import { getPendingVideoJob } from '../utils/generateService';
 import { FeatureSwitcher, FeatureType } from '../components/video/FeatureSwitcher';
 import { ImageToVideo } from '../components/video/ImageToVideo';
 import { MotionControl } from '../components/video/MotionControl';
@@ -13,7 +27,7 @@ import { FreeMode } from '../components/video/FreeMode';
 import { useStore } from '../context/StoreContext';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
-import { VideoMode } from '../types';
+import { Generation, VideoMode } from '../types';
 
 const parseDurationSeconds = (duration: string): number | undefined => {
   if (!duration) return undefined;
@@ -24,6 +38,13 @@ const parseDurationSeconds = (duration: string): number | undefined => {
   return Number(duration) || undefined;
 };
 
+const formatDuration = (seconds?: number | null) => {
+  const safe = Math.max(0, Math.round(Number(seconds) || 0));
+  const minutes = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+};
+
 const getVideoMode = (type: string): VideoMode | undefined => {
   const normalized = type.toLowerCase();
   if (normalized.includes('image')) return 'image_to_video';
@@ -32,43 +53,102 @@ const getVideoMode = (type: string): VideoMode | undefined => {
   return undefined;
 };
 
+const getTypeFromMode = (mode?: VideoMode) => {
+  if (mode === 'image_to_video') return 'Image to Video';
+  if (mode === 'motion_control') return 'Motion Control';
+  if (mode === 'lip_sync') return 'Lip Sync';
+  return 'Video';
+};
+
+const generationToVideoResult = (generation: Generation): VideoResult | null => {
+  if (generation.mediaType !== 'video' && !generation.videoUrl) return null;
+
+  const mode = generation.videoMode;
+  return {
+    id: generation.id,
+    type: getTypeFromMode(mode),
+    model: mode === 'lip_sync' ? 'Kling Lip Sync' : mode === 'motion_control' ? 'Kling Motion Control' : 'Kling 3.0',
+    resolution: 'Saved',
+    prompt: generation.prompt || '',
+    duration: formatDuration(generation.videoDuration),
+    aspectRatio: (generation.videoAspectRatio as VideoResult['aspectRatio']) || '16:9',
+    timestamp: 'Saved',
+    bgColor: 'bg-slate-900/50',
+    videoUrl: generation.videoUrl,
+    sourceImage: generation.imageUrl,
+    status: generation.videoUrl ? 'completed' : 'pending',
+    mode,
+    createdAt: generation.createdAt,
+  };
+};
+
+const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
+  const job = getPendingVideoJob();
+  if (!job || (userId && job.userId !== userId)) return null;
+
+  return {
+    id: job.clientJobId,
+    type: getTypeFromMode(job.mode),
+    model: job.mode === 'lip_sync' ? 'Kling Lip Sync' : job.mode === 'motion_control' ? 'Kling Motion Control' : 'Kling 3.0',
+    resolution: job.resolution || '720p',
+    prompt: job.prompt || '',
+    duration: formatDuration(job.duration || 0),
+    aspectRatio: '16:9',
+    timestamp: 'Pending',
+    bgColor: 'bg-slate-900/50',
+    sourceImage: job.startImageUrl,
+    sourceVideo: job.inputVideoUrl,
+    audioUrl: job.audioUrl,
+    status: 'pending',
+    requestId: job.requestId,
+    mode: job.mode,
+    createdAt: job.createdAt,
+    error: 'This Fal job was already submitted. Use Resume to check the same request instead of generating again.',
+  };
+};
+
 export const Video: React.FC = () => {
   const location = useLocation();
   const navigationState = location.state as { initialImage?: string } | null;
   const [initialImage] = useState<string | null>(navigationState?.initialImage || null);
-  
+
   const [results, setResults] = useState<VideoResult[]>([]);
+  const resultsRef = useRef<VideoResult[]>([]);
   const [activeFeature, setActiveFeature] = useState<FeatureType>('image-to-video');
   const [videoToDelete, setVideoToDelete] = useState<string | null>(null);
-  const { addGeneration, user } = useStore();
-  const savedVideoIdsRef = useRef<Set<string>>(new Set());
+  const { addGeneration, user, generations } = useStore();
+  const savedVideoKeysRef = useRef<Set<string>>(new Set());
+
+  const setResultsAndCache = (next: VideoResult[] | ((prev: VideoResult[]) => VideoResult[])) => {
+    setResults((prev) => {
+      const resolved = typeof next === 'function' ? next(prev) : next;
+      const deduped = dedupeVideoResults(resolved);
+      resultsRef.current = deduped;
+      if (user?.id) saveCachedVideoResults(user.id, deduped);
+      return deduped;
+    });
+  };
 
   const saveCompletedVideo = (result: VideoResult) => {
-    if (!user || !result.videoUrl || savedVideoIdsRef.current.has(result.id)) return;
+    if (!user || !result.videoUrl) return;
 
-    savedVideoIdsRef.current.add(result.id);
+    const key = result.requestId || result.videoUrl || result.id;
+    if (savedVideoKeysRef.current.has(key)) return;
+    savedVideoKeysRef.current.add(key);
 
     addGeneration({
       userId: user.id,
       templateId: 'video-gen',
       templateName: result.type,
-      imageUrl: result.sourceImage || result.videoUrl || 'blob:placeholder',
+      imageUrl: result.sourceImage || result.sourceVideo || result.videoUrl,
       mediaType: 'video',
       videoUrl: result.videoUrl,
       videoDuration: parseDurationSeconds(result.duration),
       videoAspectRatio: result.aspectRatio === 'Auto' ? undefined : result.aspectRatio,
-      videoMode: getVideoMode(result.type),
+      videoMode: result.mode || getVideoMode(result.type),
       prompt: result.prompt,
       creditsUsed: 36,
     });
-  };
-
-  const handleDeleteConfirm = () => {
-    if (videoToDelete) {
-      setResults(prev => prev.filter(v => v.id !== videoToDelete));
-      savedVideoIdsRef.current.delete(videoToDelete);
-      setVideoToDelete(null);
-    }
   };
 
   useEffect(() => {
@@ -77,28 +157,82 @@ export const Video: React.FC = () => {
     }
   }, []);
 
+  useEffect(() => {
+    if (!user?.id) {
+      setResults([]);
+      resultsRef.current = [];
+      return;
+    }
+
+    const dbVideos = generations
+      .map(generationToVideoResult)
+      .filter((item): item is VideoResult => Boolean(item));
+
+    for (const item of dbVideos) {
+      if (item.videoUrl) savedVideoKeysRef.current.add(item.videoUrl);
+    }
+
+    const cached = getCachedVideoResults(user.id);
+    const pending = pendingJobToVideoResult(user.id);
+    const combined = dedupeVideoResults([
+      ...(pending ? [pending] : []),
+      ...cached,
+      ...dbVideos,
+    ]);
+
+    resultsRef.current = combined;
+    setResults(combined);
+    saveCachedVideoResults(user.id, combined);
+  }, [user?.id, generations]);
+
+  const handleDeleteConfirm = () => {
+    if (videoToDelete) {
+      setResultsAndCache(prev => prev.filter(v => v.id !== videoToDelete));
+      if (user?.id) removeCachedVideoResult(user.id, videoToDelete);
+      savedVideoKeysRef.current.delete(videoToDelete);
+      setVideoToDelete(null);
+    }
+  };
+
   const handleNewResult = (result: VideoResult) => {
-    setResults(prev => {
-      const exists = prev.some(v => v.id === result.id);
-      if (exists) {
-        return prev.map(v => v.id === result.id ? { ...v, ...result } : v);
-      }
-      return [result, ...prev];
+    const normalized: VideoResult = {
+      ...result,
+      createdAt: result.createdAt || Date.now(),
+      mode: result.mode || getVideoMode(result.type),
+    };
+
+    setResultsAndCache(prev => {
+      const exists = prev.some(v => v.id === normalized.id);
+      return exists
+        ? prev.map(v => v.id === normalized.id ? { ...v, ...normalized } : v)
+        : [normalized, ...prev];
     });
 
-    if (result.videoUrl && result.status !== 'pending') {
-      saveCompletedVideo({ ...result, status: result.status || 'completed' });
+    if (user?.id) upsertCachedVideoResult(user.id, normalized);
+
+    if (normalized.videoUrl && normalized.status !== 'pending') {
+      saveCompletedVideo({ ...normalized, status: normalized.status || 'completed' });
     }
   };
 
   const handleUpdateResult = (id: string, updates: Partial<VideoResult>) => {
-    const existing = results.find(item => item.id === id);
-    const merged = existing ? { ...existing, ...updates } : null;
+    let merged: VideoResult | null = null;
 
-    setResults(prev => prev.map(item => item.id === id ? { ...item, ...updates } : item));
+    setResultsAndCache(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      merged = { ...item, ...updates, createdAt: item.createdAt || Date.now() };
+      return merged;
+    }));
 
-    if (merged?.videoUrl && merged.status === 'completed') {
-      saveCompletedVideo(merged);
+    const fallback = resultsRef.current.find(item => item.id === id);
+    const finalMerged = merged || (fallback ? { ...fallback, ...updates } : null);
+
+    if (user?.id && finalMerged) {
+      updateCachedVideoResult(user.id, id, finalMerged);
+    }
+
+    if (finalMerged?.videoUrl && finalMerged.status === 'completed') {
+      saveCompletedVideo(finalMerged);
     }
   };
 
@@ -140,7 +274,7 @@ export const Video: React.FC = () => {
           <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} />
         )}
         {activeFeature === 'lip-sync' && (
-          <LipSync onGenerate={handleNewResult} initialImage={initialImage} />
+          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} />
         )}
         {activeFeature === 'free-mode' && (
           <FreeMode onGenerate={handleNewResult} initialImage={initialImage} />
@@ -212,12 +346,25 @@ export const Video: React.FC = () => {
                     }`}
                   >
                     {gen.videoUrl ? (
-                      <video 
-                        src={gen.videoUrl} 
-                        controls 
+                      <video
+                        key={gen.videoUrl}
+                        controls
+                        playsInline
+                        preload="metadata"
                         className="h-full w-full object-contain bg-black"
                         poster={gen.sourceImage}
-                      />
+                        onError={(event) => {
+                          console.error('[Video] HTML video playback error:', {
+                            videoUrl: gen.videoUrl,
+                            error: event.currentTarget.error,
+                          });
+                        }}
+                      >
+                        <source src={gen.videoUrl} />
+                        Your browser does not support the video tag.
+                      </video>
+                    ) : gen.sourceVideo ? (
+                      <video src={gen.sourceVideo} muted playsInline className="h-full w-full object-contain bg-black opacity-70" />
                     ) : gen.sourceImage ? (
                       <img src={gen.sourceImage} alt="Source" className="h-full w-full object-cover opacity-70" />
                     ) : (
