@@ -222,7 +222,7 @@ const VIDEO_ERROR_MESSAGES: Record<number, string> = {
 };
 
 const VIDEO_POLL_INTERVAL_MS = 3000;
-const VIDEO_MAX_POLL_ATTEMPTS = 100;
+const VIDEO_MAX_POLL_ATTEMPTS = 200;
 const PENDING_VIDEO_JOB_KEY = 'lazora-pending-video-job-v1';
 const PENDING_VIDEO_JOB_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
@@ -460,7 +460,10 @@ export async function generateVideo(options: VideoGenerateOptions): Promise<Vide
 
 async function pollVideoJob(job: PendingVideoJob, accessToken: string): Promise<VideoGenerateResult> {
   for (let attempt = 0; attempt < VIDEO_MAX_POLL_ATTEMPTS; attempt += 1) {
-    await sleep(VIDEO_POLL_INTERVAL_MS);
+    // On Resume / restored pending jobs, check immediately once instead of waiting 3 seconds.
+    if (attempt > 0) {
+      await sleep(VIDEO_POLL_INTERVAL_MS);
+    }
 
     const statusResponse = await fetch('/api/video-status', {
       method: 'POST',
@@ -473,12 +476,30 @@ async function pollVideoJob(job: PendingVideoJob, accessToken: string): Promise<
         endpoint: job.endpoint,
         statusUrl: job.statusUrl,
         responseUrl: job.responseUrl,
+        createdAt: job.createdAt,
       }),
     });
 
     if (!statusResponse.ok) {
       const errorData = await statusResponse.json().catch(() => ({}));
       console.error('Video status API error:', statusResponse.status, errorData);
+
+      const errorCode = typeof errorData?.code === 'string' ? errorData.code : '';
+      const isFalRequestMissing =
+        statusResponse.status === 404 ||
+        errorCode === 'FAL_STATUS_NOT_FOUND' ||
+        errorCode === 'FAL_RESULT_NOT_FOUND';
+
+      if (isFalRequestMissing) {
+        clearPendingVideoJob();
+        return {
+          success: false,
+          pending: false,
+          requestId: job.requestId,
+          status: 'FAILED',
+          error: 'This pending Fal request was not found. It has been cleared locally. Click Generate again to submit a new Fal request.',
+        };
+      }
 
       const friendlyMessage =
         errorData.error ||
@@ -547,6 +568,6 @@ async function pollVideoJob(job: PendingVideoJob, accessToken: string): Promise<
     pending: true,
     pendingJob: job,
     requestId: job.requestId,
-    error: 'Video status checking timed out. The Fal job may still be running. Click Resume instead of Generate.',
+    error: 'Video status checking timed out after about 10 minutes. The Fal job may still be running. Click Check status / Resume instead of Generate.',
   };
 }

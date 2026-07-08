@@ -18,7 +18,7 @@ import {
   removeCachedVideoResult,
   dedupeVideoResults,
 } from '../utils/video';
-import { getPendingVideoJob } from '../utils/generateService';
+import { clearPendingVideoJob, getPendingVideoJob, pollPendingVideoJob } from '../utils/generateService';
 import { FeatureSwitcher, FeatureType } from '../components/video/FeatureSwitcher';
 import { ImageToVideo } from '../components/video/ImageToVideo';
 import { MotionControl } from '../components/video/MotionControl';
@@ -118,6 +118,7 @@ export const Video: React.FC = () => {
   const [videoToDelete, setVideoToDelete] = useState<string | null>(null);
   const { addGeneration, user, generations } = useStore();
   const savedVideoKeysRef = useRef<Set<string>>(new Set());
+  const autoResumedRequestIdsRef = useRef<Set<string>>(new Set());
 
   const setResultsAndCache = (next: VideoResult[] | ((prev: VideoResult[]) => VideoResult[])) => {
     setResults((prev) => {
@@ -187,6 +188,10 @@ export const Video: React.FC = () => {
 
   const handleDeleteConfirm = () => {
     if (videoToDelete) {
+      const deleting = resultsRef.current.find(v => v.id === videoToDelete);
+      if (deleting && isMatchingPendingCard(deleting)) {
+        clearPendingVideoJob();
+      }
       setResultsAndCache(prev => prev.filter(v => v.id !== videoToDelete));
       if (user?.id) removeCachedVideoResult(user.id, videoToDelete);
       savedVideoKeysRef.current.delete(videoToDelete);
@@ -235,6 +240,94 @@ export const Video: React.FC = () => {
       saveCompletedVideo(finalMerged);
     }
   };
+
+
+  const isMatchingPendingCard = (gen: VideoResult) => {
+    const pending = getPendingVideoJob();
+    if (!pending) return false;
+    return pending.clientJobId === gen.id || Boolean(gen.requestId && pending.requestId === gen.requestId);
+  };
+
+  const handleResumeCard = async (gen: VideoResult) => {
+    if (gen.status !== 'pending') return;
+
+    const pending = getPendingVideoJob();
+    if (!pending || !isMatchingPendingCard(gen)) {
+      handleUpdateResult(gen.id, {
+        status: 'failed',
+        timestamp: 'Failed',
+        error: 'No matching local pending job was found. Clear this card and generate again.',
+      });
+      return;
+    }
+
+    handleUpdateResult(gen.id, {
+      status: 'pending',
+      error: 'Checking the existing Fal request. Do not submit a new generation.',
+    });
+
+    try {
+      const result = await pollPendingVideoJob();
+
+      if (result.success && result.videoUrl) {
+        handleUpdateResult(gen.id, {
+          status: 'completed',
+          videoUrl: result.videoUrl,
+          timestamp: 'Just now',
+          requestId: result.requestId || gen.requestId,
+          error: undefined,
+        });
+        return;
+      }
+
+      if (result.pending) {
+        handleUpdateResult(gen.id, {
+          status: 'pending',
+          requestId: result.requestId || gen.requestId,
+          error: result.error || 'Fal is still processing this request. Check again later.',
+        });
+        return;
+      }
+
+      handleUpdateResult(gen.id, {
+        status: 'failed',
+        timestamp: 'Failed',
+        requestId: result.requestId || gen.requestId,
+        error: result.error || 'Fal request failed or was not found. You can clear this card and generate again.',
+      });
+    } catch (error) {
+      handleUpdateResult(gen.id, {
+        status: 'pending',
+        error: error instanceof Error ? error.message : 'Failed to check the pending job.',
+      });
+    }
+  };
+
+  const handleClearPendingCard = (gen: VideoResult) => {
+    if (isMatchingPendingCard(gen)) {
+      clearPendingVideoJob();
+    }
+
+    setResultsAndCache(prev => prev.filter(item => item.id !== gen.id));
+    if (user?.id) removeCachedVideoResult(user.id, gen.id);
+  };
+
+
+  // If the page is refreshed while a Fal job is still pending, restore the pending card and
+  // automatically resume polling once. This prevents a restored card from spinning forever
+  // until the user manually clicks Check status.
+  useEffect(() => {
+    const pendingCard = results.find(item => item.status === 'pending' && item.requestId);
+    if (!pendingCard?.requestId) return;
+    if (autoResumedRequestIdsRef.current.has(pendingCard.requestId)) return;
+
+    autoResumedRequestIdsRef.current.add(pendingCard.requestId);
+    const timer = window.setTimeout(() => {
+      handleResumeCard(pendingCard);
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [results, user?.id]);
 
   const renderStatusPill = (gen: VideoResult) => {
     if (gen.status === 'pending') {
@@ -309,7 +402,11 @@ export const Video: React.FC = () => {
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors">
+                    <button
+                      onClick={() => gen.status === 'pending' ? handleResumeCard(gen) : undefined}
+                      className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
+                      title={gen.status === 'pending' ? 'Check existing Fal request' : 'Refresh'}
+                    >
                       <RefreshCw className={`h-4 w-4 ${gen.status === 'pending' ? 'animate-spin' : ''}`} />
                     </button>
                     <button className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors">
@@ -396,6 +493,25 @@ export const Video: React.FC = () => {
 
                 <div className="flex items-center justify-end px-5 py-4 mt-auto border-t border-slate-100 dark:border-slate-800">
                   <div className="flex items-center gap-3">
+                    {gen.status === 'pending' && (
+                      <>
+                        <button
+                          onClick={() => handleResumeCard(gen)}
+                          className="flex items-center gap-1.5 rounded-lg bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50 transition-colors"
+                          type="button"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" />
+                          Check status
+                        </button>
+                        <button
+                          onClick={() => handleClearPendingCard(gen)}
+                          className="flex items-center gap-1.5 rounded-lg bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/40 transition-colors"
+                          type="button"
+                        >
+                          Clear stuck job
+                        </button>
+                      </>
+                    )}
                     {gen.videoUrl && (
                       <a 
                         href={gen.videoUrl}

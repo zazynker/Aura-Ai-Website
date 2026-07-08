@@ -6,6 +6,7 @@ type RequestBody = {
   endpoint?: string;
   statusUrl?: string;
   responseUrl?: string;
+  createdAt?: number;
 };
 
 const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
@@ -93,29 +94,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     if (status === 'COMPLETED') {
-      // Do not use status_url / response_url as the playable video URL.
-      // Fal status payloads often include response_url, and using that URL in a <video> tag causes a visible-but-unplayable card.
-      const result = await getFalResult(endpoint, requestId, falKey, responseUrl);
-      const videoUrl = extractVideoUrl(result) || extractVideoUrlFromCompletedStatus(statusData);
+      const videoUrl = await fetchResultVideoUrl(endpoint, requestId, falKey, responseUrl, statusData);
 
       if (!videoUrl) {
-        console.error(
-          '[video-status] Fal result missing playable video URL:',
-          safeStringify({ statusData, result }).slice(0, 3500)
-        );
-
         return res.status(200).json({
           status: 'FAILED',
           error: 'Fal completed but did not return a playable video URL',
         });
       }
 
-      console.log('[video-status] Extracted playable video URL:', videoUrl);
-
       return res.status(200).json({
         status: 'COMPLETED',
         videoUrl,
       });
+    }
+
+    // Some Fal video endpoints, especially ai-avatar, can keep returning IN_PROGRESS from the
+    // status URL even after the response/result URL is already available. If the frontend tells
+    // us the job is older than 5 minutes, proactively probe the result URL before saying it is
+    // still running. This fixes stuck pending cards after long Lip Sync / AI Avatar runs.
+    if ((status === 'IN_PROGRESS' || status === 'IN_QUEUE') && body.createdAt) {
+      const jobAgeMs = Date.now() - Number(body.createdAt);
+      if (Number.isFinite(jobAgeMs) && jobAgeMs > 5 * 60 * 1000) {
+        try {
+          const probeResult = await getFalResult(endpoint, requestId, falKey, responseUrl);
+          const probeVideoUrl = extractVideoUrl(probeResult);
+
+          if (probeVideoUrl) {
+            console.log('[video-status] Proactive result fetch found playable video despite status:', {
+              status,
+              requestId,
+              endpoint,
+              jobAgeMs,
+              videoUrl: probeVideoUrl,
+            });
+
+            return res.status(200).json({
+              status: 'COMPLETED',
+              videoUrl: probeVideoUrl,
+            });
+          }
+
+          console.log('[video-status] Proactive result fetch returned no playable video yet:', {
+            status,
+            requestId,
+            endpoint,
+            jobAgeMs,
+          });
+        } catch (probeErr) {
+          console.log(
+            '[video-status] Proactive result fetch failed; job may truly still be running:',
+            probeErr instanceof Error ? probeErr.message : probeErr
+          );
+        }
+      }
     }
 
     if (status === 'FAILED' || status === 'CANCELLED') {
@@ -213,6 +245,30 @@ function getHeaderValue(value: string | string[] | undefined): string | undefine
   return value;
 }
 
+async function fetchResultVideoUrl(
+  endpoint: string,
+  requestId: string,
+  falKey: string,
+  responseUrl: string | undefined,
+  statusData: Record<string, unknown>
+): Promise<string | null> {
+  // Do not use status_url / response_url as the playable video URL.
+  // Fal status payloads often include response_url, and using that URL in a <video> tag causes a visible-but-unplayable card.
+  const result = await getFalResult(endpoint, requestId, falKey, responseUrl);
+  const videoUrl = extractVideoUrl(result) || extractVideoUrlFromCompletedStatus(statusData);
+
+  if (!videoUrl) {
+    console.error(
+      '[video-status] Fal result missing playable video URL:',
+      safeStringify({ statusData, result }).slice(0, 3500)
+    );
+    return null;
+  }
+
+  console.log('[video-status] Extracted playable video URL:', videoUrl);
+  return videoUrl;
+}
+
 async function getFalStatus(
   endpoint: string,
   requestId: string,
@@ -244,7 +300,7 @@ async function getFalStatus(
 
     throw new ApiError(
       mapFalStatusToHttp(response.status),
-      'FAL_STATUS_FAILED',
+      response.status === 404 ? 'FAL_STATUS_NOT_FOUND' : 'FAL_STATUS_FAILED',
       `Fal status failed. HTTP ${response.status} ${response.statusText}: ${extractFalErrorMessage(data)}`,
       {
         falHttpStatus: response.status,
@@ -300,7 +356,7 @@ async function getFalResult(
 
     throw new ApiError(
       mapFalStatusToHttp(response.status),
-      'FAL_RESULT_FAILED',
+      response.status === 404 ? 'FAL_RESULT_NOT_FOUND' : 'FAL_RESULT_FAILED',
       `Fal result failed. HTTP ${response.status} ${response.statusText}: ${extractFalErrorMessage(data)}`,
       {
         falHttpStatus: response.status,
@@ -541,7 +597,7 @@ function safeStringify(value: unknown): string {
 function mapFalStatusToHttp(status: number): number {
   if (status === 400) return 400;
   if (status === 401 || status === 403) return 502;
-  if (status === 404) return 502;
+  if (status === 404) return 404;
   if (status === 408) return 504;
   if (status === 429) return 503;
   if (status >= 500) return 503;
