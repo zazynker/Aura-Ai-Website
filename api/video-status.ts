@@ -81,9 +81,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const responseUrl = validateOptionalFalQueueUrl(body.responseUrl, 'responseUrl');
 
     const statusData = await getFalStatus(endpoint, requestId, falKey, statusUrl);
-    const status = String(statusData.status || '').toUpperCase();
+    const status = extractFalStatus(statusData);
 
-    console.log('[video-status] Fal status:', {
+    console.log('[video-status] Fal parsed status:', {
       userId: user.id,
       requestId,
       endpoint,
@@ -92,13 +92,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
 
     if (status === 'COMPLETED') {
+      const statusVideoUrl = extractVideoUrl(statusData);
+      if (statusVideoUrl) {
+        return res.status(200).json({
+          status: 'COMPLETED',
+          videoUrl: statusVideoUrl,
+        });
+      }
+
       const result = await getFalResult(endpoint, requestId, falKey, responseUrl);
       const videoUrl = extractVideoUrl(result);
 
       if (!videoUrl) {
         console.error(
           '[video-status] Fal result missing video URL:',
-          safeStringify(result).slice(0, 1500)
+          safeStringify(result).slice(0, 2500)
         );
 
         return res.status(200).json({
@@ -225,6 +233,8 @@ async function getFalStatus(
 
   const data = await readJsonOrText(response);
 
+  console.log('[video-status] Raw Fal response:', safeStringify(data).slice(0, 4000));
+
   if (!response.ok) {
     console.error('[video-status] Fal status HTTP error:', {
       falHttpStatus: response.status,
@@ -279,6 +289,8 @@ async function getFalResult(
 
   const data = await readJsonOrText(response);
 
+  console.log('[video-status] Raw Fal result response:', safeStringify(data).slice(0, 4000));
+
   if (!response.ok) {
     console.error('[video-status] Fal result HTTP error:', {
       falHttpStatus: response.status,
@@ -307,23 +319,114 @@ async function getFalResult(
   return data;
 }
 
+function extractFalStatus(data: unknown): string {
+  const candidates = [
+    ['status'],
+    ['data', 'status'],
+    ['result', 'status'],
+    ['output', 'status'],
+    ['queue_status'],
+    ['queueStatus'],
+    ['state'],
+    ['data', 'state'],
+    ['request', 'status'],
+  ];
+
+  for (const path of candidates) {
+    const value = getNestedString(data, path);
+    if (value) return normalizeFalStatus(value);
+  }
+
+  const completed = getNestedBoolean(data, ['completed']) || getNestedBoolean(data, ['done']);
+  if (completed) return 'COMPLETED';
+
+  const failed = getNestedBoolean(data, ['failed']) || getNestedBoolean(data, ['error']);
+  if (failed) return 'FAILED';
+
+  return 'IN_PROGRESS';
+}
+
+function normalizeFalStatus(value: string): string {
+  const normalized = value.trim().toUpperCase().replace(/-/g, '_').replace(/\s+/g, '_');
+
+  if (normalized === 'OK' || normalized === 'SUCCESS' || normalized === 'SUCCEEDED' || normalized === 'COMPLETE') {
+    return 'COMPLETED';
+  }
+
+  if (normalized === 'RUNNING' || normalized === 'PROCESSING' || normalized === 'IN_PROGRESS') {
+    return 'IN_PROGRESS';
+  }
+
+  if (normalized === 'QUEUED' || normalized === 'PENDING' || normalized === 'IN_QUEUE') {
+    return 'IN_QUEUE';
+  }
+
+  if (normalized === 'CANCELED') return 'CANCELLED';
+
+  return normalized;
+}
+
 function extractVideoUrl(result: unknown): string | null {
   const candidates = [
     ['video', 'url'],
     ['data', 'video', 'url'],
     ['output', 'video', 'url'],
     ['result', 'video', 'url'],
+    ['data', 'result', 'video', 'url'],
+    ['response', 'video', 'url'],
     ['url'],
     ['video_url'],
     ['videoUrl'],
+    ['data', 'video_url'],
+    ['data', 'videoUrl'],
+    ['output', 'video_url'],
+    ['result', 'video_url'],
   ];
 
   for (const path of candidates) {
     const value = getNestedString(result, path);
-    if (value) return value;
+    if (isLikelyVideoUrl(value)) return value;
+  }
+
+  return findVideoUrlDeep(result);
+}
+
+function findVideoUrlDeep(value: unknown): string | null {
+  if (!value) return null;
+
+  if (typeof value === 'string') {
+    return isLikelyVideoUrl(value) ? value : null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findVideoUrlDeep(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (isRecord(value)) {
+    for (const [key, nested] of Object.entries(value)) {
+      if (typeof nested === 'string' && /url/i.test(key) && isLikelyVideoUrl(nested)) {
+        return nested;
+      }
+    }
+
+    for (const nested of Object.values(value)) {
+      const found = findVideoUrlDeep(nested);
+      if (found) return found;
+    }
   }
 
   return null;
+}
+
+function isLikelyVideoUrl(value: string | null): value is string {
+  if (!value || typeof value !== 'string') return false;
+  const url = value.trim();
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return false;
+  return /\.(mp4|webm|mov|m4v)(\?|$)/i.test(url) || /fal\.media|fal\.run/i.test(url);
 }
 
 async function readJsonOrText(response: Response): Promise<unknown> {
@@ -349,7 +452,9 @@ function extractFalErrorMessage(data: unknown): string {
       getNestedString(data, ['message']) ||
       getNestedString(data, ['detail']) ||
       getNestedString(data, ['detail', 'message']) ||
-      getNestedString(data, ['detail', 'error']);
+      getNestedString(data, ['detail', 'error']) ||
+      getNestedString(data, ['data', 'error']) ||
+      getNestedString(data, ['data', 'message']);
 
     if (direct) return direct;
 
@@ -372,6 +477,17 @@ function getNestedString(obj: unknown, path: string[]): string | null {
   }
 
   return typeof current === 'string' && current.trim() ? current.trim() : null;
+}
+
+function getNestedBoolean(obj: unknown, path: string[]): boolean {
+  let current: unknown = obj;
+
+  for (const key of path) {
+    if (!isRecord(current)) return false;
+    current = current[key];
+  }
+
+  return current === true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

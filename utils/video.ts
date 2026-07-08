@@ -1,3 +1,5 @@
+export type VideoCardStatus = 'pending' | 'completed' | 'failed';
+
 export interface VideoResult {
   id: string;
   type: string;
@@ -5,11 +7,14 @@ export interface VideoResult {
   resolution: string;
   prompt: string;
   duration: string;
-  aspectRatio: '16:9' | '9:16' | '1:1';
+  aspectRatio: '16:9' | '9:16' | '1:1' | 'Auto';
   timestamp: string;
   bgColor: string;
   videoUrl?: string;
   sourceImage?: string;
+  status?: VideoCardStatus;
+  error?: string;
+  requestId?: string;
 }
 
 export const generateFakeVideo = async (imageUrl: string, durationSeconds: number): Promise<string> => {
@@ -47,7 +52,7 @@ export const generateFakeVideo = async (imageUrl: string, durationSeconds: numbe
       setTimeout(() => {
         clearInterval(drawInterval);
         recorder.stop();
-      }, 2500); // fixed 2.5s loading time
+      }, Math.max(1000, durationSeconds * 1000));
     };
     img.onerror = () => resolve('');
     img.src = imageUrl;

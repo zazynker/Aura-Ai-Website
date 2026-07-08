@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Settings,
   ChevronDown,
@@ -7,34 +7,171 @@ import {
   Trash2,
   Sparkles,
 } from 'lucide-react';
-import { VideoResult, generateFakeVideo } from '../../utils/video';
+import { VideoResult } from '../../utils/video';
+import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
+import { supabase } from '../../utils/supabase';
 
 interface MotionControlProps {
   onGenerate: (result: VideoResult) => void;
+  onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
 }
 
 type DirectionMatch = 'video' | 'image';
 type Resolution = '720p' | '1080p';
 
-export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initialImage }) => {
+const formatDuration = (seconds?: number) => `00:${String(seconds || 5).padStart(2, '0')}`;
+
+export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   const [directionMatch, setDirectionMatch] = useState<DirectionMatch>('video');
   const [motionPrompt, setMotionPrompt] = useState<string>('');
 
-  // Settings state. The reference panel only exposes Mode + Number of Outputs.
   const [resolution, setResolution] = useState<Resolution>('720p');
   const [quantity, setQuantity] = useState<number>(1);
   const duration = 5;
 
   const [isParamsOpen, setIsParamsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [pendingJob, setPendingJob] = useState<PendingVideoJob | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
+  const restoredPendingRef = useRef(false);
+
+  useEffect(() => {
+    if (initialImage) setSelectedImage(initialImage);
+  }, [initialImage]);
+
+  useEffect(() => {
+    const existing = getPendingVideoJob();
+    if (!existing || existing.mode !== 'motion_control' || restoredPendingRef.current) return;
+
+    restoredPendingRef.current = true;
+    setPendingJob(existing);
+    setMotionPrompt(existing.prompt || '');
+    setSelectedImage(existing.startImageUrl || null);
+    setSelectedVideo(existing.inputVideoUrl || null);
+    setDirectionMatch(existing.characterOrientation || 'video');
+    setResolution(existing.resolution || '720p');
+
+    onGenerate({
+      id: existing.clientJobId,
+      type: 'Motion Control',
+      model: existing.characterOrientation === 'image'
+        ? 'Motion Control · Image Orientation'
+        : 'Motion Control · Video Orientation',
+      resolution: existing.resolution || '720p',
+      prompt: existing.prompt || '',
+      duration: formatDuration(existing.duration),
+      aspectRatio: '16:9',
+      timestamp: 'Pending',
+      bgColor: 'bg-indigo-900/50',
+      sourceImage: existing.startImageUrl,
+      status: 'pending',
+      requestId: existing.requestId,
+      error: 'This motion-control job was already submitted. Click Resume to check the same Fal job.',
+    });
+  }, [onGenerate]);
+
+  const uploadFileIfNeeded = async (
+    previewUrl: string | null,
+    file: File | null,
+    label: 'character-image' | 'driver-video'
+  ): Promise<string | undefined> => {
+    if (!previewUrl) return undefined;
+    if (!file || !previewUrl.startsWith('blob:')) return previewUrl;
+
+    const timestamp = Date.now();
+    const fileExt = file.name.split('.').pop() || (label === 'driver-video' ? 'mp4' : 'jpg');
+    const filePath = `video-inputs/${timestamp}-${label}.${fileExt}`;
+
+    const { error } = await supabase.storage
+      .from('generations')
+      .upload(filePath, file, { contentType: file.type });
+
+    if (error) {
+      console.error(`[MotionControl] Upload ${label} error:`, error);
+      throw new Error(`Failed to upload ${label}. Please try again.`);
+    }
+
+    const { data: urlData } = supabase.storage
+      .from('generations')
+      .getPublicUrl(filePath);
+
+    return urlData.publicUrl;
+  };
+
+  const applyResult = (placeholderId: string, result: Awaited<ReturnType<typeof generateVideo>>) => {
+    if (result.success && result.videoUrl) {
+      setPendingJob(null);
+      onUpdate?.(placeholderId, {
+        status: 'completed',
+        videoUrl: result.videoUrl,
+        timestamp: 'Just now',
+        error: undefined,
+        requestId: result.requestId,
+      });
+      return;
+    }
+
+    if (result.pending) {
+      if (result.pendingJob) setPendingJob(result.pendingJob);
+      onUpdate?.(placeholderId, {
+        status: 'pending',
+        error: result.error || 'Motion-control job submitted. Status check failed. Click Resume instead of Generate.',
+        requestId: result.requestId || result.pendingJob?.requestId,
+      });
+      alert(result.error || 'Motion-control job submitted. Status check failed. Please click Resume instead of generating again.');
+      return;
+    }
+
+    setPendingJob(null);
+    onUpdate?.(placeholderId, {
+      status: 'failed',
+      error: result.error || 'Motion-control generation failed.',
+      timestamp: 'Failed',
+      requestId: result.requestId,
+    });
+    alert(result.error || 'Motion-control generation failed. Please try again.');
+  };
+
+  const handleResumePending = async () => {
+    const existing = pendingJob || getPendingVideoJob();
+    if (!existing) return;
+
+    setPendingJob(existing);
+    setIsGenerating(true);
+
+    try {
+      const result = await pollPendingVideoJob();
+      applyResult(existing.clientJobId, result);
+    } catch (error) {
+      console.error('Resume motion-control job error:', error);
+      onUpdate?.(existing.clientJobId, {
+        status: 'pending',
+        error: error instanceof Error ? error.message : 'Failed to resume status check.',
+      });
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   const handleGenerate = async () => {
+    const existing = getPendingVideoJob();
+    if (existing && existing.mode === 'motion_control') {
+      await handleResumePending();
+      return;
+    }
+
+    if (existing && existing.mode !== 'motion_control') {
+      alert(`A ${existing.mode} job is already pending. Resume that job before submitting a new one.`);
+      return;
+    }
+
     if (!selectedImage) {
       alert('Please upload a character image.');
       return;
@@ -48,28 +185,66 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
       return;
     }
 
+    const placeholderId = `motion-${Date.now()}`;
+    const pendingResult: VideoResult = {
+      id: placeholderId,
+      type: 'Motion Control',
+      model: directionMatch === 'video'
+        ? 'Motion Control · Video Orientation'
+        : 'Motion Control · Image Orientation',
+      resolution,
+      prompt: motionPrompt,
+      duration: formatDuration(duration),
+      aspectRatio: '16:9',
+      timestamp: 'Uploading',
+      bgColor: 'bg-indigo-900/50',
+      sourceImage: selectedImage,
+      status: 'pending',
+    };
+
+    onGenerate(pendingResult);
     setIsGenerating(true);
 
     try {
-      const videoUrl = await generateFakeVideo(selectedImage, duration);
+      const characterImageUrl = await uploadFileIfNeeded(selectedImage, imageFile, 'character-image');
+      const driverVideoUrl = await uploadFileIfNeeded(selectedVideo, videoFile, 'driver-video');
 
-      const newResult: VideoResult = {
-        id: `gen-${Date.now()}`,
-        type: 'Motion Control',
-        model: directionMatch === 'video' ? 'Motion Control · Video Orientation' : 'Motion Control · Image Orientation',
-        resolution,
+      if (!characterImageUrl || !driverVideoUrl) {
+        throw new Error('Both character image and motion reference video are required.');
+      }
+
+      onUpdate?.(placeholderId, {
+        sourceImage: characterImageUrl,
+        timestamp: 'Generating',
+      });
+
+      const result = await generateVideo({
+        mode: 'motion_control',
         prompt: motionPrompt,
-        duration: `00:${duration.toString().padStart(2, '0')}`,
-        aspectRatio: '16:9',
-        timestamp: 'Just now',
-        bgColor: 'bg-indigo-900/50',
-        videoUrl,
-        sourceImage: selectedImage,
-      };
+        startImageUrl: characterImageUrl,
+        videoUrl: driverVideoUrl,
+        characterOrientation: directionMatch,
+        resolution,
+        generationCount: quantity,
+        clientJobId: placeholderId,
+        onJobSubmitted: (job) => {
+          setPendingJob(job);
+          onUpdate?.(placeholderId, {
+            status: 'pending',
+            requestId: job.requestId,
+          });
+        },
+      });
 
-      onGenerate(newResult);
+      applyResult(placeholderId, result);
     } catch (error) {
-      console.error(error);
+      console.error('Motion control error:', error);
+      onUpdate?.(placeholderId, {
+        status: 'failed',
+        error: error instanceof Error ? error.message : 'Motion-control generation failed. Please try again.',
+        timestamp: 'Failed',
+      });
+      alert(error instanceof Error ? error.message : 'Motion-control generation failed. Please try again.');
     } finally {
       setIsGenerating(false);
     }
@@ -78,6 +253,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setImageFile(file);
       setSelectedImage(URL.createObjectURL(file));
     }
   };
@@ -85,19 +261,19 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setVideoFile(file);
       setSelectedVideo(URL.createObjectURL(file));
     }
   };
 
-  const isGenerateDisabled = isGenerating || !selectedImage || !selectedVideo || !motionPrompt.trim();
+  const isGenerateDisabled = isGenerating || ((!selectedImage || !selectedVideo || !motionPrompt.trim()) && !pendingJob);
+  const buttonLabel = pendingJob ? 'Resume' : '36 Generate';
 
   return (
     <>
       <div className="flex-1 overflow-y-auto p-5 space-y-6 no-scrollbar">
-        {/* Source Media */}
         <div className="space-y-4">
           <div className="flex gap-4">
-            {/* Motion Reference Video */}
             <div className="flex-1 flex flex-col gap-2">
               <div className="group relative flex aspect-square w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-all dark:border-slate-700 dark:bg-slate-800/50">
                 {selectedVideo ? (
@@ -128,6 +304,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedVideo(null);
+                          setVideoFile(null);
                         }}
                         className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-red-500"
                         title="Delete video"
@@ -170,7 +347,6 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
               </label>
             </div>
 
-            {/* Character Image */}
             <div className="flex-1 flex flex-col gap-2">
               <div className="group relative flex aspect-square w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-all dark:border-slate-700 dark:bg-slate-800/50">
                 {selectedImage ? (
@@ -194,6 +370,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedImage(null);
+                          setImageFile(null);
                         }}
                         className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-red-500"
                         title="Delete image"
@@ -247,7 +424,6 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
           </p>
         </div>
 
-        {/* Motion Prompt */}
         <div className="space-y-2">
           <label className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
             Motion Prompt
@@ -259,15 +435,18 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
             className="min-h-[100px] w-full resize-none rounded-xl border border-slate-200 bg-white p-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
           />
         </div>
+
+        {pendingJob && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+            A Fal motion-control job is already submitted. Use Resume to check the same job. Do not generate again.
+          </div>
+        )}
       </div>
 
-      {/* Bottom Bar */}
       <div className="relative z-50 w-full shrink-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-4px_24px_rgba(0,0,0,0.05)] backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]">
-        {/* Parameter Panel */}
         {isParamsOpen && (
           <div className="absolute bottom-[calc(100%+8px)] left-4 w-[calc(100%-32px)] rounded-xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
             <div className="space-y-5">
-              {/* Mode */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Mode</label>
                 <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
@@ -293,7 +472,6 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
                 </div>
               </div>
 
-              {/* Number of Outputs */}
               <div className="space-y-2">
                 <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Number of Outputs</label>
                 <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
@@ -346,12 +524,12 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, initia
             {isGenerating ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin text-white" />
-                <span>Applying Motion...</span>
+                <span>{pendingJob ? 'Checking...' : 'Applying Motion...'}</span>
               </>
             ) : (
               <>
                 <Sparkles className="h-4 w-4 text-white" />
-                <span>36 Generate</span>
+                <span>{buttonLabel}</span>
               </>
             )}
           </button>
