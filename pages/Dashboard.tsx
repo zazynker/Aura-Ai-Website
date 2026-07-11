@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LayoutGrid, Clock, FolderHeart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, Plus, ArrowLeft, ExternalLink, Search, Layers, Loader2 } from 'lucide-react';
+import { LayoutGrid, Clock, FolderHeart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, Plus, ArrowLeft, ExternalLink, Search, Layers, Loader2, Film, PlayCircle } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -8,6 +8,7 @@ import { Generation, Collection, Template } from '../types';
 import { supabase } from '../utils/supabase';
 
 // 将同一批生成的图片分组
+
 const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => {
     const groups: { [key: string]: Generation[] } = {};
     const result: (Generation | Generation[])[] = [];
@@ -24,6 +25,28 @@ const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => 
         }
     });
     return result;
+};
+
+const isVideoGeneration = (gen: Generation): boolean => gen.mediaType === 'video' || Boolean(gen.videoUrl);
+
+const getGenerationDisplayName = (gen: Generation): string => {
+  if (isVideoGeneration(gen)) {
+    if (gen.videoMode === 'lip_sync') return 'Lip Sync Video';
+    if (gen.videoMode === 'motion_control') return 'Motion Control Video';
+    if (gen.videoMode === 'image_to_video') return 'Image to Video';
+    return gen.templateName || 'Video Generation';
+  }
+  if (gen.templateId === 'modify-session') return 'User Upload (Modify)';
+  if (gen.templateId === 'text-to-image') return 'Text to Image';
+  return gen.templateName || 'Image Generation';
+};
+
+const formatGenerationDuration = (seconds?: number) => {
+  if (!seconds) return null;
+  const safe = Math.max(0, Math.round(seconds));
+  const mins = Math.floor(safe / 60);
+  const secs = safe % 60;
+  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 };
 
 export const Dashboard = () => {
@@ -49,7 +72,7 @@ export const Dashboard = () => {
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
 
   // Filter and Search State
-  const [sourceFilter, setSourceFilter] = useState<'all' | 'templates' | 'modify' | 'generated'>('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | 'templates' | 'modify' | 'generated' | 'video'>('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Collections State
@@ -175,24 +198,28 @@ useEffect(() => {
     let filtered = [...generations];
     
     // Apply source filter
-    if (sourceFilter === 'modify') {
-      filtered = filtered.filter(g => g.templateId === 'modify-session');
+    if (sourceFilter === 'video') {
+      filtered = filtered.filter(isVideoGeneration);
+    } else if (sourceFilter === 'modify') {
+      filtered = filtered.filter(g => !isVideoGeneration(g) && g.templateId === 'modify-session');
     } else if (sourceFilter === 'templates') {
-      filtered = filtered.filter(g => g.templateId !== 'modify-session' && g.templateId !== 'text-to-image');
+      filtered = filtered.filter(g => !isVideoGeneration(g) && g.templateId !== 'modify-session' && g.templateId !== 'text-to-image');
     } else if (sourceFilter === 'generated') {
-      filtered = filtered.filter(g => g.templateId === 'text-to-image');
+      filtered = filtered.filter(g => !isVideoGeneration(g) && g.templateId === 'text-to-image');
     }
     
-    // Apply search filter (search by templateName)
+    // Apply search filter (search by name, mode, or prompt)
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase().trim();
       filtered = filtered.filter(g => {
-        const templateName = g.templateId === 'modify-session' 
-          ? 'modify upload' 
-          : g.templateId === 'text-to-image'
-            ? 'text to image'
-            : (g.templateName || '').toLowerCase();
-        return templateName.includes(query);
+        const searchable = [
+          getGenerationDisplayName(g),
+          g.templateName || '',
+          g.prompt || '',
+          g.videoMode || '',
+          isVideoGeneration(g) ? 'video' : 'image',
+        ].join(' ').toLowerCase();
+        return searchable.includes(query);
       });
     }
     
@@ -249,6 +276,13 @@ useEffect(() => {
 
   // Helper to direct user to correct editing environment
   const navigateToEdit = (gen: Generation) => {
+    if (isVideoGeneration(gen)) {
+      navigate('/video', {
+        state: gen.imageUrl ? { initialImage: gen.imageUrl } : undefined,
+      });
+      return;
+    }
+
     navigate('/modify', {
       state: {
         initialImage: gen.imageUrl,
@@ -260,48 +294,93 @@ useEffect(() => {
     });
   };
 
+  const renderGenerationMedia = (gen: Generation, className: string, controls = false) => {
+    if (isVideoGeneration(gen) && gen.videoUrl) {
+      return (
+        <video
+          src={gen.videoUrl}
+          className={className}
+          controls={controls}
+          muted={!controls}
+          playsInline
+          preload="metadata"
+          poster={gen.imageUrl && gen.imageUrl !== gen.videoUrl ? gen.imageUrl : undefined}
+        />
+      );
+    }
+
+    return (
+      <img
+        src={gen.imageUrl}
+        className={className}
+        loading="lazy"
+        alt={getGenerationDisplayName(gen)}
+      />
+    );
+  };
+
   // Reusable Grid Item Component
-  const GenerationCard: React.FC<{ gen: Generation; aspect?: string; onClick: () => void }> = ({ gen, aspect = "aspect-square", onClick }) => (
-    <div 
-        className={`group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all shadow-sm hover:shadow-xl hover:shadow-purple-900/20 ${aspect}`} 
-        onClick={onClick}
-    >
-        <img src={gen.imageUrl} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" loading="lazy" alt={gen.templateName} />
+  const GenerationCard: React.FC<{ gen: Generation; aspect?: string; onClick: () => void }> = ({ gen, aspect = "aspect-square", onClick }) => {
+    const isVideo = isVideoGeneration(gen);
 
-        {/* Hover Overlay with Actions */}
-        <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] z-30">
-            <Button size="sm" variant="gradient" onClick={(e) => { e.stopPropagation(); navigateToEdit(gen); }}>
-                <Edit className="w-3 h-3 mr-2" /> Edit in Studio
-            </Button>
-            <div className="flex gap-2">
-                <button 
-                  className="p-2 rounded-full bg-white/10 hover:bg-white text-white hover:text-black transition-all border border-white/10" 
-                  onClick={(e) => { e.stopPropagation(); setSelectedImage(gen); }} 
-                  title="View Details"
-                >
-                    <Maximize2 className="w-4 h-4" />
-                </button>
-                <button 
-                  className="p-2 rounded-full bg-white/10 hover:bg-red-500 text-white transition-all border border-white/10" 
-                  onClick={(e) => { e.stopPropagation(); handleDelete(gen.id); }} 
-                  title="Delete"
-                >
-                    <Trash2 className="w-4 h-4" />
-                </button>
-            </div>
-        </div>
+    return (
+      <div 
+          className={`group relative rounded-xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/50 transition-all shadow-sm hover:shadow-xl hover:shadow-purple-900/20 ${aspect}`} 
+          onClick={onClick}
+      >
+          {renderGenerationMedia(gen, 'w-full h-full object-cover transition-transform duration-700 group-hover:scale-110')}
 
-        {/* Bottom Info Bar */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent opacity-100 z-20 pointer-events-none">
-            <div className="flex justify-between items-end">
-                <div className="min-w-0">
-                   <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider mb-0.5">Created</p>
-                   <p className="text-xs text-slate-200 font-medium">{new Date(gen.createdAt).toLocaleDateString()}</p>
+          {isVideo && (
+            <>
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+                <div className="rounded-full bg-black/45 p-3 text-white backdrop-blur-sm border border-white/15">
+                  <PlayCircle className="w-8 h-8" />
                 </div>
-            </div>
-        </div>
-    </div>
-  );
+              </div>
+              <div className="absolute top-2 left-2 z-20 rounded-full bg-black/60 px-2 py-1 text-[10px] font-semibold text-white backdrop-blur-sm flex items-center gap-1">
+                <Film className="w-3 h-3" /> Video
+              </div>
+            </>
+          )}
+
+          {/* Hover Overlay with Actions */}
+          <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] z-30">
+              <Button size="sm" variant="gradient" onClick={(e) => { e.stopPropagation(); isVideo ? setSelectedImage(gen) : navigateToEdit(gen); }}>
+                  {isVideo ? <PlayCircle className="w-3 h-3 mr-2" /> : <Edit className="w-3 h-3 mr-2" />} {isVideo ? 'Open Video' : 'Edit in Studio'}
+              </Button>
+              <div className="flex gap-2">
+                  <button 
+                    className="p-2 rounded-full bg-white/10 hover:bg-white text-white hover:text-black transition-all border border-white/10" 
+                    onClick={(e) => { e.stopPropagation(); setSelectedImage(gen); }} 
+                    title="View Details"
+                  >
+                      <Maximize2 className="w-4 h-4" />
+                  </button>
+                  <button 
+                    className="p-2 rounded-full bg-white/10 hover:bg-red-500 text-white transition-all border border-white/10" 
+                    onClick={(e) => { e.stopPropagation(); handleDelete(gen.id); }} 
+                    title="Delete"
+                  >
+                      <Trash2 className="w-4 h-4" />
+                  </button>
+              </div>
+          </div>
+
+          {/* Bottom Info Bar */}
+          <div className="absolute bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-slate-900 via-slate-900/80 to-transparent opacity-100 z-20 pointer-events-none">
+              <div className="flex justify-between items-end gap-2">
+                  <div className="min-w-0">
+                     <p className="text-[10px] text-slate-400 font-medium uppercase tracking-wider mb-0.5">{isVideo ? 'Video' : 'Created'}</p>
+                     <p className="text-xs text-slate-200 font-medium truncate">{isVideo ? getGenerationDisplayName(gen) : new Date(gen.createdAt).toLocaleDateString()}</p>
+                  </div>
+                  {isVideo && gen.videoDuration && (
+                    <span className="text-[10px] text-slate-200 bg-black/40 px-1.5 py-0.5 rounded">{formatGenerationDuration(gen.videoDuration)}</span>
+                  )}
+              </div>
+          </div>
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen pt-16 flex bg-slate-50 dark:bg-slate-900 transition-colors duration-300">
@@ -431,7 +510,7 @@ useEffect(() => {
                 </div>
               ) : recentGenerations.length === 0 ? (
                 <div className="text-center py-16 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20 bg-white dark:bg-slate-900/20">
-                  <p className="text-slate-500 mb-4">No images generated yet.</p>
+                  <p className="text-slate-500 mb-4">No generations yet.</p>
                   <Button variant="ghost" className="text-purple-500 dark:text-purple-400" onClick={() => navigate('/')}>Start Creating</Button>
                 </div>
               ) : (
@@ -449,7 +528,7 @@ useEffect(() => {
                            <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
                            <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
                            <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
-                             <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
+                             {renderGenerationMedia(group[0], 'w-full h-full object-cover')}
                              <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
                                <Layers className="w-3 h-3" /> {group.length}
                              </div>
@@ -464,7 +543,7 @@ useEffect(() => {
                          <GenerationCard 
                            key={item.id} 
                            gen={item} 
-                           onClick={() => navigateToEdit(item)} 
+                           onClick={() => isVideoGeneration(item) ? setSelectedImage(item) : navigateToEdit(item)} 
                          />
                        );
                      }
@@ -487,11 +566,12 @@ useEffect(() => {
                         { id: 'all', label: 'All' },
                         { id: 'templates', label: 'Templates' },
                         { id: 'modify', label: 'Uploads' },
-                        { id: 'generated', label: 'Generated' }
+                        { id: 'generated', label: 'Generated' },
+                        { id: 'video', label: 'Videos' }
                       ].map(filter => (
                         <button
                           key={filter.id}
-                          onClick={() => setSourceFilter(filter.id as 'all' | 'templates' | 'modify' | 'generated')}
+                          onClick={() => setSourceFilter(filter.id as 'all' | 'templates' | 'modify' | 'generated' | 'video')}
                           className={`px-4 py-1.5 text-xs font-medium rounded-md transition-all ${
                             sourceFilter === filter.id
                               ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
@@ -557,7 +637,7 @@ useEffect(() => {
                           <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-1.5 translate-x-1.5 opacity-60"></div>
                           <div className="absolute inset-0 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 transform translate-y-0.5 translate-x-0.5 opacity-80"></div>
                           <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
-                            <img src={group[0].imageUrl} className="w-full h-full object-cover" loading="lazy" alt="generation group" />
+                            {renderGenerationMedia(group[0], 'w-full h-full object-cover')}
                             <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
                               <Layers className="w-3 h-3" /> {group.length}
                             </div>
@@ -574,7 +654,7 @@ useEffect(() => {
                         <GenerationCard 
                           key={item.id} 
                           gen={item} 
-                          onClick={() => navigateToEdit(item)} 
+                          onClick={() => isVideoGeneration(item) ? setSelectedImage(item) : navigateToEdit(item)} 
                         />
                       );
                     }
@@ -584,7 +664,7 @@ useEffect(() => {
                 <div className="text-center py-20 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20 bg-white dark:bg-slate-900/20">
                    <p className="text-slate-500 mb-4">
                       {generations.length === 0 
-                        ? "No images generated yet." 
+                        ? "No generations yet." 
                         : "No results match your filters."}
                    </p>
                    {generations.length === 0 ? (
@@ -758,7 +838,7 @@ useEffect(() => {
       </Modal>
 
       {/* Delete Confirmation Modal */}
-      <Modal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} title="Delete Image">
+      <Modal isOpen={!!itemToDelete} onClose={() => setItemToDelete(null)} title="Delete Generation">
           <div className="space-y-6">
               <div className="text-center space-y-2">
                   <div className="w-12 h-12 rounded-full bg-red-100 dark:bg-red-500/10 flex items-center justify-center mx-auto mb-4 border border-red-200 dark:border-red-500/20">
@@ -766,7 +846,7 @@ useEffect(() => {
                   </div>
                   <h3 className="text-lg font-bold text-slate-900 dark:text-white">Delete Generation?</h3>
                   <p className="text-slate-600 dark:text-slate-400 text-sm">
-                      Are you sure you want to delete this image? <br/>
+                      Are you sure you want to delete this generation? <br/>
                       <span className="text-red-500 dark:text-red-400 font-medium">This action cannot be undone.</span>
                   </p>
               </div>
@@ -787,14 +867,14 @@ useEffect(() => {
               <button 
                 className="p-3 rounded-full bg-white/10 hover:bg-white text-white hover:text-black transition-colors backdrop-blur-md border border-white/10"
                 onClick={(e) => { e.stopPropagation(); navigateToEdit(selectedImage); setSelectedImage(null); setSelectedGroup(null); }}
-                title="Edit Template"
+                title={isVideoGeneration(selectedImage) ? "Open Video" : "Edit Template"}
               >
-                  <Edit className="w-5 h-5" />
+                  {isVideoGeneration(selectedImage) ? <PlayCircle className="w-5 h-5" /> : <Edit className="w-5 h-5" />}
               </button>
               <button 
                 className="p-3 rounded-full bg-white/10 hover:bg-red-500 text-white transition-colors backdrop-blur-md border border-white/10"
                 onClick={(e) => { e.stopPropagation(); handleDelete(selectedImage.id); }}
-                title="Delete Image"
+                title="Delete Generation"
               >
                   <Trash2 className="w-5 h-5" />
               </button>
@@ -805,7 +885,7 @@ useEffect(() => {
            
            <div className="max-w-6xl w-full p-4 flex flex-col md:flex-row gap-8 items-center justify-center" onClick={e => e.stopPropagation()}>
                <div className="relative flex-1 flex flex-col items-center justify-center max-h-[80vh]">
-                    <img src={selectedImage.imageUrl} className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl" />
+                    {renderGenerationMedia(selectedImage, 'max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl', isVideoGeneration(selectedImage))}
                     
                     {/* Group thumbnails */}
                     {selectedGroup && selectedGroup.length > 1 && (
@@ -820,7 +900,7 @@ useEffect(() => {
                                 : 'border-transparent hover:border-white/50'
                             }`}
                           >
-                            <img src={gen.imageUrl} className="w-full h-full object-cover" alt={`Variation ${idx + 1}`} />
+                            {renderGenerationMedia(gen, 'w-full h-full object-cover')}
                           </div>
                         ))}
                       </div>
@@ -830,7 +910,7 @@ useEffect(() => {
                <div className="glass-panel p-6 rounded-2xl w-full md:w-80 flex flex-col gap-4 bg-white/90 dark:bg-slate-900/50 border border-slate-200 dark:border-white/10">
                   <div>
                     <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                        <ImageIcon className="w-5 h-5 text-purple-600 dark:text-purple-400" /> Image Details
+                        {isVideoGeneration(selectedImage) ? <Film className="w-5 h-5 text-purple-600 dark:text-purple-400" /> : <ImageIcon className="w-5 h-5 text-purple-600 dark:text-purple-400" />} {isVideoGeneration(selectedImage) ? 'Video Details' : 'Image Details'}
                         {selectedGroup && selectedGroup.length > 1 && (
                           <span className="text-xs font-normal text-slate-500 ml-auto">{selectedGroup.findIndex(g => g.id === selectedImage.id) + 1} / {selectedGroup.length}</span>
                         )}
@@ -842,7 +922,7 @@ useEffect(() => {
                             <div className="flex items-center gap-2 group cursor-pointer p-2 rounded-lg bg-slate-100 dark:bg-white/5 hover:bg-purple-50 dark:hover:bg-purple-500/10 border border-slate-200 dark:border-white/5 hover:border-purple-200 dark:hover:border-purple-500/30 transition-all" onClick={() => navigateToEdit(selectedImage)}>
                                 <span className="w-2 h-2 rounded-full bg-purple-500"></span>
                                 <p className="text-sm text-slate-700 dark:text-white font-medium group-hover:text-purple-600 dark:group-hover:text-purple-300 transition-colors flex-1">
-                                    {selectedImage.templateId === 'modify-session' ? 'User Upload (Modify)' : (selectedImage.templateName || 'Unknown Template')}
+                                    {getGenerationDisplayName(selectedImage)}
                                 </p>
                                 <ExternalLink className="w-3 h-3 text-slate-400 dark:text-slate-500 group-hover:text-purple-400" />
                             </div>
@@ -860,11 +940,19 @@ useEffect(() => {
                   
                   <div className="mt-auto space-y-3 pt-6 border-t border-slate-200 dark:border-white/10">
                     <Button variant="gradient" className="w-full" onClick={() => { navigateToEdit(selectedImage); }}>
-                        <Edit className="w-4 h-4 mr-2" /> Edit in Studio
+                        {isVideoGeneration(selectedImage) ? <PlayCircle className="w-4 h-4 mr-2" /> : <Edit className="w-4 h-4 mr-2" />} {isVideoGeneration(selectedImage) ? 'Open in Video Studio' : 'Edit in Studio'}
                     </Button>
-                    <Button variant="secondary" className="w-full" onClick={() => addToast('success', 'Image saved to device')}>
-                        <Download className="w-4 h-4 mr-2" /> Download High Res
-                    </Button>
+                    {isVideoGeneration(selectedImage) && selectedImage.videoUrl ? (
+                      <a href={selectedImage.videoUrl} download={`video-${selectedImage.id}.mp4`} className="block">
+                        <Button variant="secondary" className="w-full">
+                          <Download className="w-4 h-4 mr-2" /> Download Video
+                        </Button>
+                      </a>
+                    ) : (
+                      <Button variant="secondary" className="w-full" onClick={() => addToast('success', 'Image saved to device')}>
+                          <Download className="w-4 h-4 mr-2" /> Download High Res
+                      </Button>
+                    )}
                   </div>
                </div>
            </div>

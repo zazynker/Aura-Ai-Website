@@ -133,9 +133,9 @@ export const Video: React.FC = () => {
   const saveCompletedVideo = (result: VideoResult) => {
     if (!user || !result.videoUrl) return;
 
-    const key = result.requestId || result.videoUrl || result.id;
-    if (savedVideoKeysRef.current.has(key)) return;
-    savedVideoKeysRef.current.add(key);
+    const possibleKeys = [result.videoUrl, result.requestId, result.id].filter(Boolean) as string[];
+    if (possibleKeys.some((key) => savedVideoKeysRef.current.has(key))) return;
+    possibleKeys.forEach((key) => savedVideoKeysRef.current.add(key));
 
     addGeneration({
       userId: user.id,
@@ -171,6 +171,8 @@ export const Video: React.FC = () => {
 
     for (const item of dbVideos) {
       if (item.videoUrl) savedVideoKeysRef.current.add(item.videoUrl);
+      if (item.requestId) savedVideoKeysRef.current.add(item.requestId);
+      if (item.id) savedVideoKeysRef.current.add(item.id);
     }
 
     const cached = getCachedVideoResults(user.id);

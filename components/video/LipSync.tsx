@@ -78,6 +78,9 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const dragSessionRef = useRef<DragSession | null>(null);
   const createdObjectUrlsRef = useRef<string[]>([]);
   const restoredPendingRef = useRef(false);
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
+  const audioPreviewTimerRef = useRef<number | null>(null);
+  const [isAudioPreviewPlaying, setIsAudioPreviewPlaying] = useState(false);
 
   const timelineDuration = Math.max(videoDuration || 0, selectedMedia?.type === 'video' ? 3 : 0);
   const minAudioClipLength = Math.min(2, Math.max(0.2, audioDuration || 0.2));
@@ -101,6 +104,9 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   useEffect(() => {
     return () => {
       createdObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      if (audioPreviewTimerRef.current) {
+        window.clearInterval(audioPreviewTimerRef.current);
+      }
     };
   }, []);
 
@@ -405,6 +411,63 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     }
   };
 
+  const stopAudioPreview = () => {
+    const audio = audioPreviewRef.current;
+    if (audio) audio.pause();
+    if (audioPreviewTimerRef.current) {
+      window.clearInterval(audioPreviewTimerRef.current);
+      audioPreviewTimerRef.current = null;
+    }
+    setIsAudioPreviewPlaying(false);
+  };
+
+  const toggleAudioPreview = async () => {
+    if (!audioUrl) return;
+
+    const audio = audioPreviewRef.current || new Audio(audioUrl);
+    if (!audioPreviewRef.current) {
+      audioPreviewRef.current = audio;
+    }
+
+    if (audio.src !== audioUrl) {
+      audio.src = audioUrl;
+    }
+
+    if (!audio.paused && isAudioPreviewPlaying) {
+      stopAudioPreview();
+      return;
+    }
+
+    if (audioPreviewTimerRef.current) {
+      window.clearInterval(audioPreviewTimerRef.current);
+      audioPreviewTimerRef.current = null;
+    }
+
+    const start = audioTrimStart || 0;
+    const end = audioTrimEnd || audioDuration || undefined;
+    audio.currentTime = start;
+    audio.volume = 1;
+    audio.muted = false;
+
+    audio.onended = () => stopAudioPreview();
+
+    try {
+      await audio.play();
+      setIsAudioPreviewPlaying(true);
+
+      audioPreviewTimerRef.current = window.setInterval(() => {
+        if (!audioPreviewRef.current) return;
+        if (end && audioPreviewRef.current.currentTime >= end) {
+          stopAudioPreview();
+        }
+      }, 100);
+    } catch (error) {
+      console.error('Unable to play audio preview:', error);
+      alert('Unable to play audio. Please click again or check browser audio permissions.');
+      stopAudioPreview();
+    }
+  };
+
   const handleMediaUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -429,6 +492,10 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
 
     const url = URL.createObjectURL(file);
     createdObjectUrlsRef.current.push(url);
+
+    stopAudioPreview();
+    audioPreviewRef.current = new Audio(url);
+    audioPreviewRef.current.preload = 'metadata';
 
     setAudioFile(file);
     setAudioUrl(url);
@@ -458,6 +525,8 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   };
 
   const removeAudio = () => {
+    stopAudioPreview();
+    audioPreviewRef.current = null;
     setAudioFile(null);
     setAudioUrl(null);
     setAudioDuration(0);
@@ -923,29 +992,11 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
 
                 <div className="space-y-2">
                   <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    Detected Persons
+                    Face selection
                   </label>
-                  <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-                    {[1, 2, 3].map((id) => (
-                      <button
-                        key={id}
-                        onClick={() => setSelectedPerson(id)}
-                        className={`flex shrink-0 items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-                          selectedPerson === id
-                            ? 'border-emerald-500 bg-emerald-50 font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                            : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'
-                        }`}
-                      >
-                        <div className="h-5 w-5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-                          <img
-                            src={`https://i.pravatar.cc/100?img=${id + 10}`}
-                            alt={`Person ${id}`}
-                            className="h-full w-full object-cover"
-                          />
-                        </div>
-                        Person {id}
-                      </button>
-                    ))}
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
+                    The Person 1 / 2 / 3 selector was only a UI placeholder and is not sent to Fal yet, so it does not affect the generated video.
+                    To match Kling official face selection, we need either a Fal endpoint/field that returns detected faces, or a separate face-detection step.
                   </div>
                 </div>
               </>
@@ -979,6 +1030,18 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                         {(audioFile.size / 1024 / 1024).toFixed(2)} MB • {formatTime(audioDuration || effectiveAudioLength || 0)}
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleAudioPreview();
+                      }}
+                      className="flex shrink-0 items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-medium text-emerald-700 shadow-sm transition-colors hover:bg-emerald-100 dark:bg-slate-800 dark:text-emerald-300 dark:hover:bg-slate-700"
+                      title="Preview the uploaded audio. Trim handles control the preview range."
+                    >
+                      {isAudioPreviewPlaying ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5" />}
+                      {isAudioPreviewPlaying ? 'Pause' : 'Preview'}
+                    </button>
                   </div>
 
                   <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">

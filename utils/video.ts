@@ -103,18 +103,22 @@ export function upsertVideoResult(results: VideoResult[], result: VideoResult): 
   return dedupeVideoResults(next);
 }
 
+function getVideoResultKeys(item: VideoResult): string[] {
+  const keys: string[] = [];
+  if (item.videoUrl) keys.push(`video:${item.videoUrl}`);
+  if (item.requestId) keys.push(`request:${item.requestId}`);
+  if (item.id) keys.push(`id:${item.id}`);
+  return keys;
+}
+
 export function dedupeVideoResults(results: VideoResult[]): VideoResult[] {
   const seen = new Set<string>();
   const output: VideoResult[] = [];
 
   for (const item of results) {
-    const key = item.requestId
-      ? `request:${item.requestId}`
-      : item.videoUrl
-        ? `video:${item.videoUrl}`
-        : `id:${item.id}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const keys = getVideoResultKeys(item);
+    if (keys.some((key) => seen.has(key))) continue;
+    keys.forEach((key) => seen.add(key));
     output.push(item);
   }
 
