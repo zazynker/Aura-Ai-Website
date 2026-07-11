@@ -429,8 +429,9 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       audioPreviewRef.current = audio;
     }
 
-    if (audio.src !== audioUrl) {
+    if (!audio.src || audio.src !== audioUrl) {
       audio.src = audioUrl;
+      audio.load();
     }
 
     if (!audio.paused && isAudioPreviewPlaying) {
@@ -443,8 +444,9 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       audioPreviewTimerRef.current = null;
     }
 
-    const start = audioTrimStart || 0;
+    const start = Math.max(0, audioTrimStart || 0);
     const end = audioTrimEnd || audioDuration || undefined;
+    audio.pause();
     audio.currentTime = start;
     audio.volume = 1;
     audio.muted = false;
@@ -494,8 +496,6 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     createdObjectUrlsRef.current.push(url);
 
     stopAudioPreview();
-    audioPreviewRef.current = new Audio(url);
-    audioPreviewRef.current.preload = 'metadata';
 
     setAudioFile(file);
     setAudioUrl(url);
@@ -994,9 +994,8 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                   <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                     Face selection
                   </label>
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-                    The Person 1 / 2 / 3 selector was only a UI placeholder and is not sent to Fal yet, so it does not affect the generated video.
-                    To match Kling official face selection, we need either a Fal endpoint/field that returns detected faces, or a separate face-detection step.
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400">
+                    Face selection is not active yet. The current Fal lip-sync endpoints only receive the media URL and audio URL from this page. If Fal provides a face-detection result or a face-index field, we can connect this selector to the real API.
                   </div>
                 </div>
               </>
@@ -1009,7 +1008,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
               Voice / Audio
             </label>
             <div
-              className={`group relative flex h-24 w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 transition-all ${
+              className={`group relative flex h-32 w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 transition-all ${
                 audioFile
                   ? 'border-solid border-emerald-500 bg-emerald-50/50 dark:bg-emerald-900/20'
                   : 'cursor-pointer border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800'
@@ -1043,6 +1042,21 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                       {isAudioPreviewPlaying ? 'Pause' : 'Preview'}
                     </button>
                   </div>
+
+                  {audioUrl && (
+                    <div className="mt-2 w-full px-4">
+                      <audio
+                        ref={audioPreviewRef}
+                        src={audioUrl}
+                        controls
+                        preload="metadata"
+                        className="h-8 w-full"
+                        onPlay={() => setIsAudioPreviewPlaying(true)}
+                        onPause={() => setIsAudioPreviewPlaying(false)}
+                        onEnded={() => setIsAudioPreviewPlaying(false)}
+                      />
+                    </div>
+                  )}
 
                   <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
                     <button
