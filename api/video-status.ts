@@ -42,11 +42,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return sendError(res, 405, 'METHOD_NOT_ALLOWED', 'Method not allowed');
   }
 
+  let activeUserId = '';
+  let activeRequestId = '';
+  let db: any;
   try {
     const falKey = process.env.FAL_KEY;
     if (!falKey) {
       console.error('[video-status] FAL_KEY not configured');
-      return sendError(res, 500, 'CONFIG_ERROR', 'Fal API key not configured');
+      return sendError(res, 500, 'CONFIG_ERROR', 'Video service is temporarily unavailable');
     }
 
     if (!supabaseUrl || !supabaseServiceKey) {
@@ -75,9 +78,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.error('[video-status] Auth verification failed:', authError?.message);
       return sendError(res, 401, 'INVALID_TOKEN', 'Invalid or expired token');
     }
+    activeUserId = user.id;
+    db = supabase;
 
     const body = parseBody(req.body);
     const requestId = validateRequestId(body.requestId);
+    activeRequestId = requestId;
     const endpoint = validateEndpoint(body.endpoint);
     const statusUrl = validateOptionalFalQueueUrl(body.statusUrl, 'statusUrl');
     const responseUrl = validateOptionalFalQueueUrl(body.responseUrl, 'responseUrl');
@@ -97,11 +103,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const videoUrl = await fetchResultVideoUrl(endpoint, requestId, falKey, responseUrl, statusData);
 
       if (!videoUrl) {
+        const refund = await refundFailedGeneration(supabase, user.id, requestId);
         return res.status(200).json({
           status: 'FAILED',
-          error: 'Fal completed but did not return a playable video URL',
+          error: 'Generation failed. Your credits have been returned.',
+          newCredits: refund?.new_balance,
         });
       }
+
+      await supabase.rpc('complete_video_generation', { p_user_id: user.id, p_request_id: requestId });
 
       return res.status(200).json({
         status: 'COMPLETED',
@@ -129,6 +139,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               videoUrl: probeVideoUrl,
             });
 
+            await supabase.rpc('complete_video_generation', { p_user_id: user.id, p_request_id: requestId });
             return res.status(200).json({
               status: 'COMPLETED',
               videoUrl: probeVideoUrl,
@@ -151,9 +162,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (status === 'FAILED' || status === 'CANCELLED') {
+      const refund = await refundFailedGeneration(supabase, user.id, requestId);
       return res.status(200).json({
         status: 'FAILED',
-        error: extractFalErrorMessage(statusData),
+        error: 'Generation failed. Your credits have been returned.',
+        creditsRefunded: true,
+        newCredits: refund?.new_balance,
       });
     }
 
@@ -169,7 +183,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         details: err.details,
       });
 
-      return sendError(res, err.statusCode, err.code, err.message, err.details);
+      if (db && activeUserId && activeRequestId && [404, 422].includes(err.statusCode)) {
+        const refund = await refundFailedGeneration(db, activeUserId, activeRequestId);
+        return res.status(200).json({
+          status: 'FAILED',
+          error: err.statusCode === 422
+            ? 'The uploaded image does not meet the generation requirements. Your credits have been returned.'
+            : 'Generation failed. Your credits have been returned.',
+          creditsRefunded: true,
+          newCredits: refund?.new_balance,
+        });
+      }
+      return sendError(res, err.statusCode, err.code, 'Unable to check generation status. Please try again later.');
     }
 
     console.error('[video-status] Unexpected error:', err);
@@ -178,7 +203,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       res,
       500,
       'VIDEO_STATUS_FAILED',
-      err instanceof Error ? err.message : 'Failed to check video status'
+      'Unable to check generation status. Please try again later.'
     );
   }
 }
@@ -609,12 +634,20 @@ function sendError(
   statusCode: number,
   code: string,
   error: string,
-  details?: unknown
+  _details?: unknown
 ) {
   return res.status(statusCode).json({
     success: false,
     error,
     code,
-    ...(details !== undefined ? { details } : {}),
   });
+}
+
+async function refundFailedGeneration(supabase: any, userId: string, requestId: string) {
+  const { data, error } = await supabase.rpc('refund_failed_video_generation', {
+    p_user_id: userId,
+    p_request_id: requestId,
+  });
+  if (error) console.error('[video-status] Credit refund failed:', { userId, requestId, error });
+  return data;
 }
