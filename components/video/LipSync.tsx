@@ -57,7 +57,6 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const [prompt, setPrompt] = useState(
     'Keep the camera fixed. The character speaks naturally, smiles slightly, and uses subtle hand gestures.'
   );
-  const [selectedPerson, setSelectedPerson] = useState<number>(1);
 
   // Timeline states
   const [isPlaying, setIsPlaying] = useState(false);
@@ -80,6 +79,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const restoredPendingRef = useRef(false);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
   const audioPreviewTimerRef = useRef<number | null>(null);
+  const timelineAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isAudioPreviewPlaying, setIsAudioPreviewPlaying] = useState(false);
 
   const timelineDuration = Math.max(videoDuration || 0, selectedMedia?.type === 'video' ? 3 : 0);
@@ -106,6 +106,10 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       createdObjectUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
       if (audioPreviewTimerRef.current) {
         window.clearInterval(audioPreviewTimerRef.current);
+      }
+      if (timelineAudioRef.current) {
+        timelineAudioRef.current.pause();
+        timelineAudioRef.current.src = '';
       }
     };
   }, []);
@@ -341,7 +345,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     const placeholderId = `lip-${Date.now()}`;
     const promptText =
       selectedMedia.type === 'video'
-        ? `Audio Sync: ${audioFile.name} • Person ${selectedPerson} • audio ${formatTime(audioStartTime)}-${formatTime(
+        ? `Audio Sync: ${audioFile.name} • audio ${formatTime(audioStartTime)}-${formatTime(
             audioStartTime + effectiveAudioLength
           )}`
         : `AI Avatar: ${audioFile.name} • ${prompt}`;
@@ -517,6 +521,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
 
   const removeSelectedMedia = () => {
     videoRef.current?.pause();
+    pauseTimelineAudio();
     setSelectedMedia(null);
     setIsPlaying(false);
     setCurrentTime(0);
@@ -527,6 +532,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const removeAudio = () => {
     stopAudioPreview();
     audioPreviewRef.current = null;
+    pauseTimelineAudio();
     setAudioFile(null);
     setAudioUrl(null);
     setAudioDuration(0);
@@ -535,24 +541,84 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     setAudioTrimEnd(0);
   };
 
+  const pauseTimelineAudio = () => {
+    const audio = timelineAudioRef.current;
+    if (audio) audio.pause();
+  };
+
+  const getTimelineAudioTime = (videoTime: number): number | null => {
+    if (!audioUrl || !audioFile || !audioDuration || !effectiveAudioLength) return null;
+
+    const clipStart = audioStartTime;
+    const clipEnd = audioStartTime + effectiveAudioLength;
+    if (videoTime < clipStart || videoTime > clipEnd) return null;
+
+    return clamp(audioTrimStart + (videoTime - clipStart), 0, audioTrimEnd || audioDuration);
+  };
+
+  const syncTimelineAudioToVideo = async (videoTime: number, shouldPlay: boolean) => {
+    if (!audioUrl || !audioFile) {
+      pauseTimelineAudio();
+      return;
+    }
+
+    const sourceTime = getTimelineAudioTime(videoTime);
+    if (sourceTime === null || !shouldPlay) {
+      pauseTimelineAudio();
+      return;
+    }
+
+    let audio = timelineAudioRef.current;
+    if (!audio) {
+      audio = new Audio(audioUrl);
+      timelineAudioRef.current = audio;
+    }
+
+    if (!audio.src || audio.src !== audioUrl) {
+      audio.src = audioUrl;
+      audio.load();
+    }
+
+    audio.muted = false;
+    audio.volume = 1;
+
+    if (Math.abs(audio.currentTime - sourceTime) > 0.25) {
+      audio.currentTime = sourceTime;
+    }
+
+    if (audio.paused) {
+      try {
+        await audio.play();
+      } catch (error) {
+        console.error('Unable to play timeline audio:', error);
+      }
+    }
+  };
+
   const togglePlay = async () => {
     const video = videoRef.current;
     if (!video) return;
 
     if (video.paused || video.ended) {
       try {
+        // When a voice track is uploaded, mute the source video preview and play the uploaded audio in sync.
+        video.muted = Boolean(audioUrl);
         await video.play();
+        await syncTimelineAudioToVideo(video.currentTime, true);
       } catch (error) {
         console.error('Unable to play video', error);
       }
     } else {
       video.pause();
+      pauseTimelineAudio();
     }
   };
 
   const handleTimeUpdate = () => {
     if (!dragSessionRef.current && videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+      const nextTime = videoRef.current.currentTime;
+      setCurrentTime(nextTime);
+      void syncTimelineAudioToVideo(nextTime, !videoRef.current.paused && !videoRef.current.ended);
     }
   };
 
@@ -604,6 +670,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
 
     if (mode === 'playhead') {
       videoRef.current?.pause();
+      pauseTimelineAudio();
       seekTo(clientXToTimelineTime(event.clientX));
     }
   };
@@ -720,8 +787,14 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleVideoLoaded}
               onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => setIsPlaying(false)}
+              onPause={() => {
+                setIsPlaying(false);
+                pauseTimelineAudio();
+              }}
+              onEnded={() => {
+                setIsPlaying(false);
+                pauseTimelineAudio();
+              }}
             />
           ) : (
             <img src={selectedMedia.url} alt="Character" className="h-full w-full object-contain" />
@@ -787,6 +860,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
             <button
               onClick={togglePlay}
               className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-sm transition-colors hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+              title="Preview video with uploaded audio synced on the timeline"
             >
               {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}
             </button>
@@ -990,13 +1064,8 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                 </div>
                 {renderTimeline()}
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                    Face selection
-                  </label>
-                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400">
-                    Face selection is not active yet. The current Fal lip-sync endpoints only receive the media URL and audio URL from this page. If Fal provides a face-detection result or a face-index field, we can connect this selector to the real API.
-                  </div>
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-700 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-300">
+                  For reliable lip sync, upload a single-face video. The current Fal Kling lip-sync endpoints do not expose a target-face selection parameter, so multi-person videos may sync the wrong face.
                 </div>
               </>
             )}
