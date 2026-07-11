@@ -83,7 +83,7 @@ export const Modify = () => {
   const [imagePickerTab, setImagePickerTab] = useState<'all' | 'upload' | 'collection'>('upload');
 
   // Generation Configuration - DEFAULT TO 4
-  const [outputCount, setOutputCount] = useState(4);
+  const [outputCount, setOutputCount] = useState(1);
   const [quality, setQuality] = useState<'Standard' | 'High' | 'Ultra'>('Standard');
   
   // Generation Process State
@@ -126,7 +126,7 @@ export const Modify = () => {
   const [t2iFiles, setT2iFiles] = useState<File[]>([]);
   const [t2iRatio, setT2iRatio] = useState('1:1');
   const [t2iSize, setT2iSize] = useState('1K');
-  const [t2iOutputCount, setT2iOutputCount] = useState(4);
+  const [t2iOutputCount, setT2iOutputCount] = useState(1);
   const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | null>(null);
 
   // 🔧 CHANGED: Admin Demo Mode - persist to sessionStorage (survives route changes, clears on tab close)
@@ -783,22 +783,21 @@ export const Modify = () => {
         displayPrompt = `Upscale to ${promptText}`;
       }
 
-      // Backend pricing from the real Gemini usageMetadata is authoritative.
+      // Calculate credits based on ACTUAL token consumption from API
       const totalCreditsUsed = result.creditsUsed ?? result.creditsDeducted ?? 0;
-      const baseCreditsPerImage = newImages.length > 0 ? Math.floor(totalCreditsUsed / newImages.length) : 0;
-      const creditRemainder = newImages.length > 0 ? totalCreditsUsed % newImages.length : 0;
+      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
       
       console.log('=== Credit Calculation ===');
       console.log('Token breakdown:', result.tokenBreakdown);
       console.log('Total credits:', totalCreditsUsed);
-      console.log('Base credits per image:', baseCreditsPerImage);
+      console.log('Credits per image:', creditsPerImage);
 
-      const newGenerations = newImages.map((imgUrl, index) => ({
+      const newGenerations = newImages.map(imgUrl => ({
         userId: user?.id || '',
         templateId: currentImageSource.templateId,
         templateName: currentImageSource.templateName,
         imageUrl: imgUrl,
-        creditsUsed: baseCreditsPerImage + (index < creditRemainder ? 1 : 0),
+        creditsUsed: creditsPerImage,
         prompt: displayPrompt,
     }));
 
@@ -947,22 +946,22 @@ export const Modify = () => {
       setCurrentImageSource({ templateId: sourceId, templateName: sourceName });
       setOriginalUploadedImage(newImages[0]);
 
+      // Calculate credits based on ACTUAL token consumption from API
       const totalCreditsUsed = result.creditsUsed ?? result.creditsDeducted ?? 0;
-      const baseCreditsPerImage = newImages.length > 0 ? Math.floor(totalCreditsUsed / newImages.length) : 0;
-      const creditRemainder = newImages.length > 0 ? totalCreditsUsed % newImages.length : 0;
+      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
       
       console.log('=== T2I Credit Calculation ===');
       console.log('Token breakdown:', result.tokenBreakdown);
       console.log('Total credits:', totalCreditsUsed);
-      console.log('Base credits per image:', baseCreditsPerImage);
+      console.log('Credits per image:', creditsPerImage);
 
       // Create Generation records
-      const newGenerations = newImages.map((imgUrl, index) => ({
+      const newGenerations = newImages.map(imgUrl => ({
         userId: user?.id || '',
         templateId: sourceId,
         templateName: sourceName,
         imageUrl: imgUrl,
-        creditsUsed: baseCreditsPerImage + (index < creditRemainder ? 1 : 0),
+        creditsUsed: creditsPerImage,
         prompt: t2iPrompt || 'Text to Image',
     }));
 
@@ -2299,7 +2298,7 @@ export const Modify = () => {
                         onClick={() => {
                             setActiveTool(activeTool === 'text2img' ? null : 'text2img');
                             if (activeTool !== 'text2img') {
-                                setT2iOutputCount(4); // Default to 4 when activating
+                                setT2iOutputCount(1);
                             }
                         }}
                         className="w-full p-4 flex items-center justify-between text-left"
