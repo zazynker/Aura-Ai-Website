@@ -6,6 +6,7 @@ import {
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
+import { estimateVideoCredits } from '../../context/StoreContext';
 
 interface ImageToVideoProps {
   onGenerate: (result: VideoResult) => void;
@@ -22,6 +23,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
   const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
   const [duration, setDuration] = useState<number>(3);
   const [generationCount, setGenerationCount] = useState<number>(1);
+  const [generateAudio, setGenerateAudio] = useState(true);
   const [isParamsOpen, setIsParamsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [pendingJob, setPendingJob] = useState<PendingVideoJob | null>(null);
@@ -49,6 +51,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     setSelectedEndImage(existing.endImageUrl || null);
     setDuration(existing.duration || 3);
     setResolution(existing.resolution || '720p');
+    setGenerateAudio(existing.generateAudio !== false);
 
     onGenerate({
       id: existing.clientJobId,
@@ -215,6 +218,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         duration,
         resolution,
         generationCount,
+        generateAudio,
         clientJobId: placeholderId,
         onJobSubmitted: (job) => {
           setPendingJob(job);
@@ -253,7 +257,13 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     }
   };
 
-  const buttonLabel = pendingJob ? 'Resume' : '36 Generate';
+  const estimatedCredits = estimateVideoCredits({
+    mode: 'image_to_video',
+    duration,
+    generationCount,
+    generateAudio,
+  });
+  const buttonLabel = pendingJob ? 'Resume' : `${estimatedCredits} Generate`;
 
   return (
     <>
@@ -357,6 +367,21 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                 </div>
               </div>
 
+              <label className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/50">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Generate Audio</div>
+                  <div className="mt-0.5 text-[10px] text-slate-400">
+                    {generateAudio ? '$0.126 per second' : '$0.084 per second'}
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={generateAudio}
+                  onChange={(event) => setGenerateAudio(event.target.checked)}
+                  className="h-4 w-4 cursor-pointer accent-purple-600"
+                />
+              </label>
+
               <div>
                 <label className="mb-2 flex items-center gap-2 text-xs font-semibold tracking-wider text-slate-500 dark:text-slate-400 uppercase">
                   Duration <span className="normal-case tracking-normal text-slate-700 dark:text-slate-200">{duration}s</span>
@@ -379,7 +404,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
               <div>
                 <label className="mb-2 block text-xs font-semibold tracking-wider text-slate-500 dark:text-slate-400 uppercase">Generation Count</label>
                 <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 p-0.5 dark:bg-slate-800/50">
-                  {[1, 2, 3, 4].map((count) => (
+                  {[1].map((count) => (
                     <button
                       key={count}
                       onClick={() => setGenerationCount(count)}
@@ -408,7 +433,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
           >
             <Settings className="h-4 w-4 text-slate-500" />
             <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              {resolution} · {duration}s · {generationCount}
+              {resolution} · {duration}s · {generateAudio ? 'Audio on' : 'Audio off'} · {generationCount}
             </span>
             <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${isParamsOpen ? 'rotate-180' : ''}`} />
           </button>

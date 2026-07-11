@@ -18,7 +18,17 @@ export interface GenerateResult {
   error?: string;
   imageSize?: string;
   tokensUsed?: number;  // Total tokens consumed by this generation
+  creditsUsed?: number;
+  creditsDeducted?: number;
   newCredits?: number;  // User's new credit balance after deduction (optional)
+  actualCostUsd?: number;
+  tokenBreakdown?: {
+    inputTokens: number;
+    outputTextTokens: number;
+    outputImageTokens: number;
+    thinkingTokens: number;
+    totalTokens: number;
+  };
 }
 
 // Friendly error messages
@@ -119,6 +129,11 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
       text: data.text || '',
       imageSize: data.imageSize,
       tokensUsed: data.tokensUsed || 0,
+      creditsUsed: Number(data.creditsUsed) || 0,
+      creditsDeducted: Number(data.creditsDeducted) || 0,
+      newCredits: typeof data.newCredits === 'number' ? data.newCredits : undefined,
+      actualCostUsd: Number(data.actualCostUsd) || 0,
+      tokenBreakdown: data.tokenBreakdown,
     };
   } catch (err) {
     console.error('Generate exception:', err);
@@ -153,6 +168,7 @@ export interface VideoGenerateOptions {
   resolution?: '720p' | '1080p';
   characterOrientation?: 'video' | 'image';
   generationCount?: number;
+  generateAudio?: boolean;
   clientJobId?: string;
   onJobSubmitted?: (job: PendingVideoJob) => void;
 }
@@ -177,6 +193,9 @@ interface VideoSubmitResponse {
   responseUrl?: string;
   cancelUrl?: string;
   mode?: VideoGenerateOptions['mode'];
+  creditsUsed?: number;
+  creditsDeducted?: number;
+  newCredits?: number;
   error?: string;
   code?: string;
 }
@@ -206,6 +225,8 @@ export interface PendingVideoJob {
   resolution?: '720p' | '1080p';
   characterOrientation?: 'video' | 'image';
   generationCount?: number;
+  generateAudio?: boolean;
+  creditsUsed?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -327,6 +348,7 @@ export async function generateVideo(options: VideoGenerateOptions): Promise<Vide
     resolution,
     characterOrientation,
     generationCount,
+    generateAudio,
     clientJobId,
     onJobSubmitted,
   } = options;
@@ -379,6 +401,7 @@ export async function generateVideo(options: VideoGenerateOptions): Promise<Vide
         resolution,
         characterOrientation,
         generationCount,
+        generateAudio,
       }),
     });
 
@@ -404,6 +427,12 @@ export async function generateVideo(options: VideoGenerateOptions): Promise<Vide
       };
     }
 
+    if (typeof submitData.newCredits === 'number' && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('lazora-credits-updated', {
+        detail: { credits: submitData.newCredits },
+      }));
+    }
+
     const pendingJob: PendingVideoJob = {
       clientJobId: clientJobId || makeClientJobId(),
       userId: auth.userId,
@@ -422,6 +451,8 @@ export async function generateVideo(options: VideoGenerateOptions): Promise<Vide
       resolution,
       characterOrientation,
       generationCount,
+      generateAudio,
+      creditsUsed: Number(submitData.creditsUsed) || 0,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -542,7 +573,7 @@ async function pollVideoJob(job: PendingVideoJob, accessToken: string): Promise<
         success: true,
         videoUrl: statusData.videoUrl,
         duration: job.duration,
-        creditsUsed: 0,
+        creditsUsed: job.creditsUsed || 0,
         requestId: job.requestId,
         status: 'COMPLETED',
       };

@@ -17,9 +17,9 @@ import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { Session } from '@supabase/supabase-js';
 
-// Credit calculation based on actual token usage
-// Formula: credits = ceil(tokensUsed / 50)
-// This ensures ~70% profit margin based on Gemini pricing ($60/M tokens for image output)
+export const USD_TO_CREDITS = 195;
+const IMAGE_OUTPUT_USD_PER_MILLION = 60;
+const ESTIMATED_OVERHEAD_USD_PER_IMAGE = 0.005;
 
 // Estimated token consumption per image (for pre-generation credit check)
 // These are approximate values based on Gemini documentation
@@ -36,8 +36,8 @@ export type Resolution = keyof typeof ESTIMATED_TOKENS_PER_IMAGE;
 // This uses fixed estimates since we don't know actual consumption yet
 export const estimateCredits = (resolution: Resolution, imageCount: number): number => {
   const tokensPerImage = ESTIMATED_TOKENS_PER_IMAGE[resolution];
-  const totalTokens = tokensPerImage * imageCount;
-  return Math.ceil(totalTokens / 60);
+  const imageOutputCost = tokensPerImage * imageCount / 1_000_000 * IMAGE_OUTPUT_USD_PER_MILLION;
+  return Math.ceil((imageOutputCost + ESTIMATED_OVERHEAD_USD_PER_IMAGE * imageCount) * USD_TO_CREDITS);
 };
 
 // Calculate actual credits based on REAL token consumption from API
@@ -45,15 +45,34 @@ export const estimateCredits = (resolution: Resolution, imageCount: number): num
 // Divisor of 60 yields ~65% profit margin
 export const calculateCreditsFromTokens = (tokensUsed: number): number => {
   if (tokensUsed <= 0) return 0;
-  return Math.ceil(tokensUsed / 60);
+  return Math.ceil(tokensUsed / 1_000_000 * IMAGE_OUTPUT_USD_PER_MILLION * USD_TO_CREDITS);
+};
+
+export type VideoCreditEstimate = {
+  mode: 'image_to_video' | 'motion_control' | 'lip_sync';
+  duration: number;
+  generationCount?: number;
+  lipSyncInput?: 'image' | 'video';
+  generateAudio?: boolean;
+};
+
+export const estimateVideoCredits = ({ mode, duration, generationCount = 1, lipSyncInput = 'video', generateAudio = true }: VideoCreditEstimate): number => {
+  const count = Math.max(1, Math.floor(generationCount));
+  const seconds = Math.max(0, duration);
+  let costUsd = 0;
+  if (mode === 'image_to_video') costUsd = seconds * (generateAudio ? 0.126 : 0.084);
+  else if (mode === 'motion_control') costUsd = seconds * 0.126;
+  else if (lipSyncInput === 'image') costUsd = seconds * 0.0562;
+  else costUsd = Math.ceil(seconds / 5) * 5 * 0.014;
+  return Math.ceil(costUsd * count * USD_TO_CREDITS);
 };
 
 // Legacy export for backwards compatibility (uses estimation)
 export const CREDIT_COSTS = {
-  '512': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['512'] / 60),   // ~13
-  '1K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['1K'] / 60),     // ~19
-  '2K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['2K'] / 60),     // ~28
-  '4K': Math.ceil(ESTIMATED_TOKENS_PER_IMAGE['4K'] / 60),     // ~42
+  '512': estimateCredits('512', 1),
+  '1K': estimateCredits('1K', 1),
+  '2K': estimateCredits('2K', 1),
+  '4K': estimateCredits('4K', 1),
 } as const;
 
 // Legacy function for backwards compatibility

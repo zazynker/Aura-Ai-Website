@@ -1,8 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient } from '@supabase/supabase-js';
 
-// Gemini API endpoint - using gemini-3.1-flash-image-preview (Nano Banana 2)
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image-preview:generateContent';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent';
+const USD_TO_CREDITS = 195;
+const INPUT_USD_PER_MILLION = 0.50;
+const TEXT_AND_THINKING_USD_PER_MILLION = 3.00;
+const IMAGE_OUTPUT_USD_PER_MILLION = 60.00;
+const ESTIMATED_OVERHEAD_USD_PER_IMAGE = 0.005;
 
 // Initialize Supabase client for user verification
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -20,6 +24,37 @@ const ESTIMATED_TOKENS_PER_IMAGE: Record<string, number> = {
     '2K': 1680,
     '4K': 2520,
 };
+
+type TokenBreakdown = { inputTokens: number; outputTextTokens: number; outputImageTokens: number; thinkingTokens: number; totalTokens: number };
+const emptyTokenBreakdown = (): TokenBreakdown => ({ inputTokens: 0, outputTextTokens: 0, outputImageTokens: 0, thinkingTokens: 0, totalTokens: 0 });
+const addTokenBreakdown = (a: TokenBreakdown, b: TokenBreakdown): TokenBreakdown => ({
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTextTokens: a.outputTextTokens + b.outputTextTokens,
+    outputImageTokens: a.outputImageTokens + b.outputImageTokens,
+    thinkingTokens: a.thinkingTokens + b.thinkingTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+});
+function getModalityTokens(details: unknown, modality: string): number {
+    if (!Array.isArray(details)) return 0;
+    return details.reduce((sum, detail: any) => String(detail?.modality || '').toUpperCase() === modality ? sum + (Number(detail?.tokenCount) || 0) : sum, 0);
+}
+function parseTokenBreakdown(usage: any): TokenBreakdown {
+    const details = usage?.candidatesTokensDetails;
+    return {
+        inputTokens: Number(usage?.promptTokenCount) || 0,
+        outputTextTokens: Array.isArray(details) ? getModalityTokens(details, 'TEXT') : 0,
+        outputImageTokens: Array.isArray(details) ? getModalityTokens(details, 'IMAGE') : (Number(usage?.candidatesTokenCount) || 0),
+        thinkingTokens: Number(usage?.thoughtsTokenCount) || 0,
+        totalTokens: Number(usage?.totalTokenCount) || 0,
+    };
+}
+function calculateGeminiCostUsd(t: TokenBreakdown): number {
+    return (t.inputTokens * INPUT_USD_PER_MILLION + (t.outputTextTokens + t.thinkingTokens) * TEXT_AND_THINKING_USD_PER_MILLION + t.outputImageTokens * IMAGE_OUTPUT_USD_PER_MILLION) / 1_000_000;
+}
+function estimateImageCredits(size: string, count: number): number {
+    const imageCost = (ESTIMATED_TOKENS_PER_IMAGE[size] || 1120) * count / 1_000_000 * IMAGE_OUTPUT_USD_PER_MILLION;
+    return Math.ceil((imageCost + ESTIMATED_OVERHEAD_USD_PER_IMAGE * count) * USD_TO_CREDITS);
+}
 // ====================================================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -92,8 +127,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // ============================================
     const requestedImages = Math.min(Math.max(1, Number(req.body.numberOfImages) || 1), MAX_IMAGES);
     const requestedSize = VALID_SIZES.includes(req.body.imageSize) ? req.body.imageSize : '1K';
-    const estimatedTokens = (ESTIMATED_TOKENS_PER_IMAGE[requestedSize] || 1120) * requestedImages;
-    const estimatedCredits = Math.ceil(estimatedTokens / 60);
+    const estimatedCredits = estimateImageCredits(requestedSize, requestedImages);
     
     // Fetch user data for credit check and plan verification
     const { data: userData, error: userDataError } = await supabase
@@ -136,7 +170,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             prompt, 
             imageUrl, 
             productImageUrl, 
-            numberOfImages = 4,
+            numberOfImages = 1,
             imageSize = '1K',  // Default to 1K, options: "512", "1K", "2K", "4K"
             aspectRatio       // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
         } = req.body;
@@ -293,7 +327,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('Request body imageConfig:', requestBody.generationConfig.imageConfig);
 
         // Function to generate a single image with retries
-        const generateOne = async (attempt = 1): Promise<{ image: string | null; tokensUsed: number }> => {
+        const generateOne = async (attempt = 1, accumulated = emptyTokenBreakdown()): Promise<{ image: string | null; tokenBreakdown: TokenBreakdown }> => {
             const maxAttempts = 2;
             try {
                 const response = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
@@ -309,12 +343,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     console.error(`Gemini API error (attempt ${attempt}):`, response.status, errorText);
                     if (attempt < maxAttempts) {
                         await new Promise(r => setTimeout(r, 500 * attempt));
-                        return generateOne(attempt + 1);
+                        return generateOne(attempt + 1, accumulated);
                     }
-                    return { image: null, tokensUsed: 0 };
+                    return { image: null, tokenBreakdown: accumulated };
                 }
 
                 const data = await response.json();
+                const billedTokens = addTokenBreakdown(accumulated, parseTokenBreakdown(data.usageMetadata));
                 
                 // ===== DETAILED TOKEN LOGGING =====
                 // Log the FULL usageMetadata to diagnose token discrepancies
@@ -371,7 +406,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                             const mimeType = part.inlineData.mimeType || 'image/png';
                             return { 
                                 image: `data:${mimeType};base64,${part.inlineData.data}`,
-                                tokensUsed: outputTokens
+                                tokenBreakdown: billedTokens
                             };
                         }
                     }
@@ -385,16 +420,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (attempt < maxAttempts) {
                     console.log(`No image in response, retrying... (attempt ${attempt + 1})`);
                     await new Promise(r => setTimeout(r, 300 * attempt));
-                    return generateOne(attempt + 1);
+                    return generateOne(attempt + 1, billedTokens);
                 }
-                return { image: null, tokensUsed: 0 };
+                return { image: null, tokenBreakdown: billedTokens };
             } catch (err) {
                 console.error(`Error in generateOne (attempt ${attempt}):`, err);
                 if (attempt < maxAttempts) {
                     await new Promise(r => setTimeout(r, 300 * attempt));
-                    return generateOne(attempt + 1);
+                    return generateOne(attempt + 1, accumulated);
                 }
-                return { image: null, tokensUsed: 0 };
+                return { image: null, tokenBreakdown: accumulated };
             }
         };
 
@@ -402,7 +437,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // Use validatedNumberOfImages instead of numberOfImages
         const numToGenerate = validatedNumberOfImages;
         let images: string[] = [];
-        let totalTokensUsed = 0;
+        let totalTokenBreakdown = emptyTokenBreakdown();
         let totalAttempts = 0;
         const maxTotalAttempts = numToGenerate * 2; // Allow up to 2x attempts to fill quota
         
@@ -414,7 +449,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             if (result.image) {
                 images.push(result.image);
             }
-            totalTokensUsed += result.tokensUsed;
+            totalTokenBreakdown = addTokenBreakdown(totalTokenBreakdown, result.tokenBreakdown);
         }
         totalAttempts = numToGenerate;
         
@@ -428,7 +463,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 if (result.image) {
                     images.push(result.image);
                 }
-                totalTokensUsed += result.tokensUsed;
+                totalTokenBreakdown = addTokenBreakdown(totalTokenBreakdown, result.tokenBreakdown);
             }
             totalAttempts += needed;
         }
@@ -436,7 +471,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         console.log('=== Generation Summary ===');
         console.log('Total images generated:', images.length, 'out of', numToGenerate, 'requested');
         console.log('Image size setting:', imageSize);
-        console.log('Total tokens used:', totalTokensUsed);
+        console.log('Token breakdown:', totalTokenBreakdown);
 
         if (images.length === 0) {
             return res.status(500).json({
@@ -444,15 +479,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 error: 'All generation attempts failed',
                 images: [],
                 count: 0,
-                tokensUsed: totalTokensUsed
+                tokensUsed: totalTokenBreakdown.totalTokens,
+                tokenBreakdown: totalTokenBreakdown
             });
         }
 
         // ============================================
         // Deduct credits after successful generation
         // ============================================
-        const creditsToDeduct = Math.ceil(totalTokensUsed / 60);
-        console.log(`Deducting ${creditsToDeduct} credits (from ${totalTokensUsed} tokens)`);
+        const actualCostUsd = calculateGeminiCostUsd(totalTokenBreakdown);
+        const creditsToDeduct = Math.max(1, Math.ceil(actualCostUsd * USD_TO_CREDITS));
         
         let newCredits = userData.credits;
         
@@ -472,7 +508,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             } else {
                 console.log('Credit deduction result:', deductResult);
                 if (deductResult && deductResult.success) {
-                    newCredits = deductResult.new_credits;
+                    newCredits = Number(deductResult.new_balance ?? deductResult.new_credits ?? newCredits);
                 }
             }
         } else {
@@ -486,7 +522,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             text: '',
             count: images.length,
             imageSize: imageSize,
-            tokensUsed: totalTokensUsed,
+            tokensUsed: totalTokenBreakdown.totalTokens,
+            tokenBreakdown: totalTokenBreakdown,
+            actualCostUsd,
+            creditsUsed: creditsToDeduct,
             creditsDeducted: userData.is_whitelisted ? 0 : creditsToDeduct,
             newCredits: newCredits
         });

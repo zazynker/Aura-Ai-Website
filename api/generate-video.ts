@@ -15,6 +15,7 @@ type RequestBody = {
   resolution?: '720p' | '1080p';
   characterOrientation?: CharacterOrientation;
   generationCount?: number;
+  generateAudio?: boolean;
 };
 
 type FalSubmitResult = {
@@ -58,7 +59,7 @@ function getKlingEndpoint(mode: VideoMode, body: RequestBody): string {
 }
 
 const MAX_PROMPT_LENGTH = 2000;
-const MIN_VIDEO_CREDITS = 10;
+const USD_TO_CREDITS = 195;
 const RATE_LIMIT_PER_MINUTE = 5;
 
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -131,10 +132,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
     }
 
-    await checkRateLimit(supabase, user.id);
-    const userData = await checkCredits(supabase, user.id);
-
     const endpoint = getKlingEndpoint(mode, body);
+    const requiredCredits = estimateVideoCredits(mode, body);
+    await checkRateLimit(supabase, user.id);
+    const userData = await checkCredits(supabase, user.id, requiredCredits);
     const payload = buildFalPayload(mode, body);
 
     console.log('[generate-video] Submitting Fal job:', {
@@ -150,8 +151,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const falJob = await submitFalJob(endpoint, payload, falKey);
 
+    let newCredits = userData.credits;
+    let creditsDeducted = 0;
+    if (!userData.is_whitelisted) {
+      const { data: deductResult, error: deductError } = await supabase.rpc('deduct_credits_fifo', {
+        p_user_id: user.id,
+        p_amount: requiredCredits,
+      });
+      if (deductError || !deductResult?.success) {
+        throw new ApiError(500, 'CREDIT_DEDUCTION_FAILED', 'Video was submitted but credit settlement failed.', { requestId: falJob.requestId });
+      }
+      creditsDeducted = requiredCredits;
+      newCredits = Number(deductResult.new_balance ?? deductResult.new_credits ?? newCredits);
+    }
+
     console.log('[generate-video] Fal request submitted:', {
       mode,
+      creditsUsed: requiredCredits,
+      creditsDeducted,
+      newCredits,
       endpoint,
       requestId: falJob.requestId,
       statusUrl: falJob.statusUrl,
@@ -241,7 +259,7 @@ async function checkRateLimit(supabase: any, userId: string) {
   }
 }
 
-async function checkCredits(supabase: any, userId: string) {
+async function checkCredits(supabase: any, userId: string, requiredCredits: number) {
   const { data, error } = await supabase
     .from('users')
     .select('credits, plan, is_whitelisted')
@@ -256,9 +274,9 @@ async function checkCredits(supabase: any, userId: string) {
   const credits = Number(data.credits) || 0;
   const isWhitelisted = Boolean(data.is_whitelisted);
 
-  if (!isWhitelisted && credits < MIN_VIDEO_CREDITS) {
+  if (!isWhitelisted && credits < requiredCredits) {
     throw new ApiError(402, 'INSUFFICIENT_CREDITS', 'Insufficient credits', {
-      required: MIN_VIDEO_CREDITS,
+      required: requiredCredits,
       available: credits,
     });
   }
@@ -291,7 +309,7 @@ function buildFalPayload(mode: VideoMode, body: RequestBody): Record<string, unk
         prompt,
         start_image_url: startImageUrl,
         duration: String(normalizeDuration(body.duration)),
-        generate_audio: true,
+        generate_audio: body.generateAudio !== false,
         negative_prompt: 'blur, distort, and low quality',
         cfg_scale: 0.5,
       };
@@ -567,4 +585,27 @@ function sendError(
     code,
     ...(details !== undefined ? { details } : {}),
   });
+}
+
+function estimateVideoCredits(mode: VideoMode, body: RequestBody): number {
+  const generationCount = Math.max(1, Math.floor(Number(body.generationCount) || 1));
+  if (generationCount !== 1) {
+    throw new ApiError(400, 'MULTIPLE_OUTPUTS_UNSUPPORTED', 'Multiple video outputs are not supported yet. Select 1 output.');
+  }
+  let costUsd = 0;
+  if (mode === 'image_to_video') {
+    costUsd = normalizeDuration(body.duration) * (body.generateAudio === false ? 0.084 : 0.126);
+  } else if (mode === 'motion_control') {
+    costUsd = normalizePositiveDuration(body.duration, 5) * 0.126;
+  } else if (body.videoUrl) {
+    costUsd = Math.ceil(normalizePositiveDuration(body.duration, 5) / 5) * 5 * 0.014;
+  } else {
+    costUsd = normalizePositiveDuration(body.duration, 5) * 0.0562;
+  }
+  return Math.max(1, Math.ceil(costUsd * USD_TO_CREDITS));
+}
+
+function normalizePositiveDuration(duration: unknown, fallback: number): number {
+  const value = Number(duration);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }

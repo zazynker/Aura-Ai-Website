@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download, Video } from 'lucide-react';
-import { useStore, estimateCredits, calculateCreditsFromTokens, Resolution } from '../context/StoreContext';
+import { useStore, estimateCredits, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -783,22 +783,22 @@ export const Modify = () => {
         displayPrompt = `Upscale to ${promptText}`;
       }
 
-      // Calculate credits based on ACTUAL token consumption from API
-      const tokensUsed = result.tokensUsed || 0;
-      const totalCreditsUsed = calculateCreditsFromTokens(tokensUsed);
-      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
+      // Backend pricing from the real Gemini usageMetadata is authoritative.
+      const totalCreditsUsed = result.creditsUsed ?? result.creditsDeducted ?? 0;
+      const baseCreditsPerImage = newImages.length > 0 ? Math.floor(totalCreditsUsed / newImages.length) : 0;
+      const creditRemainder = newImages.length > 0 ? totalCreditsUsed % newImages.length : 0;
       
       console.log('=== Credit Calculation ===');
-      console.log('Tokens used:', tokensUsed);
+      console.log('Token breakdown:', result.tokenBreakdown);
       console.log('Total credits:', totalCreditsUsed);
-      console.log('Credits per image:', creditsPerImage);
+      console.log('Base credits per image:', baseCreditsPerImage);
 
-      const newGenerations = newImages.map(imgUrl => ({
+      const newGenerations = newImages.map((imgUrl, index) => ({
         userId: user?.id || '',
         templateId: currentImageSource.templateId,
         templateName: currentImageSource.templateName,
         imageUrl: imgUrl,
-        creditsUsed: creditsPerImage,
+        creditsUsed: baseCreditsPerImage + (index < creditRemainder ? 1 : 0),
         prompt: displayPrompt,
     }));
 
@@ -947,23 +947,22 @@ export const Modify = () => {
       setCurrentImageSource({ templateId: sourceId, templateName: sourceName });
       setOriginalUploadedImage(newImages[0]);
 
-      // Calculate credits based on ACTUAL token consumption from API
-      const tokensUsed = result.tokensUsed || 0;
-      const totalCreditsUsed = calculateCreditsFromTokens(tokensUsed);
-      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
+      const totalCreditsUsed = result.creditsUsed ?? result.creditsDeducted ?? 0;
+      const baseCreditsPerImage = newImages.length > 0 ? Math.floor(totalCreditsUsed / newImages.length) : 0;
+      const creditRemainder = newImages.length > 0 ? totalCreditsUsed % newImages.length : 0;
       
       console.log('=== T2I Credit Calculation ===');
-      console.log('Tokens used:', tokensUsed);
+      console.log('Token breakdown:', result.tokenBreakdown);
       console.log('Total credits:', totalCreditsUsed);
-      console.log('Credits per image:', creditsPerImage);
+      console.log('Base credits per image:', baseCreditsPerImage);
 
       // Create Generation records
-      const newGenerations = newImages.map(imgUrl => ({
+      const newGenerations = newImages.map((imgUrl, index) => ({
         userId: user?.id || '',
         templateId: sourceId,
         templateName: sourceName,
         imageUrl: imgUrl,
-        creditsUsed: creditsPerImage,
+        creditsUsed: baseCreditsPerImage + (index < creditRemainder ? 1 : 0),
         prompt: t2iPrompt || 'Text to Image',
     }));
 
@@ -1646,6 +1645,7 @@ export const Modify = () => {
                                                 disabled={isGenerating || isUploading || !t2iPrompt.trim()}
                                             >
                                                 {isGenerating || isUploading ? <Loader2 className="w-5 h-5 animate-spin"/> : <ArrowUp className="w-5 h-5" />}
+                                                <span>~{estimateCredits(t2iSize as Resolution, t2iOutputCount)} credits</span>
                                             </button>
                                         </div>
                                     </div>
@@ -1999,7 +1999,7 @@ export const Modify = () => {
                                 ) : (
                                     <Sparkles className="w-4 h-4 mr-2" />
                                 )}
-                                {isUploading ? 'Uploading...' : uploadedFile ? 'Generate Magic' : 'Upload product first'}
+                                {isUploading ? 'Uploading...' : uploadedFile ? `Generate Magic · ~${estimateCredits('1K', outputCount)} credits` : 'Upload product first'}
                             </Button>
 
                             {/* More Control CTA - Only show when Advanced options is open */}
@@ -2136,7 +2136,7 @@ export const Modify = () => {
                             <ImageCountSelector />
                             <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || isUploading || !modifyPrompt.trim()} onClick={() => runGeneration('Modify', modifyPrompt)}>
                                 {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                                {isUploading ? 'Uploading...' : 'Generate Changes'}
+                                {isUploading ? 'Uploading...' : `Generate Changes · ~${estimateCredits('1K', outputCount)} credits`}
                             </Button>
                         </div>
                     )}
@@ -2202,7 +2202,7 @@ export const Modify = () => {
                             <ImageCountSelector />
                             <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || isUploading} onClick={() => runGeneration('Ratio', selectedRatio)}>
                                 {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                                Update Ratio
+                                Update Ratio · ~{estimateCredits('1K', outputCount)} credits
                             </Button>
                         </div>
                     )}
@@ -2287,7 +2287,7 @@ export const Modify = () => {
                             <ImageCountSelector />
                             <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || isUploading} onClick={() => runGeneration('Upscale', selectedResolution)}>
                                 {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                                Upscale to {selectedResolution}
+                                Upscale to {selectedResolution} · ~{estimateCredits(selectedResolution as Resolution, outputCount)} credits
                             </Button>
                         </div>
                     )}
