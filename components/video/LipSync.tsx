@@ -479,6 +479,17 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     if (!file) return;
 
     const isVideo = file.type.startsWith('video/');
+    const maxSize = isVideo ? 100 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(
+        isVideo
+          ? 'Video is too large (max 100MB). Please compress your video.'
+          : 'Image is too large (max 10MB). Please compress or resize your image.'
+      );
+      e.target.value = '';
+      return;
+    }
+
     const url = URL.createObjectURL(file);
     createdObjectUrlsRef.current.push(url);
 
@@ -495,6 +506,12 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert('Audio is too large (max 5MB). Please compress your audio file.');
+      e.target.value = '';
+      return;
+    }
 
     const url = URL.createObjectURL(file);
     createdObjectUrlsRef.current.push(url);

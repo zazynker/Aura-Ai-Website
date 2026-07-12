@@ -252,6 +252,11 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, isEndFrame = false) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image is too large (max 10MB). Please compress or resize your image.');
+        e.target.value = '';
+        return;
+      }
       const url = URL.createObjectURL(file);
       if (isEndFrame) {
         setSelectedEndImage(url);

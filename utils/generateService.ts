@@ -154,7 +154,7 @@ export async function generateImages(options: GenerateOptions): Promise<Generate
 }
 
 // ============================================
-// Video Generation (Kling via Fal)
+// Video Generation
 // ============================================
 
 export interface VideoGenerateOptions {
@@ -366,7 +366,7 @@ export async function generateVideo(options: VideoGenerateOptions): Promise<Vide
     const existingJob = getPendingVideoJob();
     if (existingJob && existingJob.userId === auth.userId) {
       if (isSameResumeCandidate(existingJob, auth.userId, mode)) {
-        console.warn('[generateVideo] Existing pending job found. Resuming instead of submitting a new Fal request:', {
+        console.warn('[generateVideo] Existing pending job found. Resuming instead of submitting a new request:', {
           requestId: existingJob.requestId,
           endpoint: existingJob.endpoint,
           mode: existingJob.mode,
@@ -516,12 +516,12 @@ async function pollVideoJob(job: PendingVideoJob, accessToken: string): Promise<
       console.error('Video status API error:', statusResponse.status, errorData);
 
       const errorCode = typeof errorData?.code === 'string' ? errorData.code : '';
-      const isFalRequestMissing =
+      const isRemoteRequestMissing =
         statusResponse.status === 404 ||
         errorCode === 'FAL_STATUS_NOT_FOUND' ||
         errorCode === 'FAL_RESULT_NOT_FOUND';
 
-      if (isFalRequestMissing) {
+      if (isRemoteRequestMissing) {
         clearPendingVideoJob();
         return {
           success: false,

@@ -315,7 +315,7 @@ export const Video: React.FC = () => {
   };
 
 
-  // If the page is refreshed while a Fal job is still pending, restore the pending card and
+  // If the page is refreshed while a video job is still pending, restore the pending card and
   // automatically resume polling once. This prevents a restored card from spinning forever
   // until the user manually clicks Check status.
   useEffect(() => {

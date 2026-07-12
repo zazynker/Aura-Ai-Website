@@ -256,6 +256,11 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image is too large (max 10MB). Please compress or resize your image.');
+        e.target.value = '';
+        return;
+      }
       setImageFile(file);
       setSelectedImage(URL.createObjectURL(file));
     }
@@ -264,6 +269,11 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > 100 * 1024 * 1024) {
+        alert('Video is too large (max 100MB). Please compress your video.');
+        e.target.value = '';
+        return;
+      }
       setVideoFile(file);
       setSelectedVideo(URL.createObjectURL(file));
     }
