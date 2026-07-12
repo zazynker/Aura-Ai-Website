@@ -5,6 +5,7 @@ import { useStore } from '../context/StoreContext';
 import { fetchUserCredits } from '../utils/api';
 import { DODO_PRODUCTS, openDodoOverlayCheckout } from '../utils/dodoPayments';
 import { initDodoCheckout } from '../utils/dodoOverlayCheckout';
+import confetti from 'canvas-confetti';
 
 interface WelcomeGiftModalProps {
   isOpen: boolean;
@@ -27,6 +28,25 @@ export const WelcomeGiftModal: React.FC<WelcomeGiftModalProps> = ({ isOpen, onCl
     initDodoCheckout('live');
     return () => { pollRunRef.current += 1; };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const duration = 3000;
+    const animationEnd = Date.now() + duration;
+    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 10000 };
+    const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+    const interval = window.setInterval(() => {
+      const timeLeft = animationEnd - Date.now();
+      if (timeLeft <= 0) {
+        window.clearInterval(interval);
+        return;
+      }
+      const particleCount = 50 * (timeLeft / duration);
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [isOpen]);
 
   const syncUser = async () => {
     const { data } = await fetchUserCredits();
@@ -98,18 +118,18 @@ export const WelcomeGiftModal: React.FC<WelcomeGiftModalProps> = ({ isOpen, onCl
 
   return (
     <Modal isOpen={isOpen} onClose={processing ? () => undefined : onClose} title="Welcome Gift">
-      <div className="relative overflow-hidden p-1 sm:p-2">
-        <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-purple-100 text-purple-600 dark:bg-purple-500/15 dark:text-purple-300">
+      <div className="text-center py-2">
+        <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/30 text-purple-500 rounded-full flex items-center justify-center mx-auto mb-4">
           {waitingForCredits ? <Loader2 className="h-8 w-8 animate-spin" /> : <Gift className="h-8 w-8" />}
         </div>
-        <h3 className="text-center text-xl font-bold text-slate-900 dark:text-white">
+        <h4 className="text-lg font-bold text-slate-900 dark:text-white mb-4">
           {waitingForCredits ? 'Confirming your payment…' : 'Exclusive New User Offer'}
-        </h3>
-        <p className="mx-auto mt-3 max-w-lg rounded-xl bg-indigo-50 px-4 py-3 text-center text-sm font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">
-          Choose one offer. It is available once per account during your first 30 days.
-        </p>
+        </h4>
+        <div className="bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 px-4 py-3 rounded-lg mb-6 text-sm font-semibold border border-indigo-100 dark:border-indigo-800/30">
+          Get a head start! You can only choose ONE option, and it is only available ONCE per account.
+        </div>
 
-        <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 px-1">
           {OFFERS.map(offer => {
             const active = processing === offer.productId;
             return (
@@ -118,23 +138,26 @@ export const WelcomeGiftModal: React.FC<WelcomeGiftModalProps> = ({ isOpen, onCl
                 type="button"
                 disabled={Boolean(processing) || waitingForCredits}
                 onClick={() => void purchase(offer.productId)}
-                className={`relative rounded-2xl border-2 bg-white p-4 text-center transition-all hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-slate-900 ${
+                className={`relative rounded-xl border-2 p-3 text-center transition-all disabled:cursor-not-allowed disabled:opacity-60 flex flex-col items-center justify-between h-full group overflow-hidden ${
                   offer.best
-                    ? 'border-pink-400 shadow-lg shadow-pink-500/15'
-                    : 'border-slate-200 hover:border-purple-300 dark:border-slate-700 dark:hover:border-purple-500'
+                    ? 'border-pink-300 dark:border-pink-500/50 hover:border-pink-500 dark:hover:border-pink-400 bg-gradient-to-b from-pink-50 to-white dark:from-pink-900/20 dark:to-slate-800 shadow-lg shadow-pink-100 dark:shadow-pink-900/20'
+                    : 'border-slate-200 dark:border-slate-700 hover:border-purple-400 dark:hover:border-purple-500 bg-white dark:bg-slate-800'
                 }`}
               >
                 {offer.best && (
-                  <span className="absolute inset-x-0 top-0 rounded-t-xl bg-gradient-to-r from-purple-500 to-pink-500 py-1 text-[10px] font-bold uppercase tracking-wide text-white">
+                  <span className="absolute top-0 inset-x-0 bg-gradient-to-r from-purple-500 to-pink-500 text-white text-[9px] font-bold py-0.5 text-center uppercase tracking-wider">
                     Best value
                   </span>
                 )}
-                <div className={offer.best ? 'pt-5' : ''}>
-                  <div className="text-3xl font-black text-slate-900 dark:text-white">{offer.credits}</div>
-                  <div className="mt-1 text-xs uppercase tracking-wide text-slate-500">Credits</div>
-                  <div className="mt-5 flex h-11 items-center justify-center rounded-xl border border-slate-200 font-bold text-slate-900 dark:border-slate-700 dark:text-white">
+                <div className={offer.best ? 'mb-3 mt-4' : 'mb-3 mt-2'}>
+                  <p className="text-2xl font-black text-slate-900 dark:text-white my-1">{offer.credits}</p>
+                  <p className="text-xs font-normal text-slate-500 uppercase tracking-wide">credits</p>
+                </div>
+                <div className={`w-full min-h-10 flex items-center justify-center rounded-xl font-bold group-hover:scale-105 transition-transform ${offer.best
+                  ? 'bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md'
+                  : 'border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-white'
+                }`}>
                     {active ? <Loader2 className="h-5 w-5 animate-spin" /> : offer.price}
-                  </div>
                 </div>
               </button>
             );
