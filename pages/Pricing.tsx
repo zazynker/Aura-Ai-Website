@@ -130,6 +130,26 @@ export const Pricing = () => {
 
   return (
     <div className="min-h-screen pt-24 px-4 pb-12">
+      <style>{`
+        @keyframes lazoraGiftWiggle {
+          0%, 68%, 100% { transform: rotate(0deg) scale(1); }
+          72% { transform: rotate(-14deg) scale(1.08); }
+          76% { transform: rotate(14deg) scale(1.08); }
+          80% { transform: rotate(-10deg) scale(1.06); }
+          84% { transform: rotate(10deg) scale(1.06); }
+          88% { transform: rotate(-6deg) scale(1.03); }
+          92% { transform: rotate(6deg) scale(1.03); }
+          96% { transform: rotate(0deg) scale(1); }
+        }
+        .lazora-gift-wiggle {
+          animation: lazoraGiftWiggle 2.2s ease-in-out infinite;
+          transform-origin: 50% 20%;
+          will-change: transform;
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .lazora-gift-wiggle { animation: none; }
+        }
+      `}</style>
       <div className="text-center mb-12">
         <h1 className="text-4xl font-bold mb-4 text-slate-900 dark:text-white">Choose Your <span className="text-gradient">Power</span></h1>
         <p className="text-slate-500 dark:text-slate-400">
@@ -279,7 +299,7 @@ export const Pricing = () => {
               title="New User Gift"
             >
               <div className="absolute inset-0 bg-purple-100 dark:bg-purple-900/30 rounded-full scale-0 group-hover:scale-100 transition-transform duration-300 origin-center" />
-              <Gift className="w-8 h-8 animate-wiggle relative z-10" />
+              <Gift className="w-8 h-8 lazora-gift-wiggle relative z-10" />
               <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-slate-800 z-20" />
             </button>}
           </div>
