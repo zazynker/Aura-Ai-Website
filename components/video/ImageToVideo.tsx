@@ -56,7 +56,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     onGenerate({
       id: existing.clientJobId,
       type: 'Image to Video',
-      model: 'Kling 3.0',
+      model: 'Standard',
       resolution: existing.resolution || '720p',
       prompt: existing.prompt || '',
       duration: formatDuration(existing.duration),
@@ -66,7 +66,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       sourceImage: existing.startImageUrl,
       status: 'pending',
       requestId: existing.requestId,
-      error: 'This video was already submitted. Click Resume to check the same Fal job.',
+      error: 'This video was already submitted. Click Resume to check status.',
     });
   }, [onGenerate]);
 
@@ -178,7 +178,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     const pendingResult: VideoResult = {
       id: placeholderId,
       type: 'Image to Video',
-      model: 'Kling 3.0',
+      model: 'Standard',
       resolution,
       prompt,
       duration: formatDuration(duration),
@@ -193,6 +193,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     setIsGenerating(true);
     
     try {
+      if (startImageFile && startImageFile.size > 10 * 1024 * 1024) {
+        throw new Error('Image is too large (max 10MB). Please compress or resize your image.');
+      }
       const startImageUrl = await uploadImageIfNeeded(selectedImage, startImageFile, 'start');
       if (!startImageUrl) throw new Error('Please upload a first frame image.');
 
@@ -203,6 +206,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
 
       let endImageUrl: string | undefined;
       if (selectedEndImage && endImageFile) {
+        if (endImageFile.size > 10 * 1024 * 1024) {
+          throw new Error('End frame image is too large (max 10MB). Please compress or resize.');
+        }
         try {
           endImageUrl = await uploadImageIfNeeded(selectedEndImage, endImageFile, 'end');
         } catch (endErr) {
@@ -336,7 +342,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
 
         {pendingJob && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-            A Fal job is already submitted. Use Resume to check the same job. Do not generate again.
+            A job is already submitted. Use Resume to check the same job. Do not generate again.
           </div>
         )}
       </div>
@@ -371,7 +377,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Generate Audio</div>
                   <div className="mt-0.5 text-[10px] text-slate-400">
-                    {generateAudio ? '$0.126 per second' : '$0.084 per second'}
+                    {generateAudio ? 'Generates video with background audio' : 'Video only, no audio'}
                   </div>
                 </div>
                 <input

@@ -528,7 +528,7 @@ async function pollVideoJob(job: PendingVideoJob, accessToken: string): Promise<
           pending: false,
           requestId: job.requestId,
           status: 'FAILED',
-          error: 'This pending Fal request was not found. It has been cleared locally. Click Generate again to submit a new Fal request.',
+          error: 'This pending request was not found. It has been cleared. Click Generate to submit a new request.',
         };
       }
 
@@ -543,7 +543,7 @@ async function pollVideoJob(job: PendingVideoJob, accessToken: string): Promise<
         pending: true,
         pendingJob: job,
         requestId: job.requestId,
-        error: `${friendlyMessage} The Fal job was already submitted. Do not generate again; click Resume to check this same job.`,
+        error: `${friendlyMessage} The job was already submitted. Do not generate again; click Resume to check this same job.`,
       };
     }
 
@@ -599,6 +599,6 @@ async function pollVideoJob(job: PendingVideoJob, accessToken: string): Promise<
     pending: true,
     pendingJob: job,
     requestId: job.requestId,
-    error: 'Video status checking timed out after about 10 minutes. The Fal job may still be running. Click Check status / Resume instead of Generate.',
+    error: 'Video status checking timed out after about 10 minutes. The job may still be running. Click Check status / Resume instead of Generate.',
   };
 }

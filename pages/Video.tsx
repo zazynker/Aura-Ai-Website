@@ -67,7 +67,7 @@ const generationToVideoResult = (generation: Generation): VideoResult | null => 
   return {
     id: generation.id,
     type: getTypeFromMode(mode),
-    model: mode === 'lip_sync' ? 'Kling Lip Sync' : mode === 'motion_control' ? 'Kling Motion Control' : 'Kling 3.0',
+    model: mode === 'lip_sync' ? 'Lip Sync' : mode === 'motion_control' ? 'Motion Control' : 'Standard',
     resolution: 'Saved',
     prompt: generation.prompt || '',
     duration: formatDuration(generation.videoDuration),
@@ -89,7 +89,7 @@ const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
   return {
     id: job.clientJobId,
     type: getTypeFromMode(job.mode),
-    model: job.mode === 'lip_sync' ? 'Kling Lip Sync' : job.mode === 'motion_control' ? 'Kling Motion Control' : 'Kling 3.0',
+    model: job.mode === 'lip_sync' ? 'Lip Sync' : job.mode === 'motion_control' ? 'Motion Control' : 'Standard',
     resolution: job.resolution || '720p',
     prompt: job.prompt || '',
     duration: formatDuration(job.duration || 0),
@@ -103,7 +103,7 @@ const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
     requestId: job.requestId,
     mode: job.mode,
     createdAt: job.createdAt,
-    error: 'This Fal job was already submitted. Use Resume to check the same request instead of generating again.',
+    error: 'This job was already submitted. Use Resume to check status instead of generating again.',
   };
 };
 
@@ -265,7 +265,7 @@ export const Video: React.FC = () => {
 
     handleUpdateResult(gen.id, {
       status: 'pending',
-      error: 'Checking the existing Fal request. Do not submit a new generation.',
+      error: 'Checking the existing request. Do not submit a new generation.',
     });
 
     try {
@@ -286,7 +286,7 @@ export const Video: React.FC = () => {
         handleUpdateResult(gen.id, {
           status: 'pending',
           requestId: result.requestId || gen.requestId,
-          error: result.error || 'Fal is still processing this request. Check again later.',
+          error: result.error || 'Still processing. Check again later.',
         });
         return;
       }
@@ -295,7 +295,7 @@ export const Video: React.FC = () => {
         status: 'failed',
         timestamp: 'Failed',
         requestId: result.requestId || gen.requestId,
-        error: result.error || 'Fal request failed or was not found. You can clear this card and generate again.',
+        error: result.error || 'Request failed or was not found. You can clear this card and generate again.',
       });
     } catch (error) {
       handleUpdateResult(gen.id, {
@@ -407,7 +407,7 @@ export const Video: React.FC = () => {
                     <button
                       onClick={() => gen.status === 'pending' ? handleResumeCard(gen) : undefined}
                       className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
-                      title={gen.status === 'pending' ? 'Check existing Fal request' : 'Refresh'}
+                      title={gen.status === 'pending' ? 'Check existing request' : 'Refresh'}
                     >
                       <RefreshCw className={`h-4 w-4 ${gen.status === 'pending' ? 'animate-spin' : ''}`} />
                     </button>
@@ -421,9 +421,9 @@ export const Video: React.FC = () => {
                   <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed pr-8">
                     "{gen.prompt}"
                   </p>
-                  {gen.requestId && (
+                  {gen.requestId && gen.status === 'pending' && (
                     <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-                      Fal request: {gen.requestId}
+                      Request: {gen.requestId.slice(0, 8)}…
                     </p>
                   )}
                   {gen.error && (

@@ -73,7 +73,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       sourceImage: existing.startImageUrl,
       status: 'pending',
       requestId: existing.requestId,
-      error: 'This motion-control job was already submitted. Click Resume to check the same Fal job.',
+      error: 'This motion-control job was already submitted. Click Resume to check status.',
     });
   }, [onGenerate]);
 
@@ -206,6 +206,9 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
     setIsGenerating(true);
 
     try {
+      if (imageFile && imageFile.size > 10 * 1024 * 1024) {
+        throw new Error('Character image is too large (max 10MB). Please compress or resize.');
+      }
       const characterImageUrl = await uploadFileIfNeeded(selectedImage, imageFile, 'character-image');
       const driverVideoUrl = await uploadFileIfNeeded(selectedVideo, videoFile, 'driver-video');
 
@@ -438,7 +441,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
 
         {pendingJob && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-            A Fal motion-control job is already submitted. Use Resume to check the same job. Do not generate again.
+            A motion-control job is already submitted. Use Resume to check the same job. Do not generate again.
           </div>
         )}
       </div>
