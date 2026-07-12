@@ -664,57 +664,33 @@ export async function fetchUserCredits(): Promise<{
       .single();
 
     if (error) {
-      // 如果用户不存在，创建新用户记录
+      // New-user provisioning must be server-controlled. The RPC assigns the fixed
+      // welcome balance and prevents callers from choosing credits, plan, or admin flags.
       if (error.code === 'PGRST116') {
-        console.log('User not found in users table, creating...');
-        const welcomeCredits = 120;
-        const newUserData = {
-          id: user.id,
-          email: user.email,
-          credits: welcomeCredits,
-          plan: 'Free',
-          max_credits: welcomeCredits,
-          is_whitelisted: false,
-          is_admin: false
-        };
-        
-        const { data: newUser, error: insertError } = await supabase
-          .from('users')
-          .insert(newUserData)
-          .select('credits, plan, max_credits, is_whitelisted, is_admin')
-          .single();
-        
-        if (insertError) {
-          console.error('Error creating user:', insertError);
-          return { data: null, error: insertError.message };
+        console.log('User not found in users table, provisioning securely...');
+        const { data: ensured, error: ensureError } = await supabase.rpc(
+          'ensure_user_profile'
+        );
+
+        if (ensureError) {
+          console.error('Secure user provisioning failed:', ensureError);
+          return { data: null, error: ensureError.message };
         }
-        
-        // 创建 free_welcome 类型的 purchase 记录，确保积分有账本记录
-        const { error: purchaseError } = await supabase
-          .from('purchases')
-          .insert({
-            user_id: user.id,
-            user_email: user.email,
-            product_type: 'free_welcome',
-            amount_cents: 0,
-            credits_granted: welcomeCredits,
-            credits_remaining: welcomeCredits,
-          });
-        
-        if (purchaseError) {
-          console.error('Error creating welcome purchase record:', purchaseError);
-          // 不阻止用户创建，只记录错误
+
+        const newUser = Array.isArray(ensured) ? ensured[0] : ensured;
+        if (!newUser || typeof newUser !== 'object') {
+          return { data: null, error: 'User profile provisioning returned no data' };
         }
-        
-        return { 
+
+        return {
           data: {
-            credits: newUser.credits,
-            plan: newUser.plan,
-            maxCredits: newUser.max_credits,
-            isWhitelisted: newUser.is_whitelisted || false,
-            isAdmin: newUser.is_admin || false
-          }, 
-          error: null 
+            credits: Number(newUser.credits) || 0,
+            plan: String(newUser.plan || 'Free'),
+            maxCredits: Number(newUser.max_credits) || 0,
+            isWhitelisted: Boolean(newUser.is_whitelisted),
+            isAdmin: Boolean(newUser.is_admin),
+          },
+          error: null,
         };
       }
       
@@ -739,96 +715,30 @@ export async function fetchUserCredits(): Promise<{
 }
 
 /**
- * 扣除用户积分（原子操作）
+ * @deprecated Credit balances are server-controlled.
+ * Client code must never write the users.credits column directly.
  */
 export async function deductUserCredits(
-  amount: number
+  _amount: number
 ): Promise<{ success: boolean; newCredits: number; error: string | null }> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return { success: false, newCredits: 0, error: 'Not authenticated' };
-    }
-
-    // 使用 RPC 函数进行原子扣除，防止并发问题
-    // 如果没有 RPC，先获取再更新
-    const { data: currentData, error: fetchError } = await supabase
-      .from('users')
-      .select('credits')
-      .eq('id', user.id)
-      .single();
-
-    if (fetchError) {
-      console.error('Error fetching current credits:', fetchError);
-      return { success: false, newCredits: 0, error: fetchError.message };
-    }
-
-    const currentCredits = currentData.credits;
-    if (currentCredits < amount) {
-      return { success: false, newCredits: currentCredits, error: 'Insufficient credits' };
-    }
-
-    const newCredits = currentCredits - amount;
-
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({ credits: newCredits })
-      .eq('id', user.id);
-
-    if (updateError) {
-      console.error('Error updating credits:', updateError);
-      return { success: false, newCredits: currentCredits, error: updateError.message };
-    }
-
-    console.log(`Deducted ${amount} credits. New balance: ${newCredits}`);
-    return { success: true, newCredits, error: null };
-  } catch (err) {
-    console.error('Unexpected error:', err);
-    return { success: false, newCredits: 0, error: 'Failed to deduct credits' };
-  }
+  return {
+    success: false,
+    newCredits: 0,
+    error: 'Client-side credit changes are disabled',
+  };
 }
 
 /**
- * 添加用户积分（用于购买或奖励）
+ * @deprecated Credits may only be granted by trusted server code or payment webhooks.
  */
 export async function addUserCredits(
-  amount: number
+  _amount: number
 ): Promise<{ success: boolean; newCredits: number; error: string | null }> {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) {
-      return { success: false, newCredits: 0, error: 'Not authenticated' };
-    }
-
-    const { data: currentData, error: fetchError } = await supabase
-      .from('users')
-      .select('credits')
-      .eq('id', user.id)
-      .single();
-
-    if (fetchError) {
-      console.error('Error fetching current credits:', fetchError);
-      return { success: false, newCredits: 0, error: fetchError.message };
-    }
-
-    const newCredits = currentData.credits + amount;
-
-    const { error: updateError } = await supabase
-      .from('users')
-      .update({ credits: newCredits })
-      .eq('id', user.id);
-
-    if (updateError) {
-      console.error('Error updating credits:', updateError);
-      return { success: false, newCredits: currentData.credits, error: updateError.message };
-    }
-
-    console.log(`Added ${amount} credits. New balance: ${newCredits}`);
-    return { success: true, newCredits, error: null };
-  } catch (err) {
-    console.error('Unexpected error:', err);
-    return { success: false, newCredits: 0, error: 'Failed to add credits' };
-  }
+  return {
+    success: false,
+    newCredits: 0,
+    error: 'Client-side credit changes are disabled',
+  };
 }
 /**
  * 记录用户对视频生成功能的兴趣点击

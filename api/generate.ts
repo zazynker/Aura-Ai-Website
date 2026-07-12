@@ -702,19 +702,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         },
       );
 
-      if (deductError) {
-        console.error("Credit deduction failed:", deductError);
-        // Don't fail the request - images were already generated
-        // Log for manual reconciliation
-      } else {
-        console.log("Credit deduction result:", deductResult);
-        if (deductResult && deductResult.success) {
-          creditsDeducted = creditsToDeduct;
-          newCredits = Number(
-            deductResult.new_balance ?? deductResult.new_credits ?? newCredits,
-          );
+      const deductionSucceeded =
+        !deductError && deductResult && deductResult.success === true;
+
+      if (!deductionSucceeded) {
+        console.error("Credit deduction failed; generated files will not be delivered:", {
+          requestId,
+          deductError: deductError?.message,
+          deductResult,
+          creditsToDeduct,
+        });
+
+        const cleanupSucceeded = await deleteStoredGenerationArtifacts(
+          supabase,
+          user.id,
+          requestId,
+        );
+
+        if (!cleanupSucceeded) {
+          console.error("CRITICAL: unable to remove unpaid generated files", {
+            userId: user.id,
+            requestId,
+          });
         }
+
+        const insufficientCredits =
+          !deductError && deductResult?.success === false;
+
+        return res.status(insufficientCredits ? 402 : 500).json({
+          success: false,
+          code: insufficientCredits
+            ? "INSUFFICIENT_CREDITS"
+            : "CREDIT_DEDUCTION_FAILED",
+          error: insufficientCredits
+            ? "Your credit balance changed before checkout. No image was delivered."
+            : "Unable to charge credits. No image was delivered.",
+          creditsDeducted: 0,
+          requestId,
+        });
       }
+
+      console.log("Credit deduction result:", deductResult);
+      creditsDeducted = creditsToDeduct;
+      newCredits = Number(
+        deductResult.new_balance ?? deductResult.new_credits ?? newCredits,
+      );
     } else {
       console.log("User is whitelisted - skipping credit deduction");
     }
@@ -892,6 +924,47 @@ async function uploadGeneratedImages(
     }
     throw error;
   }
+}
+
+async function deleteStoredGenerationArtifacts(
+  supabase: any,
+  userId: string,
+  requestId: string,
+): Promise<boolean> {
+  const folder = getGeneratedRequestFolder(userId, requestId);
+  const { data, error: listError } = await supabase.storage
+    .from(GENERATED_IMAGES_BUCKET)
+    .list(folder, {
+      limit: MAX_IMAGES + 2,
+      sortBy: { column: "name", order: "asc" },
+    });
+
+  if (listError) {
+    console.error("Unable to list unpaid generated files for cleanup:", listError);
+    return false;
+  }
+
+  const paths = (data || [])
+    .map((item: any) => item?.name)
+    .filter((name: unknown): name is string => typeof name === "string" && name.length > 0)
+    .map((name: string) => `${folder}/${name}`);
+
+  if (paths.length === 0) return true;
+
+  const { error: removeError } = await supabase.storage
+    .from(GENERATED_IMAGES_BUCKET)
+    .remove(paths);
+
+  if (removeError) {
+    console.error("Unable to remove unpaid generated files:", removeError);
+    return false;
+  }
+
+  console.log("Removed unpaid generated files:", {
+    requestId,
+    fileCount: paths.length,
+  });
+  return true;
 }
 
 async function saveGenerationManifest(
