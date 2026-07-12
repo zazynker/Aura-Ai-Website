@@ -7,7 +7,6 @@ import { Button } from '../components/ui/Button';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 import { supabase } from '../utils/supabase';
 import { DODO_PRODUCTS, openDodoOverlayCheckout, isDodoConfigured } from '../utils/dodoPayments';
-import confetti from 'canvas-confetti';
 
 export const Pricing = () => {
   const navigate = useNavigate();
@@ -15,34 +14,6 @@ export const Pricing = () => {
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<'yearly' | 'monthly'>('yearly');
   const [showGiftModal, setShowGiftModal] = useState(false);
-
-  const fireConfetti = () => {
-    const duration = 3 * 1000;
-    const animationEnd = Date.now() + duration;
-    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
-
-    const randomInRange = (min, max) => Math.random() * (max - min) + min;
-
-    const interval = setInterval(function() {
-      const timeLeft = animationEnd - Date.now();
-
-      if (timeLeft <= 0) {
-        return clearInterval(interval);
-      }
-
-      const particleCount = 50 * (timeLeft / duration);
-      confetti({
-        ...defaults,
-        particleCount,
-        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
-      });
-      confetti({
-        ...defaults,
-        particleCount,
-        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
-      });
-    }, 250);
-  };
 
   // 预初始化 Dodo Checkout SDK
   React.useEffect(() => {
@@ -303,7 +274,6 @@ export const Pricing = () => {
             {user?.welcomeGiftEligible && !user?.welcomeGiftRedeemed && <button 
               onClick={() => {
                 setShowGiftModal(true);
-                fireConfetti();
               }}
               className="group relative -mt-2 -mr-2 p-3 text-purple-500 hover:text-purple-600 dark:text-purple-400 dark:hover:text-purple-300 transition-colors cursor-pointer"
               title="New User Gift"
