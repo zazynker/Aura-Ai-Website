@@ -28,6 +28,7 @@ import { useStore } from '../context/StoreContext';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 import { Generation, VideoMode } from '../types';
+import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 
 const parseDurationSeconds = (duration: string): number | undefined => {
   if (!duration) return undefined;
@@ -67,7 +68,7 @@ const generationToVideoResult = (generation: Generation): VideoResult | null => 
   return {
     id: generation.id,
     type: getTypeFromMode(mode),
-    model: mode === 'lip_sync' ? 'Lip Sync' : mode === 'motion_control' ? 'Motion Control' : 'Standard',
+    model: mode === 'lip_sync' ? 'Kling Lip Sync' : mode === 'motion_control' ? 'Kling Motion Control' : 'Kling 3.0',
     resolution: 'Saved',
     prompt: generation.prompt || '',
     duration: formatDuration(generation.videoDuration),
@@ -89,7 +90,7 @@ const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
   return {
     id: job.clientJobId,
     type: getTypeFromMode(job.mode),
-    model: job.mode === 'lip_sync' ? 'Lip Sync' : job.mode === 'motion_control' ? 'Motion Control' : 'Standard',
+    model: job.mode === 'lip_sync' ? 'Kling Lip Sync' : job.mode === 'motion_control' ? 'Kling Motion Control' : 'Kling 3.0',
     resolution: job.resolution || '720p',
     prompt: job.prompt || '',
     duration: formatDuration(job.duration || 0),
@@ -103,7 +104,7 @@ const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
     requestId: job.requestId,
     mode: job.mode,
     createdAt: job.createdAt,
-    error: 'This job was already submitted. Use Resume to check status instead of generating again.',
+    error: 'This Fal job was already submitted. Use Resume to check the same request instead of generating again.',
   };
 };
 
@@ -116,9 +117,18 @@ export const Video: React.FC = () => {
   const resultsRef = useRef<VideoResult[]>([]);
   const [activeFeature, setActiveFeature] = useState<FeatureType>('image-to-video');
   const [videoToDelete, setVideoToDelete] = useState<string | null>(null);
+  const [showWelcomeGift, setShowWelcomeGift] = useState(false);
   const { addGeneration, user, generations } = useStore();
   const savedVideoKeysRef = useRef<Set<string>>(new Set());
   const autoResumedRequestIdsRef = useRef<Set<string>>(new Set());
+
+  const handleInsufficientCredits = () => {
+    if (user?.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
+      setShowWelcomeGift(true);
+      return;
+    }
+    window.location.hash = '#/pricing';
+  };
 
   const setResultsAndCache = (next: VideoResult[] | ((prev: VideoResult[]) => VideoResult[])) => {
     setResults((prev) => {
@@ -265,7 +275,7 @@ export const Video: React.FC = () => {
 
     handleUpdateResult(gen.id, {
       status: 'pending',
-      error: 'Checking the existing request. Do not submit a new generation.',
+      error: 'Checking the existing Fal request. Do not submit a new generation.',
     });
 
     try {
@@ -286,7 +296,7 @@ export const Video: React.FC = () => {
         handleUpdateResult(gen.id, {
           status: 'pending',
           requestId: result.requestId || gen.requestId,
-          error: result.error || 'Still processing. Check again later.',
+          error: result.error || 'Fal is still processing this request. Check again later.',
         });
         return;
       }
@@ -295,7 +305,7 @@ export const Video: React.FC = () => {
         status: 'failed',
         timestamp: 'Failed',
         requestId: result.requestId || gen.requestId,
-        error: result.error || 'Request failed or was not found. You can clear this card and generate again.',
+        error: result.error || 'Fal request failed or was not found. You can clear this card and generate again.',
       });
     } catch (error) {
       handleUpdateResult(gen.id, {
@@ -315,7 +325,7 @@ export const Video: React.FC = () => {
   };
 
 
-  // If the page is refreshed while a video job is still pending, restore the pending card and
+  // If the page is refreshed while a Fal job is still pending, restore the pending card and
   // automatically resume polling once. This prevents a restored card from spinning forever
   // until the user manually clicks Check status.
   useEffect(() => {
@@ -363,13 +373,13 @@ export const Video: React.FC = () => {
         </div>
 
         {activeFeature === 'image-to-video' && (
-          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} />
+          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
         )}
         {activeFeature === 'motion-control' && (
-          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} />
+          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
         )}
         {activeFeature === 'lip-sync' && (
-          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} />
+          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
         )}
         {activeFeature === 'free-mode' && (
           <FreeMode onGenerate={handleNewResult} initialImage={initialImage} />
@@ -407,7 +417,7 @@ export const Video: React.FC = () => {
                     <button
                       onClick={() => gen.status === 'pending' ? handleResumeCard(gen) : undefined}
                       className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
-                      title={gen.status === 'pending' ? 'Check existing request' : 'Refresh'}
+                      title={gen.status === 'pending' ? 'Check existing Fal request' : 'Refresh'}
                     >
                       <RefreshCw className={`h-4 w-4 ${gen.status === 'pending' ? 'animate-spin' : ''}`} />
                     </button>
@@ -421,9 +431,9 @@ export const Video: React.FC = () => {
                   <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed pr-8">
                     "{gen.prompt}"
                   </p>
-                  {gen.requestId && gen.status === 'pending' && (
+                  {gen.requestId && (
                     <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-                      Request: {gen.requestId.slice(0, 8)}…
+                      Fal request: {gen.requestId}
                     </p>
                   )}
                   {gen.error && (
@@ -569,6 +579,7 @@ export const Video: React.FC = () => {
           </div>
         </div>
       </Modal>
+      <WelcomeGiftModal isOpen={showWelcomeGift} onClose={() => setShowWelcomeGift(false)} />
     </div>
   );
 };

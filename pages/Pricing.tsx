@@ -1,17 +1,48 @@
 import { initDodoCheckout } from '../utils/dodoOverlayCheckout';
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, Crown, Loader2 } from 'lucide-react';
+import { Check, Crown, Loader2, Gift } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
+import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 import { supabase } from '../utils/supabase';
 import { DODO_PRODUCTS, openDodoOverlayCheckout, isDodoConfigured } from '../utils/dodoPayments';
+import confetti from 'canvas-confetti';
 
 export const Pricing = () => {
   const navigate = useNavigate();
   const { user, updateUser, addToast, saveBrowsingState } = useStore();
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<'yearly' | 'monthly'>('yearly');
+  const [showGiftModal, setShowGiftModal] = useState(false);
+
+  const fireConfetti = () => {
+    const duration = 3 * 1000;
+    const animationEnd = Date.now() + duration;
+    const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 100 };
+
+    const randomInRange = (min, max) => Math.random() * (max - min) + min;
+
+    const interval = setInterval(function() {
+      const timeLeft = animationEnd - Date.now();
+
+      if (timeLeft <= 0) {
+        return clearInterval(interval);
+      }
+
+      const particleCount = 50 * (timeLeft / duration);
+      confetti({
+        ...defaults,
+        particleCount,
+        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }
+      });
+      confetti({
+        ...defaults,
+        particleCount,
+        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }
+      });
+    }, 250);
+  };
 
   // 预初始化 Dodo Checkout SDK
   React.useEffect(() => {
@@ -264,8 +295,24 @@ export const Pricing = () => {
         </div>
 
         {/* Credit Packs */}
-        <div className="glass-panel p-8 rounded-2xl border-slate-200 dark:border-white/5 flex flex-col">
-          <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Credit Packs</h3>
+        <div className="glass-panel p-8 rounded-2xl border-slate-200 dark:border-white/5 flex flex-col relative overflow-hidden">
+          <div className="flex justify-between items-start mb-2">
+            <h3 className="text-xl font-bold text-slate-900 dark:text-white">Credit Packs</h3>
+            
+            {/* Wiggling Gift Box */}
+            {user?.welcomeGiftEligible && !user?.welcomeGiftRedeemed && <button 
+              onClick={() => {
+                setShowGiftModal(true);
+                fireConfetti();
+              }}
+              className="group relative -mt-2 -mr-2 p-3 text-purple-500 hover:text-purple-600 dark:text-purple-400 dark:hover:text-purple-300 transition-colors cursor-pointer"
+              title="New User Gift"
+            >
+              <div className="absolute inset-0 bg-purple-100 dark:bg-purple-900/30 rounded-full scale-0 group-hover:scale-100 transition-transform duration-300 origin-center" />
+              <Gift className="w-8 h-8 animate-wiggle relative z-10" />
+              <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-slate-800 z-20" />
+            </button>}
+          </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">One-time purchase, never expires.</p>
           
           <div className="space-y-3 mb-8 flex-1">
@@ -343,6 +390,8 @@ export const Pricing = () => {
           </div>
         </div>
       </div>
+
+      <WelcomeGiftModal isOpen={showGiftModal} onClose={() => setShowGiftModal(false)} />
     </div>
   );
 };

@@ -642,6 +642,10 @@ export interface UserCreditsData {
   maxCredits: number;
   isWhitelisted: boolean;
   isAdmin?: boolean;
+  welcomeGiftEligible: boolean;
+  welcomeGiftRedeemed: boolean;
+  welcomeGiftExpiresAt: string | null;
+  welcomeGiftReason: string;
 }
 
 /**
@@ -682,6 +686,10 @@ export async function fetchUserCredits(): Promise<{
           return { data: null, error: 'User profile provisioning returned no data' };
         }
 
+        const { data: eligibility } = await supabase.rpc(
+          'get_my_welcome_gift_eligibility'
+        );
+
         return {
           data: {
             credits: Number(newUser.credits) || 0,
@@ -689,6 +697,10 @@ export async function fetchUserCredits(): Promise<{
             maxCredits: Number(newUser.max_credits) || 0,
             isWhitelisted: Boolean(newUser.is_whitelisted),
             isAdmin: Boolean(newUser.is_admin),
+            welcomeGiftEligible: Boolean(eligibility?.eligible),
+            welcomeGiftRedeemed: Boolean(eligibility?.redeemed),
+            welcomeGiftExpiresAt: eligibility?.expires_at || null,
+            welcomeGiftReason: String(eligibility?.reason || 'not_eligible'),
           },
           error: null,
         };
@@ -698,13 +710,24 @@ export async function fetchUserCredits(): Promise<{
       return { data: null, error: error.message };
     }
 
+    const { data: eligibility, error: eligibilityError } = await supabase.rpc(
+      'get_my_welcome_gift_eligibility'
+    );
+    if (eligibilityError) {
+      console.warn('Failed to fetch welcome gift eligibility:', eligibilityError.message);
+    }
+
     return { 
       data: {
         credits: data.credits,
         plan: data.plan,
         maxCredits: data.max_credits,
         isWhitelisted: data.is_whitelisted || false,
-        isAdmin: data.is_admin || false
+        isAdmin: data.is_admin || false,
+        welcomeGiftEligible: Boolean(eligibility?.eligible),
+        welcomeGiftRedeemed: Boolean(eligibility?.redeemed),
+        welcomeGiftExpiresAt: eligibility?.expires_at || null,
+        welcomeGiftReason: String(eligibility?.reason || 'not_eligible')
       }, 
       error: null 
     };

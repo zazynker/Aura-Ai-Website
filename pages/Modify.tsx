@@ -9,6 +9,7 @@ import { Generation, Template } from '../types';
 import { generateImages } from '../utils/generateService';
 import { uploadUserImage, validateFile } from '../utils/uploadService';
 import { logVideoInterest } from '../utils/api';
+import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 
 // === Admin Fake Generation Queue ===
 interface FakeQueueItem {
@@ -42,6 +43,15 @@ export const Modify = () => {
   const location = useLocation();
   const { user, addGenerations, addToast, generations, collections, saveBrowsingState, browsing, saveModifySession } = useStore();
   const MODIFY_SESSION_ID = 'modify-session';
+  const [showWelcomeGift, setShowWelcomeGift] = useState(false);
+
+  const handleInsufficientCredits = () => {
+    if (user?.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
+      setShowWelcomeGift(true);
+      return;
+    }
+    navigate('/pricing');
+  };
 
   // Initialize from session if available
   const session = browsing.modifySession;
@@ -470,8 +480,7 @@ export const Modify = () => {
     // Pre-check: estimate credits needed (actual amount will be based on real token usage)
     const estimatedCredits = estimateCredits(resolution, outputCount);
     if (user.credits < estimatedCredits) { 
-      addToast('error', `Not enough credits. Need ~${estimatedCredits}, have ${user.credits}`); 
-      navigate('/pricing'); 
+      handleInsufficientCredits();
       return; 
     }
 
@@ -831,8 +840,7 @@ export const Modify = () => {
     const t2iResolution = t2iSize as Resolution;
     const estimatedCredits = estimateCredits(t2iResolution, t2iOutputCount);
     if (user.credits < estimatedCredits) { 
-      addToast('error', `Not enough credits. Need ~${estimatedCredits}, have ${user.credits}`); 
-      navigate('/pricing'); 
+      handleInsufficientCredits();
       return; 
     }
 
@@ -2530,6 +2538,8 @@ export const Modify = () => {
             )}
         </div>
       </Modal>
+
+      <WelcomeGiftModal isOpen={showWelcomeGift} onClose={() => setShowWelcomeGift(false)} />
 
       {/* Fullscreen Lightbox */}
       {showLightbox && (

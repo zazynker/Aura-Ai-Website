@@ -14,11 +14,14 @@ import {
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
+import { estimateVideoCredits } from '../../context/StoreContext';
 
 interface LipSyncProps {
   onGenerate: (result: VideoResult) => void;
   onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
+  userCredits: number;
+  onInsufficientCredits: (requiredCredits: number) => void;
 }
 
 type MediaState = { url: string; type: 'image' | 'video'; file?: File };
@@ -42,7 +45,7 @@ const formatTime = (timeInSeconds: number) => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
-export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage }) => {
+export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits }) => {
   const [selectedMedia, setSelectedMedia] = useState<MediaState | null>(
     initialImage ? { url: initialImage, type: 'image' } : null
   );
@@ -132,7 +135,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     onGenerate({
       id: existing.clientJobId,
       type: 'Lip Sync',
-      model: existing.startImageUrl ? 'AI Avatar' : 'Lip Sync',
+      model: existing.startImageUrl ? 'Kling AI Avatar' : 'Kling Lip Sync',
       resolution: '720p',
       prompt: existing.prompt || 'Lip sync generation',
       duration: formatTime(existing.duration || 0),
@@ -145,7 +148,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       status: 'pending',
       requestId: existing.requestId,
       mode: 'lip_sync',
-      error: 'This lip sync job was already submitted. Click Resume to check status.',
+      error: 'This lip sync job was already submitted. Click Resume to check the same Fal job.',
     });
   }, [onGenerate]);
 
@@ -342,6 +345,16 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       selectedMedia.type === 'video' ? timelineDuration || effectiveAudioLength || 5 : audioDuration || 5
     );
 
+    const requiredCredits = estimateVideoCredits({
+      mode: 'lip_sync',
+      duration: resultDuration,
+      lipSyncInput: selectedMedia.type,
+    });
+    if (userCredits < requiredCredits) {
+      onInsufficientCredits(requiredCredits);
+      return;
+    }
+
     const placeholderId = `lip-${Date.now()}`;
     const promptText =
       selectedMedia.type === 'video'
@@ -353,7 +366,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     onGenerate({
       id: placeholderId,
       type: 'Lip Sync',
-      model: selectedMedia.type === 'image' ? 'AI Avatar' : 'Lip Sync',
+      model: selectedMedia.type === 'image' ? 'Kling AI Avatar' : 'Kling Lip Sync',
       resolution: '720p',
       prompt: promptText,
       duration: formatTime(resultDuration),
@@ -479,17 +492,6 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     if (!file) return;
 
     const isVideo = file.type.startsWith('video/');
-    const maxSize = isVideo ? 100 * 1024 * 1024 : 10 * 1024 * 1024;
-    if (file.size > maxSize) {
-      alert(
-        isVideo
-          ? 'Video is too large (max 100MB). Please compress your video.'
-          : 'Image is too large (max 10MB). Please compress or resize your image.'
-      );
-      e.target.value = '';
-      return;
-    }
-
     const url = URL.createObjectURL(file);
     createdObjectUrlsRef.current.push(url);
 
@@ -506,12 +508,6 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (file.size > 5 * 1024 * 1024) {
-      alert('Audio is too large (max 5MB). Please compress your audio file.');
-      e.target.value = '';
-      return;
-    }
 
     const url = URL.createObjectURL(file);
     createdObjectUrlsRef.current.push(url);
@@ -1082,7 +1078,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                 {renderTimeline()}
 
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-700 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-300">
-                  For reliable lip sync, upload a single-face video. Target-face selection is not currently supported, so multi-person videos may sync the wrong face.
+                  For reliable lip sync, upload a single-face video. The current Fal Kling lip-sync endpoints do not expose a target-face selection parameter, so multi-person videos may sync the wrong face.
                 </div>
               </>
             )}
@@ -1203,7 +1199,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
 
       {pendingJob && (
         <div className="mx-5 mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-          A lip sync job is already submitted. Use Resume to check the same job. Do not generate again.
+          A Fal lip sync job is already submitted. Use Resume to check the same job. Do not generate again.
         </div>
       )}
 

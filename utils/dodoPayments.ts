@@ -2,6 +2,7 @@
  * Dodo Payments Integration
  * Handles checkout creation via Supabase Edge Function
  */
+import { supabase } from './supabase';
 
 // Supabase Edge Function URL
 const SUPABASE_FUNCTION_URL = 'https://qdbixebjariupvcvsqff.supabase.co/functions/v1/create-checkout';
@@ -13,6 +14,9 @@ export const DODO_PRODUCTS = {
   CREDITS_500: 'pdt_0NcgjXHAv4YGQGRus5jTK',
   CREDITS_1000: 'pdt_0NcgjZRQg8BmUo91hSPAw',
   CREDITS_2000: 'pdt_0Ncgjbbx6J3ziExgmpLvs',
+  GIFT_120: 'pdt_0Nj2BOIxjWXYK7KJFznSj',
+  GIFT_250: 'pdt_0Nj2BYdzYVo0gpmFzdwyl',
+  GIFT_600: 'pdt_0Nj2BkTObSUe7155RRQsG',
 } as const;
 
 // Product details for display
@@ -22,6 +26,9 @@ export const PRODUCT_DETAILS = {
   [DODO_PRODUCTS.CREDITS_500]: { name: '500 Credits', credits: 500, price: 7 },
   [DODO_PRODUCTS.CREDITS_1000]: { name: '1,000 Credits', credits: 1000, price: 12 },
   [DODO_PRODUCTS.CREDITS_2000]: { name: '2,000 Credits', credits: 2000, price: 22 },
+  [DODO_PRODUCTS.GIFT_120]: { name: 'Welcome Gift 120', credits: 120, price: 1.99 },
+  [DODO_PRODUCTS.GIFT_250]: { name: 'Welcome Gift 250', credits: 250, price: 2.99 },
+  [DODO_PRODUCTS.GIFT_600]: { name: 'Welcome Gift 600', credits: 600, price: 5.99 },
 } as const;
 
 interface CreateCheckoutParams {
@@ -45,10 +52,16 @@ interface CheckoutResponse {
 export async function createCheckout(params: CreateCheckoutParams): Promise<CheckoutResponse> {
   const { productId, customerEmail, customerId, successUrl, cancelUrl, metadata, country } = params;
 
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) {
+    throw new Error('Please log in to continue');
+  }
+
   const response = await fetch(SUPABASE_FUNCTION_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
     },
     body: JSON.stringify({
       productId,

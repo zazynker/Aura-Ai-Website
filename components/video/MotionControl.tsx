@@ -10,11 +10,14 @@ import {
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
+import { estimateVideoCredits } from '../../context/StoreContext';
 
 interface MotionControlProps {
   onGenerate: (result: VideoResult) => void;
   onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
+  userCredits: number;
+  onInsufficientCredits: (requiredCredits: number) => void;
 }
 
 type DirectionMatch = 'video' | 'image';
@@ -22,7 +25,7 @@ type Resolution = '720p' | '1080p';
 
 const formatDuration = (seconds?: number) => `00:${String(seconds || 5).padStart(2, '0')}`;
 
-export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage }) => {
+export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -73,7 +76,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       sourceImage: existing.startImageUrl,
       status: 'pending',
       requestId: existing.requestId,
-      error: 'This motion-control job was already submitted. Click Resume to check status.',
+      error: 'This motion-control job was already submitted. Click Resume to check the same Fal job.',
     });
   }, [onGenerate]);
 
@@ -185,6 +188,14 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       return;
     }
 
+    const requiredCredits = estimateVideoCredits({
+      mode: 'motion_control', duration, generationCount: quantity,
+    });
+    if (userCredits < requiredCredits) {
+      onInsufficientCredits(requiredCredits);
+      return;
+    }
+
     const placeholderId = `motion-${Date.now()}`;
     const pendingResult: VideoResult = {
       id: placeholderId,
@@ -206,9 +217,6 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
     setIsGenerating(true);
 
     try {
-      if (imageFile && imageFile.size > 10 * 1024 * 1024) {
-        throw new Error('Character image is too large (max 10MB). Please compress or resize.');
-      }
       const characterImageUrl = await uploadFileIfNeeded(selectedImage, imageFile, 'character-image');
       const driverVideoUrl = await uploadFileIfNeeded(selectedVideo, videoFile, 'driver-video');
 
@@ -256,11 +264,6 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 10 * 1024 * 1024) {
-        alert('Image is too large (max 10MB). Please compress or resize your image.');
-        e.target.value = '';
-        return;
-      }
       setImageFile(file);
       setSelectedImage(URL.createObjectURL(file));
     }
@@ -269,11 +272,6 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
   const handleVideoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 100 * 1024 * 1024) {
-        alert('Video is too large (max 100MB). Please compress your video.');
-        e.target.value = '';
-        return;
-      }
       setVideoFile(file);
       setSelectedVideo(URL.createObjectURL(file));
     }
@@ -451,7 +449,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
 
         {pendingJob && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-            A motion-control job is already submitted. Use Resume to check the same job. Do not generate again.
+            A Fal motion-control job is already submitted. Use Resume to check the same job. Do not generate again.
           </div>
         )}
       </div>

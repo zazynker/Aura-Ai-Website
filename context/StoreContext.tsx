@@ -233,6 +233,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
       isAdmin: creditsData?.isAdmin ?? false,
       isWhitelisted: creditsData?.isWhitelisted ?? false,
+      welcomeGiftEligible: creditsData?.welcomeGiftEligible ?? false,
+      welcomeGiftRedeemed: creditsData?.welcomeGiftRedeemed ?? false,
+      welcomeGiftExpiresAt: creditsData?.welcomeGiftExpiresAt ?? null,
+      welcomeGiftReason: creditsData?.welcomeGiftReason ?? 'not_eligible',
     };
 
     console.log('=== User synced from database ===');
