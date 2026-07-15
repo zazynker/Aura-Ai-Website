@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Heart, Share2, Crown, Plus, Check, Loader2 } from 'lucide-react';
+import { Search, Heart, Share2, Crown, Plus, Check, Loader2, Workflow, Play } from 'lucide-react';
+import { startWorkflow } from '../components/workflow/workflowManager';
 import { supabase } from '../utils/supabase';
+import { isSupabaseConfigured } from '../config/env';
 import { useStore } from '../context/StoreContext';
 import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
@@ -70,6 +72,209 @@ const LazyImage = ({
   );
 };
 
+
+const MOCK_WORKFLOW_TEMPLATES: Template[] = [
+  {
+    id: 'wf-mock-1',
+    name: 'Minimal Product Story',
+    imageUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&q=80&w=800',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    category: 'Product',
+    tags: ['minimal', 'product', 'story'],
+    isPro: false,
+    width: 800,
+    height: 1200,
+    isWorkflow: true,
+    authorName: 'User13134',
+    usesCount: 128
+  },
+  {
+    id: 'wf-mock-2',
+    name: 'Cosmetic Promo',
+    imageUrl: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&q=80&w=800',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    category: 'Beauty',
+    tags: ['cosmetic', 'promo', 'beauty'],
+    isPro: true,
+    width: 800,
+    height: 1000,
+    isWorkflow: true,
+    authorName: 'Sarah Designs',
+    usesCount: 84
+  },
+  {
+    id: 'wf-mock-3',
+    name: 'Tech Gadget Launch',
+    imageUrl: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&q=80&w=800',
+    category: 'Tech',
+    tags: ['tech', 'gadget', 'launch'],
+    isPro: false,
+    width: 800,
+    height: 800,
+    isWorkflow: true,
+    authorName: 'TechCreator',
+    usesCount: 256
+  }
+];
+
+const TemplateCardItem: React.FC<{ 
+  t: Template; 
+  onClick: () => void; 
+  onAction: (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => void;
+  navigate: ReturnType<typeof useNavigate>;
+  addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
+  user: any;
+  saveBrowsingState: any;
+}> = ({ 
+  t, 
+  onClick, 
+  onAction,
+  navigate,
+  addToast,
+  user,
+  saveBrowsingState
+}) => {
+  const [isHovered, setIsHovered] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (t.videoUrl && videoRef.current) {
+      if (isHovered) {
+        videoRef.current.play().catch(e => console.log('Autoplay prevented', e));
+      } else {
+        videoRef.current.pause();
+        videoRef.current.currentTime = 0;
+      }
+    }
+  }, [isHovered, t.videoUrl]);
+
+  const handleUseWorkflow = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user) {
+      saveBrowsingState({ 
+        intendedDestination: '/'
+      });
+      navigate('/login');
+      return;
+    }
+    startWorkflow();
+    addToast('success', 'Workflow started');
+  };
+
+  const handleViewDetails = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user) {
+      saveBrowsingState({ 
+        intendedDestination: '/templates/' + t.id
+      });
+      navigate('/login');
+      return;
+    }
+    navigate('/templates/' + t.id);
+  };
+
+  return (
+    <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onClick={(e) => {
+        if (!t.isWorkflow) {
+          onClick();
+        } else {
+          handleViewDetails(e);
+        }
+      }}
+      className="group relative break-inside-avoid rounded-2xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-900/10"
+    >
+      <div className="relative">
+        {t.videoUrl ? (
+          <video
+            ref={videoRef}
+            src={t.videoUrl}
+            poster={t.thumbUrl || t.imageUrl}
+            loop
+            muted
+            playsInline
+            className="w-full object-cover transform transition-transform duration-700 group-hover:scale-105"
+            style={{ aspectRatio: (t.width && t.height) ? t.width / t.height : 'auto' }}
+          />
+        ) : (
+          <LazyImage
+            src={t.thumbUrl || t.imageUrl}
+            alt={t.name}
+            width={t.width}
+            height={t.height}
+            className="transform transition-transform duration-700 group-hover:scale-105"
+          />
+        )}
+        
+        <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+        
+        {t.isWorkflow && (
+          <div className="absolute top-3 left-3 z-20">
+            <span className="flex items-center gap-1 text-[10px] font-medium text-purple-200 bg-purple-500/20 px-1.5 py-0.5 rounded backdrop-blur-md border border-purple-500/30 uppercase">
+              <Workflow className="w-3 h-3" />
+              Workflow
+            </span>
+          </div>
+        )}
+
+        {t.isPro && (
+          <div className="absolute top-3 right-3 z-20">
+            <div className="px-2 py-1 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg flex items-center gap-1.5">
+              <Crown className="w-3 h-3 text-white" />
+              <span className="text-[10px] font-bold text-white uppercase tracking-wider">Pro</span>
+            </div>
+          </div>
+        )}
+
+        {!t.isWorkflow && (
+          <>
+            <div className="absolute top-3 left-3 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 -translate-x-4 group-hover:translate-x-0 z-10">
+              <button 
+                onClick={(e) => onAction(e, 'collect', t)}
+                className="p-2 rounded-full glass-panel hover:bg-white text-slate-900 dark:text-white hover:text-pink-500 transition-colors"
+              >
+                <Heart className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={(e) => onAction(e, 'share', t)}
+                className="p-2 rounded-full glass-panel hover:bg-white text-slate-900 dark:text-white hover:text-blue-500 transition-colors"
+              >
+                <Share2 className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="absolute bottom-3 left-0 right-0 flex justify-center opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 transition-all duration-300 z-10">
+              <div onClick={onClick} className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 px-4 py-2.5 rounded-xl shadow-lg shadow-purple-900/30 hover:shadow-purple-900/50 hover:scale-105 transition-all duration-200 cursor-pointer pointer-events-auto">
+                <svg className="w-4 h-4 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+                <span className="text-sm font-medium text-white whitespace-nowrap">Replace with my product</span>
+              </div>
+            </div>
+          </>
+        )}
+
+        {t.isWorkflow && (
+          <div className="absolute bottom-0 left-0 right-0 p-4 pt-12 bg-gradient-to-t from-slate-900/90 via-slate-900/60 to-transparent flex flex-row items-end justify-between z-20 translate-y-2 group-hover:translate-y-0 transition-all duration-300">
+            <div className="flex flex-col">
+              <h3 className="text-white font-bold text-sm line-clamp-1">{t.name}</h3>
+              <p className="text-white/70 text-xs">{t.authorName}</p>
+              <span className="text-white/60 text-[10px] mt-0.5">{t.usesCount} uses</span>
+            </div>
+
+            <button 
+              onClick={handleUseWorkflow}
+              className="flex items-center justify-center w-10 h-10 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-full text-[11px] font-bold transition-all shadow-lg shadow-purple-500/25 pointer-events-auto hover:scale-105 shrink-0 opacity-0 group-hover:opacity-100"
+            >
+              Use
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const Home = () => {
   const navigate = useNavigate();
   const { browsing, saveBrowsingState, addToast, user, collections, addToCollection, createCollection } = useStore();
@@ -116,6 +321,12 @@ export const Home = () => {
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
       
       try {
+        if (!isSupabaseConfigured()) {
+          setTemplates(MOCK_WORKFLOW_TEMPLATES);
+          setLoading(false);
+          return;
+        }
+
         const { data, error } = await supabase
           .from('templates')
           .select('*')
@@ -146,7 +357,7 @@ export const Home = () => {
             width: t.width || 896,
             height: t.height || 1344
           }));
-          setTemplates(mapped);
+          setTemplates([...MOCK_WORKFLOW_TEMPLATES, ...mapped]);
         }
       } catch (err: any) {
         clearTimeout(timeoutId);
@@ -216,7 +427,7 @@ export const Home = () => {
 
   // Filter Logic
   const filteredTemplates = templates.filter(t => {
-    const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) || t.tags.some(tag => tag.toLowerCase().includes(search.toLowerCase()));
+    const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) || t.tags.some(tag => tag.toLowerCase().includes(search.toLowerCase())) || (t.authorName && t.authorName.toLowerCase().includes(search.toLowerCase()));
     const matchesCategory = activeCategory === 'All' || t.category.includes(activeCategory);
     const matchesScene = activeScene === 'All' || t.scene === activeScene;
     const matchesModel = activeModel === 'All' || t.model === activeModel;
@@ -476,56 +687,16 @@ export const Home = () => {
         ) : (
         <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 max-w-[1600px] mx-auto space-y-4">
           {filteredTemplates.map((t) => (
-            <div
+            <TemplateCardItem
               key={t.id}
+              t={t}
               onClick={() => handleTemplateClick(t)}
-              className="group relative break-inside-avoid rounded-2xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-900/10"
-            >
-              <div className="relative">
-              <LazyImage
-  src={t.thumbUrl || t.imageUrl}
-  alt={t.name}
-  width={t.width}
-  height={t.height}
-  className="transform transition-transform duration-700 group-hover:scale-105"
-/>
-                <div className="absolute inset-0 bg-gradient-to-t from-slate-900/90 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                
-                {/* Pro Badge */}
-                {t.isPro && (
-                  <div className="absolute top-3 right-3 z-20">
-                    <div className="px-2 py-1 rounded-md bg-gradient-to-r from-purple-600 to-pink-600 shadow-lg flex items-center gap-1.5">
-                      <Crown className="w-3 h-3 text-white" />
-                      <span className="text-[10px] font-bold text-white uppercase tracking-wider">Pro</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="absolute top-3 left-3 flex flex-col gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 -translate-x-4 group-hover:translate-x-0 z-10">
-                   <button 
-                    onClick={(e) => handleAction(e, 'collect', t)}
-                    className="p-2 rounded-full glass-panel hover:bg-white text-slate-900 dark:text-white hover:text-pink-500 transition-colors"
-                   >
-                     <Heart className="w-4 h-4" />
-                   </button>
-                   <button 
-                    onClick={(e) => handleAction(e, 'share', t)}
-                    className="p-2 rounded-full glass-panel hover:bg-white text-slate-900 dark:text-white hover:text-blue-500 transition-colors"
-                   >
-                     <Share2 className="w-4 h-4" />
-                   </button>
-                </div>
-
-                {/* Hover Overlay - Replace CTA */}
-                <div className="absolute bottom-3 left-0 right-0 flex justify-center opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 transition-all duration-300">
-                  <div className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 px-4 py-2.5 rounded-xl shadow-lg shadow-purple-900/30 hover:shadow-purple-900/50 hover:scale-105 transition-all duration-200 cursor-pointer">
-                    <svg className="w-4 h-4 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                    <span className="text-sm font-medium text-white whitespace-nowrap">Replace with my product</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+              onAction={handleAction}
+              navigate={navigate}
+              addToast={addToast}
+              user={user}
+              saveBrowsingState={saveBrowsingState}
+            />
           ))}
         </div>
         )}

@@ -107,7 +107,7 @@ export const FreeMode: React.FC<FreeModeProps> = ({ onGenerate, initialImage }) 
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
+    const files = Array.from(e.target.files || []) as File[];
     if (files.length === 0) return;
 
     const newAssets = files.map((file, i) => ({

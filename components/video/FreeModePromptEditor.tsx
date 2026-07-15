@@ -34,7 +34,7 @@ export const FreeModePromptEditor: React.FC<FreeModePromptEditorProps> = ({
   const serializeContent = () => {
     if (!editorRef.current) return '';
     let text = '';
-    const childNodes = Array.from(editorRef.current.childNodes);
+    const childNodes = Array.from(editorRef.current.childNodes) as ChildNode[];
     for (const node of childNodes) {
       if (node.nodeType === Node.TEXT_NODE) {
         text += node.textContent || '';

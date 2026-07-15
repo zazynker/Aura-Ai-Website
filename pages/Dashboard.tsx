@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { LayoutGrid, Clock, FolderHeart, Settings as SettingsIcon, Download, Trash2, Maximize2, X, Edit, Crown, Zap, Image as ImageIcon, TrendingUp, Plus, ArrowLeft, ExternalLink, Search, Layers, Loader2, Film, PlayCircle } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
+import { isSupabaseConfigured } from '../config/env';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Collection, Template } from '../types';
@@ -51,6 +52,7 @@ const formatGenerationDuration = (seconds?: number) => {
 
 export const Dashboard = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { 
     user, 
     generations, 
@@ -67,9 +69,62 @@ export const Dashboard = () => {
     refreshGenerations
   } = useStore();
   
-  const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'collections'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'history' | 'collections' | 'templates'>('overview');
+
+  useEffect(() => {
+    const tab = new URLSearchParams(location.search).get('tab');
+    if (tab && ['overview', 'history', 'collections', 'templates'].includes(tab)) {
+      setActiveTab(tab as 'overview' | 'history' | 'collections' | 'templates');
+    }
+  }, [location.search]);
   const [selectedImage, setSelectedImage] = useState<Generation | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
+
+  // My Templates Mock Data
+  const [myTemplates, setMyTemplates] = useState([
+    {
+      id: 't-1',
+      name: 'Cyberpunk Portrait',
+      coverUrl: 'https://images.unsplash.com/photo-1535295972055-1c762f4483e5?w=500&q=80',
+      coverType: 'image',
+      status: 'Published' as const,
+      updatedAt: '2026-07-10T10:00:00Z',
+      stepsCount: 4,
+      uses: 128,
+      creditsEarned: 24
+    },
+    {
+      id: 't-2',
+      name: 'Watercolor Landscape',
+      coverUrl: 'https://images.unsplash.com/photo-1541701494587-cb58502866ab?w=500&q=80',
+      coverType: 'image',
+      status: 'Draft' as const,
+      updatedAt: '2026-07-14T15:30:00Z',
+      stepsCount: 2
+    },
+    {
+      id: 't-3',
+      name: 'Dynamic Lip Sync',
+      coverUrl: 'https://cdn.pixabay.com/video/2023/10/22/186001-876939988_tiny.mp4',
+      coverType: 'video',
+      status: 'In review' as const,
+      updatedAt: '2026-07-15T09:15:00Z',
+      stepsCount: 3
+    },
+    {
+      id: 't-4',
+      name: 'Anime Style Avatar',
+      coverUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
+      coverType: 'image',
+      status: 'Changes requested' as const,
+      updatedAt: '2026-07-12T11:20:00Z',
+      stepsCount: 5,
+      feedback: 'Please use a clearer cover and explain what users should upload in Step 2.'
+    }
+  ]);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [currentFeedback, setCurrentFeedback] = useState('');
+  const [deleteDraftId, setDeleteDraftId] = useState<string | null>(null);
 
   // Filter and Search State
   const [sourceFilter, setSourceFilter] = useState<'all' | 'templates' | 'modify' | 'generated' | 'video'>('all');
@@ -101,6 +156,7 @@ export const Dashboard = () => {
   // 🔧 FIX: 重写 fetchTemplatesForCollection，移除对 cache 的依赖
   const fetchTemplatesForCollection = useCallback(async (templateIds: string[]) => {
     if (templateIds.length === 0) return;
+    if (!isSupabaseConfigured()) return;
     
     // 过滤掉已缓存的和正在获取的
     const uncachedIds = templateIds.filter(id => 
@@ -391,6 +447,7 @@ useEffect(() => {
              { id: 'overview', icon: LayoutGrid, label: 'Overview' },
              { id: 'history', icon: Clock, label: 'History' },
              { id: 'collections', icon: FolderHeart, label: 'Collections' },
+             { id: 'templates', icon: Layers, label: 'My Templates' },
            ].map(item => (
              <button
               key={item.id}
@@ -802,6 +859,119 @@ useEffect(() => {
             )}
           </>
         )}
+
+        {activeTab === 'templates' && (
+          <div className="space-y-6 animate-in fade-in">
+            <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between mb-8">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">My Templates</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Create, review and manage your workflow templates.</p>
+              </div>
+              <Button variant="gradient" onClick={() => navigate('/templates/create')}>
+                <Plus className="w-4 h-4 mr-2" /> Create new template
+              </Button>
+            </div>
+
+            {myTemplates.length === 0 ? (
+              <div className="text-center py-20 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20 bg-white dark:bg-slate-900/20">
+                <div className="w-16 h-16 rounded-full bg-purple-100 dark:bg-purple-500/10 flex items-center justify-center mx-auto mb-4">
+                  <Layers className="w-8 h-8 text-purple-600 dark:text-purple-400" />
+                </div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">No templates yet</h3>
+                <p className="text-slate-500 dark:text-slate-400 mb-6">Create your first workflow template and share how you made it.</p>
+                <Button variant="gradient" onClick={() => navigate('/templates/create')}>
+                  Create a template
+                </Button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                {myTemplates.map(template => (
+                  <div key={template.id} className="glass-panel border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col group hover:shadow-xl hover:-translate-y-1 transition-all bg-white dark:bg-slate-800" onClick={() => navigate(`/templates/${template.id}`)}>
+                    <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-900">
+                      {template.coverType === 'video' ? (
+                        <video 
+                          src={template.coverUrl} 
+                          className="w-full h-full object-cover"
+                          muted
+                          loop
+                          playsInline
+                          onMouseEnter={(e) => { e.currentTarget.play().catch(()=>{}); }}
+                          onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }}
+                        />
+                      ) : (
+                        <img src={template.coverUrl} className="w-full h-full object-cover" alt={template.name} />
+                      )}
+                      
+                      {/* Status Tag */}
+                      <div className="absolute top-3 left-3 z-10">
+                        {template.status === 'Draft' && <span className="bg-slate-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Draft</span>}
+                        {template.status === 'In review' && <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">In review</span>}
+                        {template.status === 'Published' && <span className="bg-emerald-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Published</span>}
+                        {template.status === 'Changes requested' && <span className="bg-red-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Changes requested</span>}
+                      </div>
+
+                      {template.status === 'In review' && (
+                        <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center backdrop-blur-[1px] z-20">
+                          <span className="text-white text-sm font-medium px-3 py-1.5 bg-black/50 rounded-lg">Waiting for review</span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div className="p-4 flex-1 flex flex-col">
+                      <h4 className="font-bold text-slate-900 dark:text-white truncate mb-1">{template.name}</h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{new Date(template.updatedAt).toLocaleDateString()} • {template.stepsCount} steps</p>
+                      
+                      {template.status === 'Published' && (
+                        <div className="flex items-center gap-4 text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-lg mb-4">
+                          <div className="flex items-center gap-1.5">
+                            <Layers className="w-3.5 h-3.5 text-purple-500" />
+                            Used {template.uses} times
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <Zap className="w-3.5 h-3.5 text-amber-500" />
+                            {template.creditsEarned} credits earned
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-auto flex gap-2">
+                        {template.status === 'Draft' && (
+                          <>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate('/templates/create'); }}>Edit</Button>
+                            <Button variant="secondary" size="sm" className="flex-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10" onClick={(e) => { e.stopPropagation(); setDeleteDraftId(template.id); }}>Delete</Button>
+                          </>
+                        )}
+                        {template.status === 'In review' && (
+                          <Button variant="secondary" size="sm" className="w-full" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                        )}
+                        {template.status === 'Published' && (
+                          <>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { 
+                              e.stopPropagation(); 
+                              if (navigator.clipboard) {
+                                navigator.clipboard.writeText(window.location.origin + `/#/templates/${template.id}`);
+                                addToast('success', 'Link copied');
+                              } else {
+                                addToast('success', 'Link copied (fallback)');
+                              }
+                            }}>Share</Button>
+                          </>
+                        )}
+                        {template.status === 'Changes requested' && (
+                          <>
+                            <Button variant="secondary" size="sm" className="flex-1 border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400" onClick={(e) => { e.stopPropagation(); setCurrentFeedback(template.feedback || ''); setFeedbackModalOpen(true); }}>View feedback</Button>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate('/templates/create'); }}>Edit</Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Create Collection Modal */}
@@ -858,6 +1028,41 @@ useEffect(() => {
                   </Button>
               </div>
           </div>
+      </Modal>
+
+      {/* Delete Draft Modal */}
+      <Modal isOpen={!!deleteDraftId} onClose={() => setDeleteDraftId(null)} title="Delete this draft?">
+        <div className="space-y-6">
+          <p className="text-slate-600 dark:text-slate-400 text-sm">
+            This action cannot be undone.
+          </p>
+          <div className="flex gap-3">
+            <Button variant="secondary" className="flex-1" onClick={() => setDeleteDraftId(null)}>Cancel</Button>
+            <Button variant="danger" className="flex-1" onClick={() => {
+              if (deleteDraftId) {
+                setMyTemplates(prev => prev.filter(t => t.id !== deleteDraftId));
+                addToast('success', 'Draft deleted');
+                setDeleteDraftId(null);
+              }
+            }}>Delete</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* View Feedback Modal */}
+      <Modal isOpen={feedbackModalOpen} onClose={() => { setFeedbackModalOpen(false); setCurrentFeedback(''); }} title="Template Feedback">
+        <div className="space-y-6">
+          <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 p-4 rounded-xl">
+            <h4 className="text-sm font-bold text-red-800 dark:text-red-400 mb-2">Admin Feedback:</h4>
+            <p className="text-sm text-red-700 dark:text-red-300">
+              {currentFeedback}
+            </p>
+          </div>
+          <div className="flex gap-3">
+            <Button variant="secondary" className="flex-1" onClick={() => { setFeedbackModalOpen(false); setCurrentFeedback(''); }}>Close</Button>
+            <Button variant="gradient" className="flex-1" onClick={() => { setFeedbackModalOpen(false); setCurrentFeedback(''); navigate('/templates/create'); }}>Edit template</Button>
+          </div>
+        </div>
       </Modal>
 
       {/* Lightbox Modal for Dashboard */}

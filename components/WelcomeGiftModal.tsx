@@ -12,11 +12,16 @@ interface WelcomeGiftModalProps {
   onClose: () => void;
 }
 
-const OFFERS = [
+const OFFERS: ReadonlyArray<{
+  productId: string;
+  credits: number;
+  price: string;
+  best?: boolean;
+}> = [
   { productId: DODO_PRODUCTS.GIFT_120, credits: 120, price: '$1.99' },
   { productId: DODO_PRODUCTS.GIFT_250, credits: 250, price: '$2.99' },
   { productId: DODO_PRODUCTS.GIFT_600, credits: 600, price: '$5.99', best: true },
-] as const;
+];
 
 export const WelcomeGiftModal: React.FC<WelcomeGiftModalProps> = ({ isOpen, onClose }) => {
   const { user, updateUser, addToast } = useStore();

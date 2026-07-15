@@ -8,8 +8,13 @@ export interface User {
   credits: number;
   maxCredits: number;
   avatar?: string;     
+  avatarUrl?: string;
   isAdmin?: boolean;
   isWhitelisted?: boolean;
+  welcomeGiftEligible?: boolean;
+  welcomeGiftRedeemed?: boolean;
+  welcomeGiftExpiresAt?: string | null;
+  welcomeGiftReason?: string;
 }
 
 export interface Template {
@@ -26,6 +31,96 @@ export interface Template {
   model?: string;
   mood?: string;
   holiday?: string;
+  videoUrl?: string;
+  isWorkflow?: boolean;
+  authorName?: string;
+  usesCount?: number;
+}
+
+// ============================================
+// Creator Workflow Template Types (UI mock only)
+// ============================================
+
+export type WorkflowFeature =
+  | 'Text to Image'
+  | 'Replace Product'
+  | 'Modify Image'
+  | 'Image to Video'
+  | 'Image to Image'
+  | 'Motion Control'
+  | 'Lip Sync'
+  | 'Upscaler';
+
+export type WorkflowMediaType = 'image' | 'video' | 'audio';
+
+export interface WorkflowStep {
+  id: string;
+  stepNumber: number;
+  name: string;
+  feature: WorkflowFeature;
+  targetRoute: '/modify' | '/video';
+  reusableMaterials: boolean;
+  prompt: string;
+  settings: Record<string, string | number | boolean>;
+  result: {
+    type: 'image' | 'video';
+    url: string;
+  };
+}
+
+export type CreatorTemplateStatus = 'Draft' | 'In review' | 'Published' | 'Changes requested';
+
+export interface CreatorTemplateSummary {
+  id: string;
+  name: string;
+  coverUrl: string;
+  coverType: 'image' | 'video';
+  status: CreatorTemplateStatus;
+  updatedAt: string;
+  stepsCount: number;
+  uses?: number;
+  creditsEarned?: number;
+  feedback?: string;
+}
+
+export interface AdminReviewStep {
+  id: string;
+  name: string;
+  resultUrl: string;
+  feature: WorkflowFeature;
+  materials?: string;
+  reusable: boolean;
+  prompt: string;
+  settings: string;
+}
+
+export interface PendingWorkflowTemplate {
+  id: string;
+  name: string;
+  coverUrl: string;
+  authorName: string;
+  authorAvatar: string;
+  submittedAt: string;
+  stepsCount: number;
+  description: string;
+  status: 'In review';
+  steps: AdminReviewStep[];
+}
+
+export interface ReviewedWorkflowTemplate {
+  id: string;
+  name: string;
+  authorName: string;
+  status: 'Published' | 'Changes requested';
+  reviewedAt: string;
+}
+
+export interface CreatorRewardCelebration {
+  templateId: string;
+  templateName: string;
+  leadingUserName: string;
+  additionalUsers: number;
+  creditsEarned: number;
 }
 
 export interface Generation {

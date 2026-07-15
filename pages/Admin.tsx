@@ -4,7 +4,7 @@ import {
   Shield, Users, TrendingUp, Zap, Search, Crown, 
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
   Settings, BarChart3, RefreshCw, Image, AlertTriangle, Video,
-  Eye, X
+  Eye, X, CheckCircle, MessageSquare, ChevronDown, ChevronUp, Layers
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
@@ -23,7 +23,7 @@ import {
 } from '../utils/adminApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
-type TabType = 'overview' | 'users' | 'templates' | 'unused' | 'video';
+type TabType = 'overview' | 'users' | 'templates' | 'unused' | 'video' | 'review';
 
 export const Admin = () => {
   const navigate = useNavigate();
@@ -35,6 +35,109 @@ export const Admin = () => {
 
   // Tab state
   const [activeTab, setActiveTab] = useState<TabType>('overview');
+
+  // Review state
+  const [pendingTemplates, setPendingTemplates] = useState([
+    {
+      id: 'pt-1',
+      name: 'Neon Cyberpunk City',
+      coverUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=500&q=80',
+      authorName: 'Alex Mercer',
+      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Alex',
+      submittedAt: '2026-07-15T08:30:00Z',
+      stepsCount: 3,
+      description: 'A vibrant neon city generator with glowing accents.',
+      status: 'In review',
+      steps: [
+        {
+          id: 's1',
+          name: 'Base Image Generation',
+          resultUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=500&q=80',
+          feature: 'Text to Image',
+          prompt: 'A futuristic city at night, neon lights, cyberpunk style, high detail',
+          settings: 'Aspect Ratio: 16:9, Quality: High',
+          reusable: true
+        },
+        {
+          id: 's2',
+          name: 'Upscale',
+          resultUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=1000&q=80',
+          feature: 'Upscaler',
+          prompt: '',
+          settings: 'Scale: 2x, Face Enhance: On',
+          reusable: true
+        }
+      ]
+    },
+    {
+      id: 'pt-2',
+      name: 'Vintage Film Effect',
+      coverUrl: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=500&q=80',
+      authorName: 'Sarah Chen',
+      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah',
+      submittedAt: '2026-07-14T15:20:00Z',
+      stepsCount: 2,
+      description: 'Add a nostalgic 35mm film look to any portrait.',
+      status: 'In review',
+      steps: [
+        {
+          id: 's1',
+          name: 'Apply Filter',
+          resultUrl: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=500&q=80',
+          feature: 'Image to Image',
+          materials: 'User uploaded portrait',
+          reusable: false,
+          prompt: 'Vintage 35mm film photography, film grain, nostalgic, soft focus, light leaks',
+          settings: 'Strength: 0.65'
+        }
+      ]
+    },
+    {
+      id: 'pt-3',
+      name: 'Anime Character Design',
+      coverUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
+      authorName: 'Kaito Tanaka',
+      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Kaito',
+      submittedAt: '2026-07-13T09:10:00Z',
+      stepsCount: 4,
+      description: 'Create consistent anime characters from simple descriptions.',
+      status: 'In review',
+      steps: [
+         {
+          id: 's1',
+          name: 'Character Sketch',
+          resultUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
+          feature: 'Text to Image',
+          prompt: 'Anime style character design sheet, full body, multiple angles, flat colors',
+          settings: 'Style: Anime',
+          reusable: true
+        }
+      ]
+    }
+  ]);
+  
+  const [reviewedTemplates, setReviewedTemplates] = useState([
+    {
+      id: 'rt-1',
+      name: 'Watercolor Landscape',
+      authorName: 'Emma Watson',
+      status: 'Published',
+      reviewedAt: '2026-07-15T07:15:00Z'
+    },
+    {
+      id: 'rt-2',
+      name: 'Dynamic Lip Sync',
+      authorName: 'David Kim',
+      status: 'Changes requested',
+      reviewedAt: '2026-07-14T11:30:00Z'
+    }
+  ]);
+  
+  const [reviewingTemplate, setReviewingTemplate] = useState<any>(null);
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
+  const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectFeedback, setRejectFeedback] = useState('');
 
   // Stats state
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -330,6 +433,7 @@ export const Admin = () => {
             { id: 'templates', label: 'Top Templates', icon: TrendingUp },
             { id: 'unused', label: 'Low Usage', icon: AlertTriangle },
             { id: 'video', label: 'Video Interest', icon: Video },
+            { id: 'review', label: 'Template Review', icon: Layers },
           ].map(tab => (
             <button
               key={tab.id}
@@ -857,6 +961,103 @@ export const Admin = () => {
           </div>
         )}
 
+        {/* Template Review Tab */}
+        {activeTab === 'review' && (
+          <div className="space-y-8 animate-in fade-in">
+            {/* Pending Templates */}
+            <div>
+              <div className="mb-6">
+                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Template Review</h2>
+                <p className="text-sm text-slate-500">Review workflow templates before they appear on Lazora.</p>
+                <div className="mt-2 inline-flex items-center gap-2 px-3 py-1 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded-full text-sm font-medium">
+                  {pendingTemplates.length} waiting for review
+                </div>
+              </div>
+
+              {pendingTemplates.length === 0 ? (
+                <div className="text-center py-12 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20">
+                  <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+                  <h3 className="text-lg font-bold text-slate-900 dark:text-white">All caught up!</h3>
+                  <p className="text-slate-500">There are no templates waiting for review.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {pendingTemplates.map(template => (
+                    <div key={template.id} className="glass-panel border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col bg-white dark:bg-slate-800">
+                      <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-900">
+                        <img src={template.coverUrl} className="w-full h-full object-cover" alt={template.name} />
+                        <div className="absolute top-3 left-3 z-10">
+                          <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">In review</span>
+                        </div>
+                      </div>
+                      <div className="p-4 flex-1 flex flex-col">
+                        <h4 className="font-bold text-slate-900 dark:text-white mb-2 line-clamp-1">{template.name}</h4>
+                        <div className="flex items-center gap-2 mb-3">
+                          <img src={template.authorAvatar} alt={template.authorName} className="w-6 h-6 rounded-full bg-slate-200" />
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{template.authorName}</span>
+                        </div>
+                        <div className="text-xs text-slate-500 mb-4 space-y-1">
+                          <p>Submitted: {new Date(template.submittedAt).toLocaleDateString()}</p>
+                          <p>{template.stepsCount} steps</p>
+                        </div>
+                        <div className="mt-auto">
+                          <Button 
+                            variant="gradient" 
+                            className="w-full"
+                            onClick={() => {
+                              setReviewingTemplate(template);
+                              setExpandedStep('s1');
+                            }}
+                          >
+                            <Eye className="w-4 h-4 mr-2" /> Review
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Recently Reviewed */}
+            <div>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Recently reviewed</h3>
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-slate-50 dark:bg-white/5">
+                    <tr>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Template</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Author</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Status</th>
+                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500">Reviewed At</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-white/5">
+                    {reviewedTemplates.map(t => (
+                      <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
+                        <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">{t.name}</td>
+                        <td className="px-4 py-3 text-sm text-slate-600 dark:text-slate-300">{t.authorName}</td>
+                        <td className="px-4 py-3">
+                          <span className={`px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded-full ${
+                            t.status === 'Published' 
+                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400' 
+                              : 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400'
+                          }`}>
+                            {t.status}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-sm text-slate-500">
+                          {new Date(t.reviewedAt).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
       {/* Edit User Modal */}
       <Modal 
         isOpen={!!editingUser} 
@@ -1136,6 +1337,174 @@ export const Admin = () => {
           </div>
         </div>
       )}
+
+      {/* Template Review Detail Modal */}
+      <Modal isOpen={!!reviewingTemplate} onClose={() => setReviewingTemplate(null)} title="Review Template" size="lg">
+        {reviewingTemplate && (
+          <div className="space-y-6">
+            <div className="flex flex-col md:flex-row gap-6">
+              <div className="w-full md:w-1/3">
+                <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full aspect-[3/4] object-cover rounded-xl shadow-sm border border-slate-200 dark:border-white/10" />
+              </div>
+              <div className="w-full md:w-2/3 space-y-4">
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900 dark:text-white">{reviewingTemplate.name}</h3>
+                  <div className="flex items-center gap-2 mt-2">
+                    <img src={reviewingTemplate.authorAvatar} alt="Author" className="w-5 h-5 rounded-full" />
+                    <span className="text-sm text-slate-600 dark:text-slate-300">{reviewingTemplate.authorName}</span>
+                  </div>
+                </div>
+                <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl text-sm text-slate-700 dark:text-slate-300">
+                  {reviewingTemplate.description}
+                </div>
+                <div className="text-xs text-slate-500">
+                  Submitted At: {new Date(reviewingTemplate.submittedAt).toLocaleString()}
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h4 className="font-semibold text-slate-900 dark:text-white border-b border-slate-200 dark:border-white/10 pb-2">Workflow Steps</h4>
+              {reviewingTemplate.steps.map((step: any, idx: number) => (
+                <div key={step.id} className="border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden bg-white dark:bg-slate-800">
+                  <button 
+                    className="w-full flex items-center justify-between p-4 text-left hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
+                    onClick={() => setExpandedStep(expandedStep === step.id ? null : step.id)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-600 dark:text-slate-300">
+                        {idx + 1}
+                      </div>
+                      <span className="font-medium text-slate-900 dark:text-white">{step.name}</span>
+                    </div>
+                    {expandedStep === step.id ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                  </button>
+                  
+                  {expandedStep === step.id && (
+                    <div className="p-4 border-t border-slate-200 dark:border-white/10 space-y-4 bg-slate-50 dark:bg-slate-900/50">
+                      <div className="flex flex-col md:flex-row gap-4">
+                        <div className="w-full md:w-1/3 space-y-2">
+                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Result from This Step</span>
+                          <img src={step.resultUrl} alt="Step Result" className="w-full rounded-lg shadow-sm border border-slate-200 dark:border-white/10" />
+                        </div>
+                        <div className="w-full md:w-2/3 space-y-4">
+                          <div>
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Feature I Used</span>
+                            <div className="text-sm font-medium text-slate-900 dark:text-white">{step.feature}</div>
+                          </div>
+                          
+                          {step.materials && (
+                            <div>
+                              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Materials I Uploaded</span>
+                              <div className="text-sm text-slate-700 dark:text-slate-300">{step.materials}</div>
+                              <div className={`mt-1 text-xs font-medium ${step.reusable ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                                {step.reusable ? 'Allowed to be reused' : 'Not allowed for reuse'}
+                              </div>
+                            </div>
+                          )}
+
+                          <div>
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Prompt & Settings I Set</span>
+                            {step.prompt && (
+                              <div className="bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-white/10 mb-2">
+                                <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">{step.prompt}</p>
+                              </div>
+                            )}
+                            <div className="text-sm text-slate-600 dark:text-slate-400 font-mono text-xs">
+                              {step.settings}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-4 border-t border-slate-200 dark:border-white/10 flex gap-3">
+              <Button 
+                variant="secondary" 
+                className="flex-1 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/10"
+                onClick={() => {
+                  setRejectModalOpen(true);
+                }}
+              >
+                Request changes
+              </Button>
+              <Button 
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+                onClick={() => {
+                  setApproveConfirmOpen(true);
+                }}
+              >
+                Approve
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* Approve Confirm Modal */}
+      <Modal isOpen={approveConfirmOpen} onClose={() => setApproveConfirmOpen(false)} title="Approve this template?">
+        <div className="space-y-6">
+          <p className="text-slate-600 dark:text-slate-400 text-sm">
+            It will become visible on the Templates homepage.
+          </p>
+          <div className="flex gap-3">
+            <Button variant="secondary" className="flex-1" onClick={() => setApproveConfirmOpen(false)}>Cancel</Button>
+            <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20" onClick={() => {
+              if (reviewingTemplate) {
+                setPendingTemplates(prev => prev.filter(t => t.id !== reviewingTemplate.id));
+                setReviewedTemplates(prev => [{
+                  id: reviewingTemplate.id,
+                  name: reviewingTemplate.name,
+                  authorName: reviewingTemplate.authorName,
+                  status: 'Published',
+                  reviewedAt: new Date().toISOString()
+                }, ...prev]);
+              }
+              setApproveConfirmOpen(false);
+              setReviewingTemplate(null);
+              addToast('success', 'Template approved');
+            }}>Approve</Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Reject Feedback Modal */}
+      <Modal isOpen={rejectModalOpen} onClose={() => { setRejectModalOpen(false); setRejectFeedback(''); }} title="Request Changes">
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Feedback for the author</label>
+            <textarea 
+              className="w-full h-32 px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-white/10 rounded-xl text-sm focus:ring-2 focus:ring-purple-500 outline-none resize-none text-slate-900 dark:text-white"
+              placeholder="e.g. Please use a clearer cover and explain what users should upload in Step 2."
+              value={rejectFeedback}
+              onChange={e => setRejectFeedback(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-3">
+            <Button variant="secondary" className="flex-1" onClick={() => { setRejectModalOpen(false); setRejectFeedback(''); }}>Cancel</Button>
+            <Button variant="danger" className="flex-1" disabled={!rejectFeedback.trim()} onClick={() => {
+              if (reviewingTemplate) {
+                setPendingTemplates(prev => prev.filter(t => t.id !== reviewingTemplate.id));
+                setReviewedTemplates(prev => [{
+                  id: reviewingTemplate.id,
+                  name: reviewingTemplate.name,
+                  authorName: reviewingTemplate.authorName,
+                  status: 'Changes requested',
+                  reviewedAt: new Date().toISOString()
+                }, ...prev]);
+              }
+              setRejectModalOpen(false);
+              setRejectFeedback('');
+              setReviewingTemplate(null);
+              addToast('success', 'Feedback sent');
+            }}>Send feedback</Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 };

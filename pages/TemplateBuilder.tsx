@@ -1,0 +1,679 @@
+import React, { useState, useRef } from 'react';
+import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight } from 'lucide-react';
+import { Button } from '../components/ui/Button';
+import { Modal } from '../components/ui/Modal';
+
+type FeatureType = 'Text to Image' | 'Replace Product' | 'Modify Image' | 'Image to Video';
+
+interface Material {
+  id: string;
+  type: 'Image' | 'Video' | 'Audio';
+  url: string | null;
+  allowDownload: boolean;
+}
+
+interface WorkflowStep {
+  id: string;
+  feature: FeatureType;
+  resultUrl: string | null;
+  materials: Material[];
+  prompt: string;
+  videoParams?: { duration: string; resolution: string };
+}
+
+export const TemplateBuilder = () => {
+  // Left column - Final Result
+  const [finalResult, setFinalResult] = useState<string | null>(null);
+  const [finalResultType, setFinalResultType] = useState<'image' | 'video' | null>(null);
+  
+  const [templateTitle, setTemplateTitle] = useState('');
+  const [templateDescription, setTemplateDescription] = useState('');
+  
+  // Publish Modal States
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [publishStep, setPublishStep] = useState<'upload' | 'review'>('upload');
+  const [publishCover, setPublishCover] = useState<string | null>(null);
+  const [publishCoverType, setPublishCoverType] = useState<'image' | 'video' | null>(null);
+  const [coverVideoDuration, setCoverVideoDuration] = useState<number>(0);
+  const [coverVideoStartTime, setCoverVideoStartTime] = useState<number>(0);
+
+  const [steps, setSteps] = useState<WorkflowStep[]>([
+    {
+      id: 'step-1',
+      feature: 'Text to Image',
+      resultUrl: null,
+      materials: [{ id: 'mat-1', type: 'Image', url: null, allowDownload: false }],
+      prompt: ''
+    }
+  ]);
+  const [activeStepId, setActiveStepId] = useState<string>('step-1');
+  const [showRewardsModal, setShowRewardsModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const publishFileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const activeStep = steps.find(s => s.id === activeStepId) || steps[0];
+
+  const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
+
+  const handleDragStart = (e: React.DragEvent, id: string) => {
+    setDraggedStepId(id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    if (!draggedStepId || draggedStepId === targetId) return;
+
+    const draggedIdx = steps.findIndex(s => s.id === draggedStepId);
+    const targetIdx = steps.findIndex(s => s.id === targetId);
+    
+    if (draggedIdx === -1 || targetIdx === -1) return;
+
+    const newSteps = [...steps];
+    const [draggedStep] = newSteps.splice(draggedIdx, 1);
+    newSteps.splice(targetIdx, 0, draggedStep);
+    
+    setSteps(newSteps);
+    setDraggedStepId(null);
+  };
+
+  const handleFinalResultUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setFinalResult(url);
+      setFinalResultType(file.type.startsWith('video/') ? 'video' : 'image');
+    }
+  };
+
+  const handlePublishCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const url = URL.createObjectURL(file);
+      setPublishCover(url);
+      setPublishCoverType(file.type.startsWith('video/') ? 'video' : 'image');
+      setCoverVideoDuration(0);
+      setCoverVideoStartTime(0);
+    }
+  };
+
+  const addStep = () => {
+    const newStep: WorkflowStep = {
+      id: `step-${Date.now()}`,
+      feature: 'Text to Image',
+      resultUrl: null,
+      materials: [{ id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: false }],
+      prompt: ''
+    };
+    setSteps([...steps, newStep]);
+    setActiveStepId(newStep.id);
+  };
+
+  const updateActiveStep = (updates: Partial<WorkflowStep>) => {
+    setSteps(steps.map(s => s.id === activeStepId ? { ...s, ...updates } : s));
+  };
+
+  const addMaterial = () => {
+    updateActiveStep({
+      materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: false }]
+    });
+  };
+
+  const updateMaterial = (id: string, updates: Partial<Material>) => {
+    updateActiveStep({
+      materials: activeStep.materials.map(m => m.id === id ? { ...m, ...updates } : m)
+    });
+  };
+
+  const removeMaterial = (id: string) => {
+    updateActiveStep({
+      materials: activeStep.materials.filter(m => m.id !== id)
+    });
+  };
+
+  const removeStep = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (steps.length === 1) return;
+    const newSteps = steps.filter(s => s.id !== id);
+    setSteps(newSteps);
+    if (activeStepId === id) {
+      setActiveStepId(newSteps[0].id);
+    }
+  };
+
+  return (
+    <div className="min-h-screen pt-16 bg-slate-50 dark:bg-slate-900 flex flex-col">
+      {/* Header */}
+      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-white/10 sticky top-16 z-40">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Build a workflow template</h1>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600"></span>
+              Unsaved
+            </span>
+            <Button variant="outline" size="sm">Save draft</Button>
+            <Button variant="gradient" size="sm" onClick={() => setShowPublishModal(true)}>Publish</Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Rewards Banner */}
+      <div className="bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-2 text-sm text-amber-900 dark:text-amber-200">
+          <div className="flex items-center gap-2">
+            <SparklesIcon className="w-4 h-4 text-amber-500" />
+            <span>Receive free credits when other people successfully use your published templates.</span>
+          </div>
+          <button 
+            onClick={() => setShowRewardsModal(true)}
+            className="font-medium underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-300 transition-colors"
+          >
+            How rewards work
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-8 grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+        {/* Left Column - Outline */}
+        <div className="md:col-span-4 lg:col-span-3 space-y-6 md:sticky top-44">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white mb-4">Workflow outline</h2>
+            
+            {/* Final Result Uploader */}
+            <div className="mb-4">
+              <input type="file" ref={fileInputRef} onChange={handleFinalResultUpload} accept="image/*,video/*" className="hidden" />
+              {finalResult ? (
+                <div 
+                  className="aspect-[3/4] w-full bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  {finalResultType === 'video' ? (
+                    <video 
+                      src={finalResult} 
+                      className="w-full h-full object-cover" 
+                      autoPlay 
+                      muted 
+                      loop 
+                    />
+                  ) : (
+                    <img src={finalResult} alt="Final Result" className="w-full h-full object-cover" />
+                  )}
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                    <span className="text-white text-sm font-medium">Change final result</span>
+                  </div>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="aspect-[3/4] w-full bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                >
+                  <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 group-hover:scale-110 transition-transform">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Final Result</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-500">Image or video</p>
+                  </div>
+                </button>
+              )}
+            </div>
+
+            {/* Template Title & Description */}
+            <div className="mb-6 space-y-2">
+              <input
+                type="text"
+                placeholder="Template title..."
+                value={templateTitle}
+                onChange={(e) => setTemplateTitle(e.target.value)}
+                className="w-full bg-transparent text-lg font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 border border-transparent hover:border-slate-200 focus:border-purple-500 dark:hover:border-slate-700 dark:focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 rounded-lg px-3 py-2 transition-colors"
+              />
+              <textarea
+                placeholder="Brief description..."
+                value={templateDescription}
+                onChange={(e) => setTemplateDescription(e.target.value)}
+                rows={2}
+                className="w-full bg-transparent text-sm text-slate-600 dark:text-slate-400 placeholder:text-slate-400 dark:placeholder:text-slate-600 border border-transparent hover:border-slate-200 focus:border-purple-500 dark:hover:border-slate-700 dark:focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 rounded-lg px-3 py-2 transition-colors resize-none"
+              />
+            </div>
+
+            {/* Steps List */}
+            <div className="space-y-2">
+              {steps.map((step, index) => (
+                <div 
+                  key={step.id}
+                  draggable
+                  onDragStart={(e) => handleDragStart(e, step.id)}
+                  onDragOver={handleDragOver}
+                  onDrop={(e) => handleDrop(e, step.id)}
+                  onClick={() => setActiveStepId(step.id)}
+                  className={`group flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all border ${activeStepId === step.id ? 'bg-white dark:bg-slate-800 border-purple-500/30 dark:border-purple-500/30 shadow-sm' : 'bg-transparent border-transparent hover:bg-slate-100 dark:hover:bg-slate-800/50'} ${draggedStepId === step.id ? 'opacity-50' : 'opacity-100'}`}
+                >
+                  <div className="cursor-grab active:cursor-grabbing text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                    <GripVertical className="w-4 h-4" />
+                  </div>
+                  <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-xs font-medium text-slate-600 dark:text-slate-300">
+                    {index + 1}
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <p className={`text-sm font-medium truncate ${activeStepId === step.id ? 'text-purple-600 dark:text-purple-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                      {step.feature}
+                    </p>
+                  </div>
+                  {steps.length > 1 && (
+                    <button 
+                      onClick={(e) => removeStep(step.id, e)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-red-500 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <Button 
+              variant="outline" 
+              className="w-full mt-4 flex items-center justify-center gap-2 border-dashed"
+              onClick={addStep}
+            >
+              <Plus className="w-4 h-4" />
+              Add next step
+            </Button>
+          </div>
+        </div>
+
+        {/* Center Column - Main Working Area */}
+        <div className="md:col-span-8 lg:col-span-9 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 p-6 sm:p-8 shadow-sm">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-8 pb-4 border-b border-slate-100 dark:border-white/5">
+            Step {steps.findIndex(s => s.id === activeStepId) + 1} Configuration
+          </h2>
+
+          <div className="space-y-12">
+            
+            {/* Section 1: Result */}
+            <section>
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 flex items-center justify-center text-sm">1</span>
+                Result from This Step
+              </h3>
+              <div 
+                onClick={() => setShowHistoryModal(true)}
+                className="w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+              >
+                {activeStep.resultUrl ? (
+                  <img src={activeStep.resultUrl} alt="Result" className="w-full h-full object-cover rounded-xl" />
+                ) : (
+                  <>
+                    <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
+                      <History className="w-6 h-6" />
+                    </div>
+                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Select from history</p>
+                  </>
+                )}
+              </div>
+            </section>
+
+            {/* Section 2: Feature */}
+            <section>
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-pink-100 dark:bg-pink-900/30 text-pink-600 dark:text-pink-400 flex items-center justify-center text-sm">2</span>
+                Feature I Used
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {(['Text to Image', 'Replace Product', 'Modify Image', 'Image to Video'] as FeatureType[]).map((feature) => (
+                  <button
+                    key={feature}
+                    onClick={() => updateActiveStep({ feature })}
+                    className={`p-4 rounded-xl border text-left transition-all ${
+                      activeStep.feature === feature 
+                        ? 'border-pink-500 bg-pink-50 dark:bg-pink-500/10 ring-1 ring-pink-500' 
+                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                    }`}
+                  >
+                    <div className="font-medium text-sm text-slate-900 dark:text-white">{feature}</div>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {/* Section 3: Materials */}
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                 <h3 className="text-base font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 flex items-center justify-center text-sm">3</span>
+                  Materials I Uploaded
+                </h3>
+                <Button variant="outline" size="sm" onClick={addMaterial}>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Add Material
+                </Button>
+              </div>
+             
+              <div className="space-y-4">
+                {activeStep.materials.map((material, idx) => (
+                  <div key={material.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30 flex flex-col sm:flex-row gap-6 relative group">
+                    {activeStep.materials.length > 1 && (
+                      <button 
+                        onClick={() => removeMaterial(material.id)}
+                        className="absolute top-3 right-3 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    
+                    {/* Material Upload Area */}
+                    <div className="w-full sm:w-48 aspect-square sm:aspect-auto sm:h-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-amber-500 transition-colors">
+                       <Plus className="w-6 h-6 text-slate-400" />
+                       <span className="text-xs text-slate-500">Upload {material.type}</span>
+                    </div>
+
+                    <div className="flex-1 space-y-4">
+                      {/* Type Selector */}
+                      <div>
+                        <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">Material Type</label>
+                        <div className="flex bg-slate-200/50 dark:bg-slate-900/50 rounded-lg p-1 w-fit">
+                          {(['Image', 'Video', 'Audio'] as const).map(type => (
+                            <button
+                              key={type}
+                              onClick={() => updateMaterial(material.id, { type })}
+                              className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${material.type === type ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                            >
+                              {type === 'Image' && <ImageIcon className="w-3 h-3" />}
+                              {type === 'Video' && <Video className="w-3 h-3" />}
+                              {type === 'Audio' && <Music className="w-3 h-3" />}
+                              {type}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Allow Download Toggle */}
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <div className="relative">
+                          <input 
+                            type="checkbox" 
+                            className="sr-only" 
+                            checked={material.allowDownload}
+                            onChange={(e) => updateMaterial(material.id, { allowDownload: e.target.checked })}
+                          />
+                          <div className={`block w-10 h-6 rounded-full transition-colors ${material.allowDownload ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-700'}`}></div>
+                          <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${material.allowDownload ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                        </div>
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Reusable</span>
+                          <span className="text-xs text-slate-500">Allow others to reuse this material</span>
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Section 4: Prompt & Settings */}
+            <section>
+              <h3 className="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
+                <span className="w-6 h-6 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 flex items-center justify-center text-sm">4</span>
+                Prompt & Settings I Set
+              </h3>
+              
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Prompt</label>
+                  <textarea 
+                    value={activeStep.prompt}
+                    onChange={(e) => updateActiveStep({ prompt: e.target.value })}
+                    placeholder="Enter the prompt used for this step..."
+                    className="w-full h-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                  />
+                </div>
+
+                {activeStep.feature === 'Image to Video' && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30">
+                    <div>
+                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Duration</label>
+                       <div className="flex gap-2">
+                         {['5s', '10s'].map(dur => (
+                           <button 
+                             key={dur}
+                             onClick={() => updateActiveStep({ videoParams: { ...activeStep.videoParams, duration: dur, resolution: activeStep.videoParams?.resolution || '1080p' } })}
+                             className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${activeStep.videoParams?.duration === dur ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'}`}
+                           >
+                             {dur}
+                           </button>
+                         ))}
+                       </div>
+                    </div>
+                    <div>
+                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Resolution</label>
+                       <div className="flex gap-2">
+                         {['720p', '1080p'].map(res => (
+                           <button 
+                             key={res}
+                             onClick={() => updateActiveStep({ videoParams: { ...activeStep.videoParams, resolution: res, duration: activeStep.videoParams?.duration || '5s' } })}
+                             className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${activeStep.videoParams?.resolution === res ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'}`}
+                           >
+                             {res}
+                           </button>
+                         ))}
+                       </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+
+      {/* Rewards Info Modal */}
+      <Modal isOpen={showRewardsModal} onClose={() => setShowRewardsModal(false)} title="Creator Rewards">
+        <div className="space-y-4">
+          <div className="flex items-center justify-center p-6 bg-amber-50 dark:bg-amber-900/20 rounded-xl mb-4">
+            <SparklesIcon className="w-12 h-12 text-amber-500" />
+          </div>
+          <h4 className="text-lg font-semibold text-slate-900 dark:text-white">How rewards work</h4>
+          <p className="text-slate-600 dark:text-slate-300">
+            Publishing your workflow templates allows other users to quickly achieve similar results. As a thank you for contributing to the community, you'll receive rewards!
+          </p>
+          <ul className="space-y-2 text-slate-600 dark:text-slate-300 list-disc pl-5">
+            <li>Earn 10 credits for every user who successfully generates a result using your template.</li>
+            <li>Credits are deposited to your account daily.</li>
+            <li>High-quality templates with detailed prompts perform best.</li>
+          </ul>
+          <Button className="w-full mt-4" onClick={() => setShowRewardsModal(false)}>Got it</Button>
+        </div>
+      </Modal>
+
+      {/* Mock History Select Modal */}
+      <Modal isOpen={showHistoryModal} onClose={() => setShowHistoryModal(false)} title="Select from History">
+        <div className="p-8 text-center text-slate-500 dark:text-slate-400">
+          <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
+          <p>Dashboard history selection mock.</p>
+          <p className="text-sm mt-2">In a real app, you would select a past generation here.</p>
+          <Button className="mt-6" onClick={() => {
+            updateActiveStep({ resultUrl: 'https://images.unsplash.com/photo-1707343843437-caacff5cfa74?q=80&w=2000&auto=format&fit=crop' });
+            setShowHistoryModal(false);
+          }}>
+            Mock Select Image
+          </Button>
+        </div>
+      </Modal>
+
+      {/* Publish Modal */}
+      <Modal 
+        isOpen={showPublishModal} 
+        onClose={() => {
+          setShowPublishModal(false);
+          setTimeout(() => setPublishStep('upload'), 300);
+        }} 
+        title={publishStep === 'upload' ? 'Publish Template' : ''}
+        className="max-w-md"
+      >
+        {publishStep === 'upload' ? (
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">Template cover</label>
+              <p className="text-xs text-slate-500 mb-4">Upload an image or video. This will be displayed on the template marketplace.</p>
+              
+              <input type="file" ref={publishFileInputRef} onChange={handlePublishCoverUpload} accept="image/*,video/*" className="hidden" />
+              {publishCover ? (
+                <div className="space-y-3">
+                  <div 
+                    className="aspect-[3/4] w-full max-w-[240px] mx-auto bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700"
+                    onClick={() => publishFileInputRef.current?.click()}
+                  >
+                    {publishCoverType === 'video' ? (
+                      <video 
+                        src={publishCover} 
+                        ref={videoRef}
+                        className="w-full h-full object-cover" 
+                        autoPlay 
+                        muted 
+                        loop 
+                        onLoadedMetadata={(e) => {
+                          setCoverVideoDuration(e.currentTarget.duration);
+                        }}
+                      />
+                    ) : (
+                      <img src={publishCover} alt="Cover" className="w-full h-full object-cover" />
+                    )}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <span className="text-white text-sm font-medium">Change cover</span>
+                    </div>
+                  </div>
+                  
+                  {publishCoverType === 'video' && coverVideoDuration > 0 && (
+                    <div className="space-y-1 mt-3">
+                      <div className="flex items-center justify-between text-xs text-slate-500">
+                        <span>Cover Selection (2s)</span>
+                        <span>{coverVideoStartTime.toFixed(1)}s - {Math.min(coverVideoStartTime + 2, coverVideoDuration).toFixed(1)}s</span>
+                      </div>
+                      <div 
+                        className="relative h-10 bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 cursor-pointer"
+                        onMouseDown={(e) => {
+                          if (coverVideoDuration <= 2) return;
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const updateTime = (clientX: number) => {
+                            const x = clientX - rect.left;
+                            const percentage = x / rect.width;
+                            const targetCenter = percentage * coverVideoDuration;
+                            // Ensure the 2s window doesn't go out of bounds
+                            const targetTime = Math.max(0, Math.min(targetCenter - 1, coverVideoDuration - 2));
+                            setCoverVideoStartTime(targetTime);
+                            if (videoRef.current) {
+                              videoRef.current.currentTime = targetTime;
+                            }
+                          };
+                          updateTime(e.clientX);
+                          
+                          const handleMouseMove = (moveEvent: MouseEvent) => {
+                            updateTime(moveEvent.clientX);
+                          };
+                          const handleMouseUp = () => {
+                            document.removeEventListener('mousemove', handleMouseMove);
+                            document.removeEventListener('mouseup', handleMouseUp);
+                          };
+                          document.addEventListener('mousemove', handleMouseMove);
+                          document.addEventListener('mouseup', handleMouseUp);
+                        }}
+                      >
+                         <div className="absolute inset-0 bg-slate-200 dark:bg-slate-700 opacity-50"></div>
+                         <div 
+                           className="absolute top-0 bottom-0 bg-gradient-to-r from-purple-500/30 to-pink-500/30 border-2 border-purple-500 rounded-md shadow-sm transition-colors"
+                           style={{
+                             left: `${(coverVideoStartTime / coverVideoDuration) * 100}%`,
+                             width: `${Math.min(2 / coverVideoDuration * 100, 100)}%`
+                           }}
+                         >
+                            <div className="absolute inset-y-0 left-0 w-1 bg-white/50 rounded-l-sm" />
+                            <div className="absolute inset-y-0 right-0 w-1 bg-white/50 rounded-r-sm" />
+                         </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <button 
+                  onClick={() => publishFileInputRef.current?.click()}
+                  className="aspect-[3/4] w-full max-w-[240px] mx-auto bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                >
+                  <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 group-hover:scale-110 transition-transform">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Add template cover</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-500">Image or video</p>
+                  </div>
+                </button>
+              )}
+            </div>
+            
+            <div className="pt-4 flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800">
+              <Button variant="outline" onClick={() => setShowPublishModal(false)}>Cancel</Button>
+              <Button variant="gradient" onClick={() => setPublishStep('review')} disabled={!publishCover}>
+                Confirm Publish
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="py-8 px-4 text-center space-y-4">
+            <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h3 className="text-xl font-bold text-slate-900 dark:text-white">Under Review</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400">
+              Your template has been submitted and is currently under review. 
+              We will notify you once it has been approved and published to the marketplace.
+            </p>
+            <div className="pt-6">
+              <Button 
+                variant="gradient" 
+                className="w-full"
+                onClick={() => {
+                  setShowPublishModal(false);
+                  setTimeout(() => setPublishStep('upload'), 300);
+                }}
+              >
+                Got it
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+};
+
+function SparklesIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+    </svg>
+  );
+}
+

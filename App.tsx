@@ -6,6 +6,9 @@ import { Navbar } from './components/Navbar';
 import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
+import { WorkflowDock } from './components/workflow/WorkflowDock';
+import { RewardCelebrationModal } from './components/RewardCelebrationModal';
+import { useStore } from './context/StoreContext';
 
 // ============ 首屏必须的组件（不懒加载）============
 import { Home } from './pages/Home';
@@ -26,6 +29,9 @@ const ResetPassword = lazy(() => import('./pages/ResetPassword').then(m => ({ de
 const AuthCallback = lazy(() => import('./pages/AuthCallback').then(m => ({ default: m.AuthCallback })));
 const ManageSubscription = lazy(() => import('./pages/ManageSubscription').then(m => ({ default: m.ManageSubscription })));
 
+const TemplateBuilder = lazy(() => import('./pages/TemplateBuilder').then(m => ({ default: m.TemplateBuilder })));
+const TemplateDetail = lazy(() => import('./pages/TemplateDetail').then(m => ({ default: m.TemplateDetail })));
+
 // ============ 加载占位符 ============
 const PageLoader = () => (
   <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
@@ -38,6 +44,15 @@ const PageLoader = () => (
 
 const AppContent = () => {
   const location = useLocation();
+  const { user } = useStore();
+  const [showReward, setShowReward] = React.useState(false);
+
+  React.useEffect(() => {
+    if (user && !sessionStorage.getItem('rewardCelebrationShown')) {
+      setShowReward(true);
+      sessionStorage.setItem('rewardCelebrationShown', 'true');
+    }
+  }, [user]);
   
   React.useEffect(() => {
     if (window.location.hash.includes('error=access_denied')) {
@@ -51,12 +66,16 @@ const AppContent = () => {
   const isAdminPage = location.pathname === '/admin';
   const isSubscriptionPage = location.pathname === '/subscription';
   const isVideoPage = location.pathname === '/video';
-  const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage || isVideoPage;
+  const isBuilderPage = location.pathname === '/templates/create';
+  const isTemplateDetailPage = /^\/templates\/[^/]+$/.test(location.pathname);
+  const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage || isVideoPage || isBuilderPage || isTemplateDetailPage;
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
       {!isAuthPage && <Navbar />}
       <ToastContainer />
+      <WorkflowDock />
+      <RewardCelebrationModal isOpen={showReward} onClose={() => setShowReward(false)} />
       <Analytics
         beforeSend={(event) => {
           const hash = window.location.hash;
@@ -68,6 +87,8 @@ const AppContent = () => {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/template/:id" element={<Navigate to="/" replace />} />
+          <Route path="/templates/create" element={<TemplateBuilder />} />
+          <Route path="/templates/:templateId" element={<TemplateDetail />} />
           <Route path="/modify" element={<Modify />} />
           <Route path="/video" element={<Video />} />
           <Route path="/login" element={<Login />} />
