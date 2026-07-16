@@ -1,3 +1,5 @@
+import type { JsonObject, WorkflowCapabilityKey } from './workflows/types';
+
 export type Plan = 'Free' | 'Pro';
 
 export interface User {
@@ -140,6 +142,15 @@ export interface Generation {
   videoDuration?: number;
   videoAspectRatio?: string;
   videoMode?: 'image_to_video' | 'motion_control' | 'lip_sync';
+  capability?: WorkflowCapabilityKey;
+  inputAssets?: GenerationInputAssetSnapshot[];
+  generationParameters?: JsonObject;
+}
+
+export interface GenerationInputAssetSnapshot {
+  key: string;
+  assetType: 'image' | 'video' | 'audio';
+  url: string;
 }
 
 export interface Collection {

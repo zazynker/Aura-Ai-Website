@@ -2,26 +2,17 @@ import React, { useState, useRef } from 'react';
 import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
-
-type FeatureType = 'Text to Image' | 'Replace Product' | 'Modify Image' | 'Image to Video';
-
-interface Material {
-  id: string;
-  type: 'Image' | 'Video' | 'Audio';
-  url: string | null;
-  allowDownload: boolean;
-}
-
-interface WorkflowStep {
-  id: string;
-  feature: FeatureType;
-  resultUrl: string | null;
-  materials: Material[];
-  prompt: string;
-  videoParams?: { duration: string; resolution: string };
-}
+import { useStore } from '../context/StoreContext';
+import {
+  convertAndValidateBuilderWorkflow,
+  type BuilderDraftStep as WorkflowStep,
+  type BuilderFeatureType as FeatureType,
+  type BuilderMaterial as Material,
+} from '../workflows/builderAdapter';
 
 export const TemplateBuilder = () => {
+  const { addToast } = useStore();
+
   // Left column - Final Result
   const [finalResult, setFinalResult] = useState<string | null>(null);
   const [finalResultType, setFinalResultType] = useState<'image' | 'video' | null>(null);
@@ -149,6 +140,25 @@ export const TemplateBuilder = () => {
     }
   };
 
+  const handleOpenPublish = () => {
+    if (!templateTitle.trim()) {
+      addToast('error', 'Add a template title before submitting for review.');
+      return;
+    }
+
+    const { validation } = convertAndValidateBuilderWorkflow(steps);
+    if (!validation.valid) {
+      const firstIssue = validation.issues[0];
+      addToast(
+        'error',
+        firstIssue?.message || 'Check every workflow step before submitting.',
+      );
+      return;
+    }
+
+    setShowPublishModal(true);
+  };
+
   return (
     <div className="min-h-screen pt-16 bg-slate-50 dark:bg-slate-900 flex flex-col">
       {/* Header */}
@@ -163,7 +173,7 @@ export const TemplateBuilder = () => {
               Unsaved
             </span>
             <Button variant="outline" size="sm">Save draft</Button>
-            <Button variant="gradient" size="sm" onClick={() => setShowPublishModal(true)}>Publish</Button>
+            <Button variant="gradient" size="sm" onClick={handleOpenPublish}>Publish</Button>
           </div>
         </div>
       </div>

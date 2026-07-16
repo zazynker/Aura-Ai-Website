@@ -5,7 +5,8 @@ import { useStore, estimateCredits, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
-import { Generation, Template } from '../types';
+import { Generation, Template, type GenerationInputAssetSnapshot } from '../types';
+import type { WorkflowCapabilityKey } from '../workflows/types';
 import { generateImages } from '../utils/generateService';
 import { uploadUserImage, validateFile } from '../utils/uploadService';
 import { logVideoInterest } from '../utils/api';
@@ -18,6 +19,15 @@ interface FakeQueueItem {
   images: string[];   // blob URLs from local upload
   order: number;
 }
+
+const MODIFY_CAPABILITY_BY_TOOL: Record<string, WorkflowCapabilityKey> = {
+  Replace: 'image.replace_product',
+  Modify: 'image.modify',
+  'Add Text': 'image.modify',
+  Ratio: 'image.change_ratio',
+  Enhance: 'image.enhance',
+  Upscale: 'image.upscale',
+};
 
 // 将同一批生成的图片分组
 const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => {
@@ -801,6 +811,23 @@ export const Modify = () => {
       console.log('Total credits:', totalCreditsUsed);
       console.log('Credits per image:', creditsPerImage);
 
+      const capability = MODIFY_CAPABILITY_BY_TOOL[toolName] || 'image.modify';
+      const inputAssets: GenerationInputAssetSnapshot[] = [];
+      if (baseImageUrl) {
+        inputAssets.push({
+          key: toolName === 'Replace' ? 'scene_image' : 'source_image',
+          assetType: 'image',
+          url: baseImageUrl,
+        });
+      }
+      if (productImageUrl) {
+        inputAssets.push({
+          key: toolName === 'Replace' ? 'product_image' : 'reference_image',
+          assetType: 'image',
+          url: productImageUrl,
+        });
+      }
+
       const newGenerations = newImages.map(imgUrl => ({
         userId: user?.id || '',
         templateId: currentImageSource.templateId,
@@ -808,6 +835,16 @@ export const Modify = () => {
         imageUrl: imgUrl,
         creditsUsed: creditsPerImage,
         prompt: displayPrompt,
+        capability,
+        inputAssets,
+        generationParameters: {
+          prompt: displayPrompt,
+          outputCount,
+          resolution: targetImageSize,
+          ratio: targetAspectRatio,
+          extraBlend,
+          productSizePercent: Number(productSizePercent || 100),
+        },
     }));
 
     await addGenerations(newGenerations, result.newCredits);
@@ -964,6 +1001,14 @@ export const Modify = () => {
       console.log('Credits per image:', creditsPerImage);
 
       // Create Generation records
+      const inputAssets: GenerationInputAssetSnapshot[] = referenceImageUrls.map(
+        (url, index) => ({
+          key: index === 0 ? 'reference_images' : `reference_images_${index + 1}`,
+          assetType: 'image',
+          url,
+        }),
+      );
+
       const newGenerations = newImages.map(imgUrl => ({
         userId: user?.id || '',
         templateId: sourceId,
@@ -971,6 +1016,14 @@ export const Modify = () => {
         imageUrl: imgUrl,
         creditsUsed: creditsPerImage,
         prompt: t2iPrompt || 'Text to Image',
+        capability: 'image.text_to_image' as const,
+        inputAssets,
+        generationParameters: {
+          prompt: t2iPrompt,
+          ratio: t2iRatio,
+          resolution: t2iSize,
+          outputCount: t2iOutputCount,
+        },
     }));
 
     await addGenerations(newGenerations, result.newCredits);

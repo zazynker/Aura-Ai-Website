@@ -139,6 +139,9 @@ interface DbGeneration {
   video_duration?: number;
   video_aspect_ratio?: string;
   video_mode?: string;
+  capability?: string;
+  input_assets?: import('../types').GenerationInputAssetSnapshot[] | null;
+  generation_parameters?: import('../workflows/types').JsonObject | null;
 }
 
 // 数据库格式 -> 前端格式
@@ -156,6 +159,9 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   videoDuration: db.video_duration || undefined,
   videoAspectRatio: db.video_aspect_ratio || undefined,
   videoMode: (db.video_mode as 'image_to_video' | 'motion_control' | 'lip_sync') || undefined,
+  capability: db.capability as import('../workflows/types').WorkflowCapabilityKey | undefined,
+  inputAssets: db.input_assets || undefined,
+  generationParameters: db.generation_parameters || undefined,
 });
 
 /**
@@ -327,6 +333,9 @@ export async function saveGenerationToDb(
       video_duration: generation.videoDuration || null,
       video_aspect_ratio: generation.videoAspectRatio || null,
       video_mode: generation.videoMode || null,
+      capability: generation.capability || null,
+      input_assets: generation.inputAssets || [],
+      generation_parameters: generation.generationParameters || {},
     };
 
     const { data, error } = await supabase
@@ -374,6 +383,9 @@ export async function saveGenerationsToDb(
       video_duration: gen.videoDuration || null,
       video_aspect_ratio: gen.videoAspectRatio || null,
       video_mode: gen.videoMode || null,
+      capability: gen.capability || null,
+      input_assets: gen.inputAssets || [],
+      generation_parameters: gen.generationParameters || {},
     }));
 
     const { data, error } = await supabase

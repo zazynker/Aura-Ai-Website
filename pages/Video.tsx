@@ -27,7 +27,8 @@ import { FreeMode } from '../components/video/FreeMode';
 import { useStore } from '../context/StoreContext';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
-import { Generation, VideoMode } from '../types';
+import { Generation, VideoMode, type GenerationInputAssetSnapshot } from '../types';
+import type { WorkflowCapabilityKey } from '../workflows/types';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 
 const parseDurationSeconds = (duration: string): number | undefined => {
@@ -81,6 +82,55 @@ const generationToVideoResult = (generation: Generation): VideoResult | null => 
     mode,
     createdAt: generation.createdAt,
   };
+};
+
+const getCapabilityFromVideoResult = (
+  result: VideoResult,
+): WorkflowCapabilityKey => {
+  const mode = result.mode || getVideoMode(result.type);
+  if (mode === 'motion_control') return 'video.motion_control';
+  if (mode === 'lip_sync') {
+    return result.sourceVideo
+      ? 'video.lip_sync_video'
+      : 'video.lip_sync_image';
+  }
+  return 'video.image_to_video';
+};
+
+const getInputAssetsFromVideoResult = (
+  result: VideoResult,
+): GenerationInputAssetSnapshot[] => {
+  const capability = getCapabilityFromVideoResult(result);
+  const assets: GenerationInputAssetSnapshot[] = [];
+
+  if (result.sourceImage) {
+    assets.push({
+      key:
+        capability === 'video.image_to_video'
+          ? 'start_image'
+          : capability === 'video.motion_control'
+            ? 'character_image'
+            : 'source_image',
+      assetType: 'image',
+      url: result.sourceImage,
+    });
+  }
+  if (result.sourceVideo) {
+    assets.push({
+      key: capability === 'video.motion_control' ? 'driver_video' : 'source_video',
+      assetType: 'video',
+      url: result.sourceVideo,
+    });
+  }
+  if (result.audioUrl) {
+    assets.push({
+      key: 'audio',
+      assetType: 'audio',
+      url: result.audioUrl,
+    });
+  }
+
+  return assets;
 };
 
 const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
@@ -159,6 +209,14 @@ export const Video: React.FC = () => {
       videoMode: result.mode || getVideoMode(result.type),
       prompt: result.prompt,
       creditsUsed: 36,
+      capability: getCapabilityFromVideoResult(result),
+      inputAssets: getInputAssetsFromVideoResult(result),
+      generationParameters: {
+        prompt: result.prompt || '',
+        resolution: result.resolution,
+        duration: parseDurationSeconds(result.duration) || 0,
+        aspectRatio: result.aspectRatio,
+      },
     });
   };
 

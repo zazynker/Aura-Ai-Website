@@ -325,7 +325,7 @@ export const WORKFLOW_CAPABILITIES: Record<
         key: 'prompt',
         label: 'Prompt',
         type: 'string',
-        required: true,
+        required: false,
         editable: true,
         defaultValue: '',
         maxLength: 2000,
