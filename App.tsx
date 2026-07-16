@@ -42,6 +42,25 @@ const PageLoader = () => (
   </div>
 );
 
+const RequireAuth = ({ children }: React.PropsWithChildren) => {
+  const { user, authLoading } = useStore();
+  const location = useLocation();
+
+  if (authLoading) return <PageLoader />;
+
+  if (!user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
+
+  return <>{children}</>;
+};
+
 const AppContent = () => {
   const location = useLocation();
   const { user } = useStore();
@@ -87,7 +106,14 @@ const AppContent = () => {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/template/:id" element={<Navigate to="/" replace />} />
-          <Route path="/templates/create" element={<TemplateBuilder />} />
+          <Route
+            path="/templates/create"
+            element={
+              <RequireAuth>
+                <TemplateBuilder />
+              </RequireAuth>
+            }
+          />
           <Route path="/templates/:templateId" element={<TemplateDetail />} />
           <Route path="/modify" element={<Modify />} />
           <Route path="/video" element={<Video />} />

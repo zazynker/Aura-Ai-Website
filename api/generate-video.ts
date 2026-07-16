@@ -297,7 +297,7 @@ async function checkCredits(supabase: any, userId: string, requiredCredits: numb
 function buildFalPayload(mode: VideoMode, body: RequestBody): Record<string, unknown> {
   switch (mode) {
     case 'image_to_video': {
-      const prompt = validatePrompt(body.prompt, true);
+      const prompt = validatePrompt(body.prompt, false);
       const startImageUrl = validateFalFileUrl(body.startImageUrl, 'startImageUrl');
       const endImageUrl = body.endImageUrl
         ? validateFalFileUrl(body.endImageUrl, 'endImageUrl')
@@ -306,13 +306,16 @@ function buildFalPayload(mode: VideoMode, body: RequestBody): Record<string, unk
       // Keep the Kling v3 standard field names you already used.
       // Do not convert duration to 5/10; Kling v3 accepts the 3-15s UI range in your current setup.
       const payload: Record<string, unknown> = {
-        prompt,
         start_image_url: startImageUrl,
         duration: String(normalizeDuration(body.duration)),
         generate_audio: body.generateAudio !== false,
         negative_prompt: 'blur, distort, and low quality',
         cfg_scale: 0.5,
       };
+
+      if (prompt) {
+        payload.prompt = prompt;
+      }
 
       if (endImageUrl) {
         payload.end_image_url = endImageUrl;

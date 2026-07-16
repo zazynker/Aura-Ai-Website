@@ -3,15 +3,27 @@ import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, 
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { useStore } from '../context/StoreContext';
+import type { Generation } from '../types';
+import type { WorkflowCapabilityKey } from '../workflows/types';
 import {
+  BUILDER_FEATURE_TO_CAPABILITY,
   convertAndValidateBuilderWorkflow,
   type BuilderDraftStep as WorkflowStep,
   type BuilderFeatureType as FeatureType,
   type BuilderMaterial as Material,
 } from '../workflows/builderAdapter';
 
+type WorkflowGeneration = Generation;
+
+const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
+  Object.entries(BUILDER_FEATURE_TO_CAPABILITY).map(([feature, capability]) => [
+    capability,
+    feature,
+  ]),
+) as Partial<Record<WorkflowCapabilityKey, FeatureType>>;
+
 export const TemplateBuilder = () => {
-  const { addToast } = useStore();
+  const { addToast, generations } = useStore();
 
   // Left column - Final Result
   const [finalResult, setFinalResult] = useState<string | null>(null);
@@ -22,7 +34,6 @@ export const TemplateBuilder = () => {
   
   // Publish Modal States
   const [showPublishModal, setShowPublishModal] = useState(false);
-  const [publishStep, setPublishStep] = useState<'upload' | 'review'>('upload');
   const [publishCover, setPublishCover] = useState<string | null>(null);
   const [publishCoverType, setPublishCoverType] = useState<'image' | 'video' | null>(null);
   const [coverVideoDuration, setCoverVideoDuration] = useState<number>(0);
@@ -33,7 +44,7 @@ export const TemplateBuilder = () => {
       id: 'step-1',
       feature: 'Text to Image',
       resultUrl: null,
-      materials: [{ id: 'mat-1', type: 'Image', url: null, allowDownload: false }],
+      materials: [{ id: 'mat-1', type: 'Image', url: null, allowDownload: true }],
       prompt: ''
     }
   ]);
@@ -101,7 +112,7 @@ export const TemplateBuilder = () => {
       id: `step-${Date.now()}`,
       feature: 'Text to Image',
       resultUrl: null,
-      materials: [{ id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: false }],
+      materials: [{ id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }],
       prompt: ''
     };
     setSteps([...steps, newStep]);
@@ -114,7 +125,7 @@ export const TemplateBuilder = () => {
 
   const addMaterial = () => {
     updateActiveStep({
-      materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: false }]
+      materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }]
     });
   };
 
@@ -140,9 +151,86 @@ export const TemplateBuilder = () => {
     }
   };
 
+  const handleMaterialUpload = (materialId: string, file?: File) => {
+    if (!file) return;
+    updateMaterial(materialId, { url: URL.createObjectURL(file) });
+  };
+
+  const inferFeatureFromGeneration = (
+    generation: WorkflowGeneration,
+  ): FeatureType | null => {
+    if (generation.capability) {
+      return CAPABILITY_TO_BUILDER_FEATURE[generation.capability] ?? null;
+    }
+    if (generation.videoMode === 'image_to_video') return 'Image to Video';
+    if (generation.templateId === 'text-to-image') return 'Text to Image';
+    return null;
+  };
+
+  const handleHistorySelect = (generation: WorkflowGeneration) => {
+    const resultUrl =
+      generation.mediaType === 'video'
+        ? generation.videoUrl || generation.imageUrl
+        : generation.imageUrl;
+    const feature = inferFeatureFromGeneration(generation);
+    const restoredMaterials = generation.inputAssets?.map((asset, index) => ({
+      id: `history-${generation.id}-${index}`,
+      type:
+        asset.assetType === 'image'
+          ? ('Image' as const)
+          : asset.assetType === 'video'
+            ? ('Video' as const)
+            : ('Audio' as const),
+      url: asset.url,
+      allowDownload: true,
+    }));
+
+    updateActiveStep({
+      resultUrl,
+      feature: feature ?? activeStep.feature,
+      prompt: generation.prompt ?? '',
+      materials:
+        restoredMaterials && restoredMaterials.length > 0
+          ? restoredMaterials
+          : activeStep.materials,
+      videoParams:
+        feature === 'Image to Video'
+          ? {
+              duration: `${generation.videoDuration || 5}s`,
+              resolution: activeStep.videoParams?.resolution || '720p',
+              generateAudio: activeStep.videoParams?.generateAudio ?? true,
+            }
+          : activeStep.videoParams,
+    });
+
+    if (!feature || !restoredMaterials?.length) {
+      addToast(
+        'info',
+        'This older result has no complete feature or material snapshot. Please confirm the fields below.',
+      );
+    }
+    setShowHistoryModal(false);
+  };
+
   const handleOpenPublish = () => {
     if (!templateTitle.trim()) {
       addToast('error', 'Add a template title before submitting for review.');
+      return;
+    }
+
+    const incompleteStepIndex = steps.findIndex((step) => !step.resultUrl);
+    if (incompleteStepIndex >= 0) {
+      setActiveStepId(steps[incompleteStepIndex].id);
+      addToast('error', `Choose the result for Step ${incompleteStepIndex + 1}.`);
+      return;
+    }
+
+    const missingMaterialIndex = steps.findIndex(
+      (step) => !step.materials.some((material) => material.url),
+    );
+    if (missingMaterialIndex >= 0) {
+      setActiveStepId(steps[missingMaterialIndex].id);
+      addToast('error', `Add the material used in Step ${missingMaterialIndex + 1}.`);
       return;
     }
 
@@ -315,7 +403,12 @@ export const TemplateBuilder = () => {
             <section>
               <h3 className="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
                 <span className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 flex items-center justify-center text-sm">1</span>
-                Result from This Step
+                <span>
+                  Result from This Step
+                  <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
+                    (Choose from Dashboard — the fields below fill automatically)
+                  </span>
+                </span>
               </h3>
               <div 
                 onClick={() => setShowHistoryModal(true)}
@@ -383,10 +476,42 @@ export const TemplateBuilder = () => {
                     )}
                     
                     {/* Material Upload Area */}
-                    <div className="w-full sm:w-48 aspect-square sm:aspect-auto sm:h-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-amber-500 transition-colors">
-                       <Plus className="w-6 h-6 text-slate-400" />
-                       <span className="text-xs text-slate-500">Upload {material.type}</span>
-                    </div>
+                    <label className="w-full sm:w-48 aspect-square sm:aspect-auto sm:h-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-amber-500 transition-colors overflow-hidden relative">
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept={
+                          material.type === 'Image'
+                            ? 'image/*'
+                            : material.type === 'Video'
+                              ? 'video/*'
+                              : 'audio/*'
+                        }
+                        onChange={(event) =>
+                          handleMaterialUpload(material.id, event.target.files?.[0])
+                        }
+                      />
+                      {material.url && material.type === 'Image' ? (
+                        <img src={material.url} alt="Material" className="w-full h-full object-cover" />
+                      ) : material.url && material.type === 'Video' ? (
+                        <video src={material.url} className="w-full h-full object-cover" muted />
+                      ) : material.url && material.type === 'Audio' ? (
+                        <div className="px-3 text-center">
+                          <Music className="w-7 h-7 text-amber-500 mx-auto mb-2" />
+                          <span className="text-xs text-slate-500">Audio selected</span>
+                        </div>
+                      ) : (
+                        <>
+                          <Plus className="w-6 h-6 text-slate-400" />
+                          <span className="text-xs text-slate-500">Upload {material.type}</span>
+                        </>
+                      )}
+                      {material.url && (
+                        <span className="absolute inset-x-0 bottom-0 bg-black/60 py-1 text-center text-[10px] text-white">
+                          Click to replace
+                        </span>
+                      )}
+                    </label>
 
                     <div className="flex-1 space-y-4">
                       {/* Type Selector */}
@@ -506,33 +631,69 @@ export const TemplateBuilder = () => {
         </div>
       </Modal>
 
-      {/* Mock History Select Modal */}
+      {/* Dashboard History Select Modal */}
       <Modal isOpen={showHistoryModal} onClose={() => setShowHistoryModal(false)} title="Select from History">
-        <div className="p-8 text-center text-slate-500 dark:text-slate-400">
-          <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
-          <p>Dashboard history selection mock.</p>
-          <p className="text-sm mt-2">In a real app, you would select a past generation here.</p>
-          <Button className="mt-6" onClick={() => {
-            updateActiveStep({ resultUrl: 'https://images.unsplash.com/photo-1707343843437-caacff5cfa74?q=80&w=2000&auto=format&fit=crop' });
-            setShowHistoryModal(false);
-          }}>
-            Mock Select Image
-          </Button>
-        </div>
+        {generations.length === 0 ? (
+          <div className="p-8 text-center text-slate-500 dark:text-slate-400">
+            <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>No Dashboard results yet.</p>
+            <p className="text-sm mt-2">Generate an image or video first, then return here.</p>
+          </div>
+        ) : (
+          <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto p-1 sm:grid-cols-3">
+            {generations.map((generation) => {
+              const workflowGeneration = generation as WorkflowGeneration;
+              const isVideo =
+                workflowGeneration.mediaType === 'video' &&
+                Boolean(workflowGeneration.videoUrl);
+              return (
+                <button
+                  key={workflowGeneration.id}
+                  type="button"
+                  onClick={() => handleHistorySelect(workflowGeneration)}
+                  className="overflow-hidden rounded-xl border border-slate-200 bg-white text-left transition hover:border-purple-500 dark:border-slate-700 dark:bg-slate-800"
+                >
+                  <div className="aspect-square bg-slate-100 dark:bg-slate-900">
+                    {isVideo ? (
+                      <video
+                        src={workflowGeneration.videoUrl}
+                        poster={workflowGeneration.imageUrl}
+                        className="h-full w-full object-cover"
+                        muted
+                      />
+                    ) : (
+                      <img
+                        src={workflowGeneration.imageUrl}
+                        alt="Dashboard result"
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                  </div>
+                  <div className="p-2">
+                    <p className="truncate text-xs font-medium text-slate-800 dark:text-slate-100">
+                      {inferFeatureFromGeneration(workflowGeneration) ||
+                        workflowGeneration.templateName ||
+                        'Generated result'}
+                    </p>
+                    <p className="mt-1 truncate text-[10px] text-slate-500">
+                      {workflowGeneration.prompt || 'No prompt'}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </Modal>
 
       {/* Publish Modal */}
       <Modal 
         isOpen={showPublishModal} 
-        onClose={() => {
-          setShowPublishModal(false);
-          setTimeout(() => setPublishStep('upload'), 300);
-        }} 
-        title={publishStep === 'upload' ? 'Publish Template' : ''}
+        onClose={() => setShowPublishModal(false)}
+        title="Publish Template"
         className="max-w-md"
       >
-        {publishStep === 'upload' ? (
-          <div className="space-y-6">
+        <div className="space-y-6">
             <div>
               <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">Template cover</label>
               <p className="text-xs text-slate-500 mb-4">Upload an image or video. This will be displayed on the template marketplace.</p>
@@ -632,37 +793,21 @@ export const TemplateBuilder = () => {
             
             <div className="pt-4 flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800">
               <Button variant="outline" onClick={() => setShowPublishModal(false)}>Cancel</Button>
-              <Button variant="gradient" onClick={() => setPublishStep('review')} disabled={!publishCover}>
+              <Button
+                variant="gradient"
+                onClick={() => {
+                  addToast(
+                    'info',
+                    'Template validation passed. Backend submission is not connected yet.',
+                  );
+                  setShowPublishModal(false);
+                }}
+                disabled={!publishCover}
+              >
                 Confirm Publish
               </Button>
             </div>
-          </div>
-        ) : (
-          <div className="py-8 px-4 text-center space-y-4">
-            <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 text-green-500 rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-              </svg>
-            </div>
-            <h3 className="text-xl font-bold text-slate-900 dark:text-white">Under Review</h3>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Your template has been submitted and is currently under review. 
-              We will notify you once it has been approved and published to the marketplace.
-            </p>
-            <div className="pt-6">
-              <Button 
-                variant="gradient" 
-                className="w-full"
-                onClick={() => {
-                  setShowPublishModal(false);
-                  setTimeout(() => setPublishStep('upload'), 300);
-                }}
-              >
-                Got it
-              </Button>
-            </div>
-          </div>
-        )}
+        </div>
       </Modal>
     </div>
   );
@@ -686,4 +831,3 @@ function SparklesIcon(props: React.SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
-

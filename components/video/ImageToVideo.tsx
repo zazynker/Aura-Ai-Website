@@ -171,11 +171,6 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       alert('Please upload a first frame image.');
       return;
     }
-    if (!prompt.trim()) {
-      alert('Please enter a prompt.');
-      return;
-    }
-
     const requiredCredits = estimateVideoCredits({
       mode: 'image_to_video', duration, generationCount, generateAudio,
     });
