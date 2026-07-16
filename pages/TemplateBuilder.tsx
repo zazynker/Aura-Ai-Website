@@ -12,8 +12,20 @@ import {
   type BuilderFeatureType as FeatureType,
   type BuilderMaterial as Material,
 } from '../workflows/builderAdapter';
+import {
+  saveTemplateDraft,
+  type PersistedMaterialMap,
+  type TemplateDraftIdentity,
+} from '../utils/templateDraftApi';
+import type { UploadedTemplateCover } from '../utils/templateStorage';
 
 type WorkflowGeneration = Generation;
+
+type PublishGateIssue = {
+  code: 'result' | 'material' | 'title' | 'workflow';
+  message: string;
+  stepId?: string;
+};
 
 const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
   Object.entries(BUILDER_FEATURE_TO_CAPABILITY).map(([feature, capability]) => [
@@ -22,8 +34,61 @@ const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
   ]),
 ) as Partial<Record<WorkflowCapabilityKey, FeatureType>>;
 
+const isPersistedGenerationId = (id: string): boolean =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+
+const getPublishGateIssue = (
+  templateTitle: string,
+  steps: WorkflowStep[],
+): PublishGateIssue | null => {
+  const incompleteStepIndex = steps.findIndex((step) => !step.resultUrl);
+  if (incompleteStepIndex >= 0) {
+    return {
+      code: 'result',
+      stepId: steps[incompleteStepIndex].id,
+      message: `Choose the Dashboard result for Step ${incompleteStepIndex + 1}.`,
+    };
+  }
+
+  const missingMaterialIndex = steps.findIndex(
+    (step) => !step.materials.some((material) => material.url),
+  );
+  if (missingMaterialIndex >= 0) {
+    return {
+      code: 'material',
+      stepId: steps[missingMaterialIndex].id,
+      message: `Add the material used in Step ${missingMaterialIndex + 1}.`,
+    };
+  }
+
+  if (!templateTitle.trim()) {
+    return {
+      code: 'title',
+      message: 'Add a template title before submitting for review.',
+    };
+  }
+
+  const { validation } = convertAndValidateBuilderWorkflow(steps);
+  if (!validation.valid) {
+    return {
+      code: 'workflow',
+      message:
+        validation.issues[0]?.message ||
+        'Check every workflow step before submitting.',
+    };
+  }
+
+  return null;
+};
+
 export const TemplateBuilder = () => {
-  const { addToast, generations } = useStore();
+  const {
+    addToast,
+    generations,
+    loadingGenerations,
+    refreshGenerations,
+    user,
+  } = useStore();
 
   // Left column - Final Result
   const [finalResult, setFinalResult] = useState<string | null>(null);
@@ -35,6 +100,7 @@ export const TemplateBuilder = () => {
   // Publish Modal States
   const [showPublishModal, setShowPublishModal] = useState(false);
   const [publishCover, setPublishCover] = useState<string | null>(null);
+  const [publishCoverFile, setPublishCoverFile] = useState<File | null>(null);
   const [publishCoverType, setPublishCoverType] = useState<'image' | 'video' | null>(null);
   const [coverVideoDuration, setCoverVideoDuration] = useState<number>(0);
   const [coverVideoStartTime, setCoverVideoStartTime] = useState<number>(0);
@@ -51,12 +117,24 @@ export const TemplateBuilder = () => {
   const [activeStepId, setActiveStepId] = useState<string>('step-1');
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [builderError, setBuilderError] = useState<string | null>(null);
+  const [draftIdentity, setDraftIdentity] = useState<TemplateDraftIdentity | null>(null);
+  const [persistedCover, setPersistedCover] = useState<UploadedTemplateCover | null>(null);
+  const [materialFiles, setMaterialFiles] = useState<Record<string, File>>({});
+  const [persistedMaterials, setPersistedMaterials] = useState<PersistedMaterialMap>({});
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishFileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const activeStep = steps.find(s => s.id === activeStepId) || steps[0];
+  const selectableGenerations = generations.filter(
+    (generation) =>
+      isPersistedGenerationId(generation.id) &&
+      Boolean(generation.imageUrl || generation.videoUrl),
+  );
+  const publishGateIssue = getPublishGateIssue(templateTitle, steps);
 
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
 
@@ -84,6 +162,7 @@ export const TemplateBuilder = () => {
     newSteps.splice(targetIdx, 0, draggedStep);
     
     setSteps(newSteps);
+    setSaveState('idle');
     setDraggedStepId(null);
   };
 
@@ -93,6 +172,7 @@ export const TemplateBuilder = () => {
       const url = URL.createObjectURL(file);
       setFinalResult(url);
       setFinalResultType(file.type.startsWith('video/') ? 'video' : 'image');
+      setSaveState('idle');
     }
   };
 
@@ -101,6 +181,9 @@ export const TemplateBuilder = () => {
     if (file) {
       const url = URL.createObjectURL(file);
       setPublishCover(url);
+      setPublishCoverFile(file);
+      setPersistedCover(null);
+      setSaveState('idle');
       setPublishCoverType(file.type.startsWith('video/') ? 'video' : 'image');
       setCoverVideoDuration(0);
       setCoverVideoStartTime(0);
@@ -117,9 +200,12 @@ export const TemplateBuilder = () => {
     };
     setSteps([...steps, newStep]);
     setActiveStepId(newStep.id);
+    setSaveState('idle');
   };
 
   const updateActiveStep = (updates: Partial<WorkflowStep>) => {
+    setBuilderError(null);
+    setSaveState('idle');
     setSteps(steps.map(s => s.id === activeStepId ? { ...s, ...updates } : s));
   };
 
@@ -136,6 +222,16 @@ export const TemplateBuilder = () => {
   };
 
   const removeMaterial = (id: string) => {
+    setMaterialFiles((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setPersistedMaterials((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
     updateActiveStep({
       materials: activeStep.materials.filter(m => m.id !== id)
     });
@@ -146,6 +242,7 @@ export const TemplateBuilder = () => {
     if (steps.length === 1) return;
     const newSteps = steps.filter(s => s.id !== id);
     setSteps(newSteps);
+    setSaveState('idle');
     if (activeStepId === id) {
       setActiveStepId(newSteps[0].id);
     }
@@ -153,6 +250,13 @@ export const TemplateBuilder = () => {
 
   const handleMaterialUpload = (materialId: string, file?: File) => {
     if (!file) return;
+    setMaterialFiles((current) => ({ ...current, [materialId]: file }));
+    setPersistedMaterials((current) => {
+      const next = { ...current };
+      delete next[materialId];
+      return next;
+    });
+    setSaveState('idle');
     updateMaterial(materialId, { url: URL.createObjectURL(file) });
   };
 
@@ -168,10 +272,11 @@ export const TemplateBuilder = () => {
   };
 
   const handleHistorySelect = (generation: WorkflowGeneration) => {
-    const resultUrl =
-      generation.mediaType === 'video'
-        ? generation.videoUrl || generation.imageUrl
-        : generation.imageUrl;
+    const resultUrl = generation.videoUrl || generation.imageUrl;
+    if (!resultUrl) {
+      addToast('error', 'This Dashboard result has no usable image or video.');
+      return;
+    }
     const feature = inferFeatureFromGeneration(generation);
     const restoredMaterials = generation.inputAssets?.map((asset, index) => ({
       id: `history-${generation.id}-${index}`,
@@ -183,10 +288,12 @@ export const TemplateBuilder = () => {
             : ('Audio' as const),
       url: asset.url,
       allowDownload: true,
+      sourceGenerationId: generation.id,
     }));
 
     updateActiveStep({
       resultUrl,
+      resultGenerationId: generation.id,
       feature: feature ?? activeStep.feature,
       prompt: generation.prompt ?? '',
       materials:
@@ -203,6 +310,15 @@ export const TemplateBuilder = () => {
           : activeStep.videoParams,
     });
 
+    if (activeStep.id === steps[steps.length - 1]?.id) {
+      setFinalResult(resultUrl);
+      setFinalResultType(
+        generation.videoUrl && resultUrl === generation.videoUrl
+          ? 'video'
+          : 'image',
+      );
+    }
+
     if (!feature || !restoredMaterials?.length) {
       addToast(
         'info',
@@ -212,39 +328,98 @@ export const TemplateBuilder = () => {
     setShowHistoryModal(false);
   };
 
+  const openDashboardResults = () => {
+    setShowHistoryModal(true);
+    void refreshGenerations();
+  };
+
+  const showPublishGateIssue = (issue: PublishGateIssue) => {
+    if (issue.stepId) setActiveStepId(issue.stepId);
+    setBuilderError(issue.message);
+    setShowPublishModal(false);
+    addToast('error', issue.message);
+  };
+
   const handleOpenPublish = () => {
-    if (!templateTitle.trim()) {
-      addToast('error', 'Add a template title before submitting for review.');
-      return;
-    }
+    const issue = getPublishGateIssue(templateTitle, steps);
+    if (issue) return showPublishGateIssue(issue);
 
-    const incompleteStepIndex = steps.findIndex((step) => !step.resultUrl);
-    if (incompleteStepIndex >= 0) {
-      setActiveStepId(steps[incompleteStepIndex].id);
-      addToast('error', `Choose the result for Step ${incompleteStepIndex + 1}.`);
-      return;
-    }
-
-    const missingMaterialIndex = steps.findIndex(
-      (step) => !step.materials.some((material) => material.url),
-    );
-    if (missingMaterialIndex >= 0) {
-      setActiveStepId(steps[missingMaterialIndex].id);
-      addToast('error', `Add the material used in Step ${missingMaterialIndex + 1}.`);
-      return;
-    }
-
-    const { validation } = convertAndValidateBuilderWorkflow(steps);
-    if (!validation.valid) {
-      const firstIssue = validation.issues[0];
-      addToast(
-        'error',
-        firstIssue?.message || 'Check every workflow step before submitting.',
-      );
-      return;
-    }
-
+    setBuilderError(null);
     setShowPublishModal(true);
+  };
+
+  const handleSaveDraft = async (): Promise<boolean> => {
+    if (!user) {
+      setBuilderError('Please log in before saving a template draft.');
+      addToast('error', 'Please log in before saving a template draft.');
+      return false;
+    }
+
+    const { workflow, validation } = convertAndValidateBuilderWorkflow(steps);
+    if (!validation.valid) {
+      const message =
+        validation.issues[0]?.message ||
+        'Check the workflow settings before saving this draft.';
+      setBuilderError(message);
+      addToast('error', message);
+      setSaveState('failed');
+      return false;
+    }
+
+    setSaveState('saving');
+    setBuilderError(null);
+    try {
+      const saved = await saveTemplateDraft({
+        identity: draftIdentity,
+        userId: user.id,
+        title: templateTitle,
+        description: templateDescription,
+        workflow,
+        steps,
+        finalResultUrl: finalResult,
+        coverFile: publishCoverFile,
+        persistedCover,
+        materialFiles,
+        persistedMaterials,
+      });
+      setDraftIdentity(saved.identity);
+      setPersistedCover(saved.cover);
+      setPersistedMaterials(saved.materials);
+      setSteps((currentSteps) =>
+        currentSteps.map((step) => ({
+          ...step,
+          materials: step.materials.map((material) => ({
+            ...material,
+            templateAssetId:
+              saved.materialAssetIds[material.id] || material.templateAssetId,
+          })),
+        })),
+      );
+      setPublishCoverFile(null);
+      setMaterialFiles({});
+      setSaveState('saved');
+      addToast('success', 'Draft saved to your account.');
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Draft save failed.';
+      setBuilderError(message);
+      setSaveState('failed');
+      addToast('error', message);
+      return false;
+    }
+  };
+
+  const handleConfirmPublish = async () => {
+    const issue = getPublishGateIssue(templateTitle, steps);
+    if (issue) return showPublishGateIssue(issue);
+
+    const saved = await handleSaveDraft();
+    if (!saved) return;
+    addToast(
+      'info',
+      'Draft and cover are saved. Review submission will be connected in M5-4.',
+    );
+    setShowPublishModal(false);
   };
 
   return (
@@ -257,11 +432,37 @@ export const TemplateBuilder = () => {
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-slate-300 dark:bg-slate-600"></span>
-              Unsaved
+              <span className={`w-2 h-2 rounded-full ${
+                saveState === 'saved'
+                  ? 'bg-green-500'
+                  : saveState === 'failed'
+                    ? 'bg-red-500'
+                    : 'bg-slate-300 dark:bg-slate-600'
+              }`}></span>
+              {saveState === 'saving'
+                ? 'Saving...'
+                : saveState === 'saved'
+                  ? 'Saved'
+                  : saveState === 'failed'
+                    ? 'Save failed'
+                    : 'Unsaved'}
             </span>
-            <Button variant="outline" size="sm">Save draft</Button>
-            <Button variant="gradient" size="sm" onClick={handleOpenPublish}>Publish</Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleSaveDraft()}
+              disabled={saveState === 'saving'}
+            >
+              {saveState === 'saving' ? 'Saving...' : 'Save draft'}
+            </Button>
+            <Button
+              variant="gradient"
+              size="sm"
+              onClick={handleOpenPublish}
+              disabled={saveState === 'saving'}
+            >
+              Publish
+            </Button>
           </div>
         </div>
       </div>
@@ -281,6 +482,21 @@ export const TemplateBuilder = () => {
           </button>
         </div>
       </div>
+
+      {builderError && (
+        <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+            <span>{builderError}</span>
+            <button
+              type="button"
+              onClick={() => setBuilderError(null)}
+              className="font-medium underline underline-offset-2"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-8 grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
         {/* Left Column - Outline */}
@@ -333,13 +549,20 @@ export const TemplateBuilder = () => {
                 type="text"
                 placeholder="Template title..."
                 value={templateTitle}
-                onChange={(e) => setTemplateTitle(e.target.value)}
+                onChange={(e) => {
+                  setTemplateTitle(e.target.value);
+                  setBuilderError(null);
+                  setSaveState('idle');
+                }}
                 className="w-full bg-transparent text-lg font-medium text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 border border-transparent hover:border-slate-200 focus:border-purple-500 dark:hover:border-slate-700 dark:focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 rounded-lg px-3 py-2 transition-colors"
               />
               <textarea
                 placeholder="Brief description..."
                 value={templateDescription}
-                onChange={(e) => setTemplateDescription(e.target.value)}
+                onChange={(e) => {
+                  setTemplateDescription(e.target.value);
+                  setSaveState('idle');
+                }}
                 rows={2}
                 className="w-full bg-transparent text-sm text-slate-600 dark:text-slate-400 placeholder:text-slate-400 dark:placeholder:text-slate-600 border border-transparent hover:border-slate-200 focus:border-purple-500 dark:hover:border-slate-700 dark:focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-500 rounded-lg px-3 py-2 transition-colors resize-none"
               />
@@ -411,8 +634,12 @@ export const TemplateBuilder = () => {
                 </span>
               </h3>
               <div 
-                onClick={() => setShowHistoryModal(true)}
-                className="w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                onClick={openDashboardResults}
+                className={`w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group ${
+                  builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id
+                    ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
+                    : 'border-slate-200 dark:border-slate-700'
+                }`}
               >
                 {activeStep.resultUrl ? (
                   <img src={activeStep.resultUrl} alt="Result" className="w-full h-full object-cover rounded-xl" />
@@ -421,10 +648,18 @@ export const TemplateBuilder = () => {
                     <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
                       <History className="w-6 h-6" />
                     </div>
-                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Select from history</p>
+                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Choose from Dashboard</p>
+                    <p className="px-4 text-center text-xs text-slate-400">
+                      This does not upload a local file. Select one of your saved generation results.
+                    </p>
                   </>
                 )}
               </div>
+              {builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id && (
+                <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
+                  Required: choose this step's saved result from Dashboard.
+                </p>
+              )}
             </section>
 
             {/* Section 2: Feature */}
@@ -465,7 +700,14 @@ export const TemplateBuilder = () => {
              
               <div className="space-y-4">
                 {activeStep.materials.map((material, idx) => (
-                  <div key={material.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30 flex flex-col sm:flex-row gap-6 relative group">
+                  <div
+                    key={material.id}
+                    className={`p-4 rounded-xl border bg-slate-50 dark:bg-slate-800/30 flex flex-col sm:flex-row gap-6 relative group ${
+                      builderError && publishGateIssue?.code === 'material' && publishGateIssue.stepId === activeStep.id && !material.url
+                        ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
+                        : 'border-slate-200 dark:border-slate-700'
+                    }`}
+                  >
                     {activeStep.materials.length > 1 && (
                       <button 
                         onClick={() => removeMaterial(material.id)}
@@ -554,6 +796,11 @@ export const TemplateBuilder = () => {
                   </div>
                 ))}
               </div>
+              {builderError && publishGateIssue?.code === 'material' && publishGateIssue.stepId === activeStep.id && (
+                <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
+                  Required: upload or restore the material used for this step.
+                </p>
+              )}
             </section>
 
             {/* Section 4: Prompt & Settings */}
@@ -632,20 +879,35 @@ export const TemplateBuilder = () => {
       </Modal>
 
       {/* Dashboard History Select Modal */}
-      <Modal isOpen={showHistoryModal} onClose={() => setShowHistoryModal(false)} title="Select from History">
-        {generations.length === 0 ? (
+      <Modal isOpen={showHistoryModal} onClose={() => setShowHistoryModal(false)} title="Choose a Dashboard result">
+        {loadingGenerations ? (
+          <div className="p-8 text-center text-slate-500 dark:text-slate-400">
+            <div className="mx-auto mb-4 h-8 w-8 animate-spin rounded-full border-2 border-purple-500 border-t-transparent" />
+            <p>Refreshing Dashboard results...</p>
+          </div>
+        ) : selectableGenerations.length === 0 ? (
           <div className="p-8 text-center text-slate-500 dark:text-slate-400">
             <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p>No Dashboard results yet.</p>
             <p className="text-sm mt-2">Generate an image or video first, then return here.</p>
+            <div className="mt-5 flex justify-center gap-3">
+              <Button variant="outline" size="sm" onClick={() => void refreshGenerations()}>
+                Refresh
+              </Button>
+              <Button
+                variant="gradient"
+                size="sm"
+                onClick={() => window.open(`${window.location.origin}/#/dashboard`, '_blank')}
+              >
+                Open Dashboard
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto p-1 sm:grid-cols-3">
-            {generations.map((generation) => {
+            {selectableGenerations.map((generation) => {
               const workflowGeneration = generation as WorkflowGeneration;
-              const isVideo =
-                workflowGeneration.mediaType === 'video' &&
-                Boolean(workflowGeneration.videoUrl);
+              const isVideo = Boolean(workflowGeneration.videoUrl);
               return (
                 <button
                   key={workflowGeneration.id}
@@ -688,7 +950,7 @@ export const TemplateBuilder = () => {
 
       {/* Publish Modal */}
       <Modal 
-        isOpen={showPublishModal} 
+        isOpen={showPublishModal && !publishGateIssue}
         onClose={() => setShowPublishModal(false)}
         title="Publish Template"
         className="max-w-md"
@@ -795,16 +1057,10 @@ export const TemplateBuilder = () => {
               <Button variant="outline" onClick={() => setShowPublishModal(false)}>Cancel</Button>
               <Button
                 variant="gradient"
-                onClick={() => {
-                  addToast(
-                    'info',
-                    'Template validation passed. Backend submission is not connected yet.',
-                  );
-                  setShowPublishModal(false);
-                }}
-                disabled={!publishCover}
+                onClick={() => void handleConfirmPublish()}
+                disabled={!publishCover || saveState === 'saving'}
               >
-                Confirm Publish
+                {saveState === 'saving' ? 'Saving...' : 'Save cover & validate'}
               </Button>
             </div>
         </div>

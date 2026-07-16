@@ -22,6 +22,7 @@ export interface BuilderMaterial {
   url: string | null;
   allowDownload: boolean;
   templateAssetId?: string;
+  sourceGenerationId?: string;
 }
 
 export interface BuilderInputSelection {
@@ -40,6 +41,7 @@ export interface BuilderDraftStep {
   resultUrl: string | null;
   materials: BuilderMaterial[];
   prompt: string;
+  resultGenerationId?: string;
   videoParams?: {
     duration: string;
     resolution: string;
@@ -131,10 +133,39 @@ function buildInputBindings(
 
   const capability = getWorkflowCapability(capabilityKey);
   let previousStepUsed = false;
+  const usedMaterialIds = new Set<string>();
 
   return capability.inputs
-    .filter((slot) => slot.required)
+    .filter(
+      (slot) =>
+        slot.required ||
+        step.materials.some(
+          (material) =>
+            Boolean(material.url) &&
+            material.type.toLowerCase() === slot.assetType,
+        ),
+    )
     .map((slot): WorkflowInputBinding => {
+      const material = step.materials.find(
+        (candidate) =>
+          !usedMaterialIds.has(candidate.id) &&
+          Boolean(candidate.url) &&
+          candidate.type.toLowerCase() === slot.assetType,
+      );
+      if (
+        material?.templateAssetId &&
+        slot.allowedSources.includes('template_asset')
+      ) {
+        usedMaterialIds.add(material.id);
+        return {
+          slot: slot.key,
+          assetType: slot.assetType,
+          source: 'template_asset',
+          required: slot.required,
+          templateAssetId: material.templateAssetId,
+        };
+      }
+
       const previous = previousStepUsed
         ? undefined
         : findPreviousCompatibleStep(allSteps, stepIndex, slot.assetType);
@@ -153,6 +184,8 @@ function buildInputBindings(
           outputKey: previousCapability.output.key,
         };
       }
+
+      if (material) usedMaterialIds.add(material.id);
 
       return {
         slot: slot.key,
