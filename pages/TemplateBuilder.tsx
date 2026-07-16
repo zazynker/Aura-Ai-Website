@@ -1065,6 +1065,7 @@ export const TemplateBuilder = () => {
             </div>
         </div>
       </Modal>
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-16-M1</p>
     </div>
   );
 };
