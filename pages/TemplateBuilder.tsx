@@ -160,6 +160,7 @@ export const TemplateBuilder = () => {
   const [activeStepId, setActiveStepId] = useState<string>('step-1');
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const [builderError, setBuilderError] = useState<string | null>(null);
   const [draftIdentity, setDraftIdentity] = useState<TemplateDraftIdentity | null>(null);
   const [persistedCover, setPersistedCover] = useState<UploadedTemplateCover | null>(null);
@@ -852,8 +853,9 @@ export const TemplateBuilder = () => {
                     )}
                     
                     {/* Material Upload Area */}
-                    <label className="w-full sm:w-48 aspect-square sm:aspect-auto sm:h-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-amber-500 transition-colors overflow-hidden relative">
+                    <div className="w-full sm:w-48 aspect-square sm:aspect-auto sm:h-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg flex flex-col items-center justify-center gap-2 hover:border-amber-500 transition-colors overflow-hidden relative">
                       <input
+                        id={`material-upload-${material.id}`}
                         type="file"
                         className="hidden"
                         accept={
@@ -867,27 +869,50 @@ export const TemplateBuilder = () => {
                           handleMaterialUpload(material.id, event.target.files?.[0])
                         }
                       />
-                      {material.url && material.type === 'Image' ? (
-                        <img src={material.url} alt="Material" className="w-full h-full object-cover" />
-                      ) : material.url && material.type === 'Video' ? (
-                        <video src={material.url} className="w-full h-full object-cover" muted />
-                      ) : material.url && material.type === 'Audio' ? (
-                        <div className="px-3 text-center">
-                          <Music className="w-7 h-7 text-amber-500 mx-auto mb-2" />
-                          <span className="text-xs text-slate-500">Audio selected</span>
-                        </div>
+                      {material.url ? (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewMaterial(material)}
+                          className="group/preview relative flex h-full w-full items-center justify-center overflow-hidden"
+                          aria-label={`Preview ${material.type.toLowerCase()} material`}
+                        >
+                          {material.type === 'Image' ? (
+                            <img src={material.url} alt="Material" className="h-full w-full object-cover" />
+                          ) : material.type === 'Video' ? (
+                            <video
+                              src={material.url}
+                              className="pointer-events-none h-full w-full object-cover"
+                              muted
+                              preload="metadata"
+                            />
+                          ) : (
+                            <div className="px-3 text-center">
+                              <Music className="mx-auto mb-2 h-7 w-7 text-amber-500" />
+                              <span className="text-xs text-slate-500">Audio selected</span>
+                            </div>
+                          )}
+                          <span className="absolute inset-x-0 bottom-0 bg-black/65 py-1.5 text-center text-[10px] font-medium text-white transition-colors group-hover/preview:bg-black/80">
+                            Click to preview
+                          </span>
+                        </button>
                       ) : (
-                        <>
+                        <label
+                          htmlFor={`material-upload-${material.id}`}
+                          className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2"
+                        >
                           <Plus className="w-6 h-6 text-slate-400" />
                           <span className="text-xs text-slate-500">Upload {material.type}</span>
-                        </>
+                        </label>
                       )}
                       {material.url && (
-                        <span className="absolute inset-x-0 bottom-0 bg-black/60 py-1 text-center text-[10px] text-white">
-                          Click to replace
-                        </span>
+                        <label
+                          htmlFor={`material-upload-${material.id}`}
+                          className="absolute right-2 top-2 z-10 cursor-pointer rounded-md bg-white/95 px-2 py-1 text-[10px] font-semibold text-slate-700 shadow-sm transition hover:bg-amber-50 dark:bg-slate-900/95 dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          Replace
+                        </label>
                       )}
-                    </label>
+                    </div>
 
                     <div className="flex-1 space-y-4">
                       {/* Type Selector */}
@@ -992,6 +1017,37 @@ export const TemplateBuilder = () => {
           </div>
         </div>
       </div>
+
+      {/* Material Preview Modal */}
+      <Modal
+        isOpen={Boolean(previewMaterial?.url)}
+        onClose={() => setPreviewMaterial(null)}
+        title={`${previewMaterial?.type || 'Material'} Preview`}
+        className="max-w-4xl"
+      >
+        <div className="flex min-h-48 items-center justify-center rounded-xl bg-slate-100 p-3 dark:bg-slate-950 sm:p-5">
+          {previewMaterial?.url && previewMaterial.type === 'Image' ? (
+            <img
+              src={previewMaterial.url}
+              alt="Material preview"
+              className="max-h-[72vh] max-w-full rounded-lg object-contain"
+            />
+          ) : previewMaterial?.url && previewMaterial.type === 'Video' ? (
+            <video
+              src={previewMaterial.url}
+              className="max-h-[72vh] max-w-full rounded-lg"
+              controls
+              playsInline
+              preload="metadata"
+            />
+          ) : previewMaterial?.url && previewMaterial.type === 'Audio' ? (
+            <div className="w-full max-w-xl rounded-xl bg-white p-6 shadow-sm dark:bg-slate-900">
+              <Music className="mx-auto mb-5 h-12 w-12 text-amber-500" />
+              <audio src={previewMaterial.url} className="w-full" controls preload="metadata" />
+            </div>
+          ) : null}
+        </div>
+      </Modal>
 
       {/* Rewards Info Modal */}
       <Modal isOpen={showRewardsModal} onClose={() => setShowRewardsModal(false)} title="Creator Rewards">
@@ -1199,7 +1255,7 @@ export const TemplateBuilder = () => {
             </div>
         </div>
       </Modal>
-      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-17-M5-2</p>
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-17-M5-2.1</p>
     </div>
   );
 };
