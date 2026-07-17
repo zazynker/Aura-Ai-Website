@@ -37,6 +37,49 @@ const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
 const isPersistedGenerationId = (id: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
+const VIDEO_FEATURES: FeatureType[] = [
+  'Image to Video',
+  'Motion Control',
+  'Image Lip Sync',
+  'Video Lip Sync',
+];
+
+const FEATURE_REQUIRED_MATERIAL_TYPES: Record<FeatureType, Material['type'][]> = {
+  'Text to Image': [],
+  'Replace Product': ['Image', 'Image'],
+  'Modify Image': ['Image'],
+  'Image to Video': ['Image'],
+  'Motion Control': ['Image', 'Video'],
+  'Image Lip Sync': ['Image', 'Audio'],
+  'Video Lip Sync': ['Video', 'Audio'],
+};
+
+const isVideoFeature = (feature: FeatureType): boolean =>
+  VIDEO_FEATURES.includes(feature);
+
+const looksLikeVideoUrl = (url?: string | null): boolean =>
+  Boolean(url && /\.(mp4|webm|mov|m4v)(?:[?#]|$)/i.test(url));
+
+const hasCompleteMaterialSnapshot = (
+  feature: FeatureType | null,
+  materials: Material[],
+): boolean => {
+  if (!feature) return false;
+  const remaining = [...FEATURE_REQUIRED_MATERIAL_TYPES[feature]];
+  materials.forEach((material) => {
+    const index = remaining.indexOf(material.type);
+    if (material.url && index >= 0) remaining.splice(index, 1);
+  });
+  return remaining.length === 0;
+};
+
+const hasRequiredBuilderMaterials = (step: WorkflowStep): boolean => {
+  const requiredTypes = FEATURE_REQUIRED_MATERIAL_TYPES[step.feature];
+  return requiredTypes.length === 0
+    ? step.materials.some((material) => Boolean(material.url))
+    : hasCompleteMaterialSnapshot(step.feature, step.materials);
+};
+
 const getPublishGateIssue = (
   templateTitle: string,
   steps: WorkflowStep[],
@@ -51,13 +94,13 @@ const getPublishGateIssue = (
   }
 
   const missingMaterialIndex = steps.findIndex(
-    (step) => !step.materials.some((material) => material.url),
+    (step) => !hasRequiredBuilderMaterials(step),
   );
   if (missingMaterialIndex >= 0) {
     return {
       code: 'material',
       stepId: steps[missingMaterialIndex].id,
-      message: `Add the material used in Step ${missingMaterialIndex + 1}.`,
+      message: `Add every required material used in Step ${missingMaterialIndex + 1}.`,
     };
   }
 
@@ -129,6 +172,15 @@ export const TemplateBuilder = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const activeStep = steps.find(s => s.id === activeStepId) || steps[0];
+  const activeResultGeneration = generations.find(
+    (generation) => generation.id === activeStep.resultGenerationId,
+  );
+  const activeStepResultIsVideo = activeResultGeneration
+    ? Boolean(
+        activeResultGeneration.videoUrl &&
+          activeResultGeneration.videoUrl === activeStep.resultUrl,
+      )
+    : isVideoFeature(activeStep.feature);
   const selectableGenerations = generations.filter(
     (generation) =>
       isPersistedGenerationId(generation.id) &&
@@ -267,6 +319,17 @@ export const TemplateBuilder = () => {
       return CAPABILITY_TO_BUILDER_FEATURE[generation.capability] ?? null;
     }
     if (generation.videoMode === 'image_to_video') return 'Image to Video';
+    if (generation.videoMode === 'motion_control') return 'Motion Control';
+    if (generation.videoMode === 'lip_sync') {
+      const sourceAsset = generation.inputAssets?.find(
+        (asset) => asset.assetType === 'image' || asset.assetType === 'video',
+      );
+      if (sourceAsset?.assetType === 'video') return 'Video Lip Sync';
+      if (sourceAsset?.assetType === 'image') return 'Image Lip Sync';
+      return looksLikeVideoUrl(generation.imageUrl)
+        ? 'Video Lip Sync'
+        : 'Image Lip Sync';
+    }
     if (generation.templateId === 'text-to-image') return 'Text to Image';
     return null;
   };
@@ -278,7 +341,7 @@ export const TemplateBuilder = () => {
       return;
     }
     const feature = inferFeatureFromGeneration(generation);
-    const restoredMaterials = generation.inputAssets?.map((asset, index) => ({
+    const snapshotMaterials = generation.inputAssets?.filter((asset) => asset.url).map((asset, index) => ({
       id: `history-${generation.id}-${index}`,
       type:
         asset.assetType === 'image'
@@ -289,23 +352,76 @@ export const TemplateBuilder = () => {
       url: asset.url,
       allowDownload: true,
       sourceGenerationId: generation.id,
-    }));
+    })) ?? [];
+    const legacySourceUrl =
+      generation.videoUrl &&
+      generation.imageUrl &&
+      generation.imageUrl !== generation.videoUrl
+        ? generation.imageUrl
+        : null;
+    const legacyMaterials: Material[] =
+      snapshotMaterials.length === 0 && legacySourceUrl && feature
+        ? feature === 'Image to Video'
+          ? [{
+              id: `history-${generation.id}-legacy-image`,
+              type: 'Image',
+              url: legacySourceUrl,
+              allowDownload: true,
+              sourceGenerationId: generation.id,
+            }]
+          : feature === 'Video Lip Sync'
+            ? [{
+                id: `history-${generation.id}-legacy-video`,
+                type: 'Video',
+                url: legacySourceUrl,
+                allowDownload: true,
+                sourceGenerationId: generation.id,
+              }]
+            : feature === 'Motion Control' || feature === 'Image Lip Sync'
+              ? [{
+                  id: `history-${generation.id}-legacy-image`,
+                  type: 'Image',
+                  url: legacySourceUrl,
+                  allowDownload: true,
+                  sourceGenerationId: generation.id,
+                }]
+              : []
+        : [];
+    const restoredMaterials =
+      snapshotMaterials.length > 0 ? snapshotMaterials : legacyMaterials;
+    const parameterPrompt = generation.generationParameters?.prompt;
+    const parameterDuration = generation.generationParameters?.duration;
+    const parameterResolution = generation.generationParameters?.resolution;
+    const parameterGenerateAudio = generation.generationParameters?.generateAudio;
 
     updateActiveStep({
       resultUrl,
       resultGenerationId: generation.id,
       feature: feature ?? activeStep.feature,
-      prompt: generation.prompt ?? '',
+      prompt:
+        typeof parameterPrompt === 'string'
+          ? parameterPrompt
+          : generation.prompt ?? '',
       materials:
-        restoredMaterials && restoredMaterials.length > 0
+        restoredMaterials.length > 0
           ? restoredMaterials
           : activeStep.materials,
       videoParams:
         feature === 'Image to Video'
           ? {
-              duration: `${generation.videoDuration || 5}s`,
-              resolution: activeStep.videoParams?.resolution || '720p',
-              generateAudio: activeStep.videoParams?.generateAudio ?? true,
+              duration: `${
+                typeof parameterDuration === 'number'
+                  ? parameterDuration
+                  : generation.videoDuration || 5
+              }s`,
+              resolution:
+                typeof parameterResolution === 'string'
+                  ? parameterResolution
+                  : activeStep.videoParams?.resolution || '720p',
+              generateAudio:
+                typeof parameterGenerateAudio === 'boolean'
+                  ? parameterGenerateAudio
+                  : activeStep.videoParams?.generateAudio ?? true,
             }
           : activeStep.videoParams,
     });
@@ -319,10 +435,10 @@ export const TemplateBuilder = () => {
       );
     }
 
-    if (!feature || !restoredMaterials?.length) {
+    if (!hasCompleteMaterialSnapshot(feature, restoredMaterials)) {
       addToast(
         'info',
-        'This older result has no complete feature or material snapshot. Please confirm the fields below.',
+        'This older result has no complete material snapshot. The available fields were restored; please add the missing material below.',
       );
     }
     setShowHistoryModal(false);
@@ -642,7 +758,17 @@ export const TemplateBuilder = () => {
                 }`}
               >
                 {activeStep.resultUrl ? (
-                  <img src={activeStep.resultUrl} alt="Result" className="w-full h-full object-cover rounded-xl" />
+                  activeStepResultIsVideo ? (
+                    <video
+                      src={activeStep.resultUrl}
+                      className="w-full h-full object-cover rounded-xl"
+                      controls
+                      playsInline
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                  ) : (
+                    <img src={activeStep.resultUrl} alt="Result" className="w-full h-full object-cover rounded-xl" />
+                  )
                 ) : (
                   <>
                     <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
@@ -669,7 +795,15 @@ export const TemplateBuilder = () => {
                 Feature I Used
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {(['Text to Image', 'Replace Product', 'Modify Image', 'Image to Video'] as FeatureType[]).map((feature) => (
+                {([
+                  'Text to Image',
+                  'Replace Product',
+                  'Modify Image',
+                  'Image to Video',
+                  'Motion Control',
+                  'Image Lip Sync',
+                  'Video Lip Sync',
+                ] as FeatureType[]).map((feature) => (
                   <button
                     key={feature}
                     onClick={() => updateActiveStep({ feature })}
@@ -1065,6 +1199,7 @@ export const TemplateBuilder = () => {
             </div>
         </div>
       </Modal>
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-17-M5-2</p>
     </div>
   );
 };

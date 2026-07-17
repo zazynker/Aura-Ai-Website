@@ -14,7 +14,10 @@ export type BuilderFeatureType =
   | 'Text to Image'
   | 'Replace Product'
   | 'Modify Image'
-  | 'Image to Video';
+  | 'Image to Video'
+  | 'Motion Control'
+  | 'Image Lip Sync'
+  | 'Video Lip Sync';
 
 export interface BuilderMaterial {
   id: string;
@@ -63,6 +66,9 @@ export const BUILDER_FEATURE_TO_CAPABILITY: Record<
   'Replace Product': 'image.replace_product',
   'Modify Image': 'image.modify',
   'Image to Video': 'video.image_to_video',
+  'Motion Control': 'video.motion_control',
+  'Image Lip Sync': 'video.lip_sync_image',
+  'Video Lip Sync': 'video.lip_sync_video',
 };
 
 function buildDefaultParameters(
