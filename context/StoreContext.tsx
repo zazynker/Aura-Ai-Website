@@ -51,17 +51,23 @@ export const calculateCreditsFromTokens = (tokensUsed: number): number => {
 export type VideoCreditEstimate = {
   mode: 'image_to_video' | 'motion_control' | 'lip_sync';
   duration: number;
+  resolution?: '720p' | '1080p';
   generationCount?: number;
   lipSyncInput?: 'image' | 'video';
   generateAudio?: boolean;
 };
 
-export const estimateVideoCredits = ({ mode, duration, generationCount = 1, lipSyncInput = 'video', generateAudio = true }: VideoCreditEstimate): number => {
+export const estimateVideoCredits = ({ mode, duration, resolution = '720p', generationCount = 1, lipSyncInput = 'video', generateAudio = true }: VideoCreditEstimate): number => {
   const count = Math.max(1, Math.floor(generationCount));
   const seconds = Math.max(0, duration);
   let costUsd = 0;
-  if (mode === 'image_to_video') costUsd = seconds * (generateAudio ? 0.126 : 0.084);
-  else if (mode === 'motion_control') costUsd = seconds * 0.126;
+  if (mode === 'image_to_video') {
+    const pricePerSecond = resolution === '1080p'
+      ? (generateAudio ? 0.168 : 0.112)
+      : (generateAudio ? 0.126 : 0.084);
+    costUsd = seconds * pricePerSecond;
+  }
+  else if (mode === 'motion_control') costUsd = seconds * (resolution === '1080p' ? 0.168 : 0.126);
   else if (lipSyncInput === 'image') costUsd = seconds * 0.0562;
   else costUsd = Math.ceil(seconds / 5) * 5 * 0.014;
   return Math.ceil(costUsd * count * USD_TO_CREDITS);

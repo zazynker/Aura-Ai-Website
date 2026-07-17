@@ -68,6 +68,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       sourceImage: existing.startImageUrl,
       status: 'pending',
       requestId: existing.requestId,
+      creditsUsed: existing.creditsUsed,
       error: 'This video was already submitted. Click Resume to check the same Fal job.',
     });
   }, [onGenerate]);
@@ -109,6 +110,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         timestamp: 'Just now',
         error: undefined,
         requestId: result.requestId,
+        creditsUsed: result.creditsUsed,
       });
       return;
     }
@@ -172,7 +174,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       return;
     }
     const requiredCredits = estimateVideoCredits({
-      mode: 'image_to_video', duration, generationCount, generateAudio,
+      mode: 'image_to_video', duration, resolution, generationCount, generateAudio,
     });
     if (userCredits < requiredCredits) {
       onInsufficientCredits(requiredCredits);
@@ -230,6 +232,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
           onUpdate?.(placeholderId, {
             status: 'pending',
             requestId: job.requestId,
+            creditsUsed: job.creditsUsed,
           });
         },
       });
@@ -265,6 +268,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
   const estimatedCredits = estimateVideoCredits({
     mode: 'image_to_video',
     duration,
+    resolution,
     generationCount,
     generateAudio,
   });

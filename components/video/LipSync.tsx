@@ -88,6 +88,14 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const timelineDuration = Math.max(videoDuration || 0, selectedMedia?.type === 'video' ? 3 : 0);
   const minAudioClipLength = Math.min(2, Math.max(0.2, audioDuration || 0.2));
   const effectiveAudioLength = Math.max(0, audioTrimEnd - audioTrimStart);
+  const resultDuration = Math.ceil(
+    selectedMedia?.type === 'video' ? timelineDuration || effectiveAudioLength || 5 : audioDuration || 5
+  );
+  const estimatedCredits = estimateVideoCredits({
+    mode: 'lip_sync',
+    duration: resultDuration,
+    lipSyncInput: selectedMedia?.type || 'video',
+  });
   const basePixelsPerSecond = 56;
   const naturalTimelineWidth = Math.max(1, timelineDuration * basePixelsPerSecond * timelineZoom);
   const timelineContentWidth = Math.max(timelineViewportWidth || 0, naturalTimelineWidth);
@@ -147,6 +155,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       audioUrl: existing.audioUrl,
       status: 'pending',
       requestId: existing.requestId,
+      creditsUsed: existing.creditsUsed,
       mode: 'lip_sync',
       error: 'This lip sync job was already submitted. Click Resume to check the same Fal job.',
     });
@@ -274,6 +283,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
         timestamp: 'Just now',
         error: undefined,
         requestId: result.requestId,
+        creditsUsed: result.creditsUsed,
       });
       return;
     }
@@ -341,10 +351,6 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       return;
     }
 
-    const resultDuration = Math.ceil(
-      selectedMedia.type === 'video' ? timelineDuration || effectiveAudioLength || 5 : audioDuration || 5
-    );
-
     const requiredCredits = estimateVideoCredits({
       mode: 'lip_sync',
       duration: resultDuration,
@@ -410,6 +416,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
           onUpdate?.(placeholderId, {
             status: 'pending',
             requestId: job.requestId,
+            creditsUsed: job.creditsUsed,
           });
         },
       });
@@ -1218,7 +1225,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
           ) : (
             <>
               <Sparkles className="h-4 w-4 text-white" />
-              <span>{pendingJob ? 'Resume' : '36 Generate'}</span>
+              <span>{pendingJob ? 'Resume' : `${estimatedCredits} Generate`}</span>
             </>
           )}
         </button>

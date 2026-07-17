@@ -19,6 +19,7 @@ export interface VideoResult {
   error?: string;
   requestId?: string;
   mode?: VideoMode;
+  creditsUsed?: number;
   createdAt?: number;
 }
 

@@ -153,6 +153,7 @@ const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
     status: 'pending',
     requestId: job.requestId,
     mode: job.mode,
+    creditsUsed: job.creditsUsed,
     createdAt: job.createdAt,
     error: 'This Fal job was already submitted. Use Resume to check the same request instead of generating again.',
   };
@@ -208,7 +209,7 @@ export const Video: React.FC = () => {
       videoAspectRatio: result.aspectRatio === 'Auto' ? undefined : result.aspectRatio,
       videoMode: result.mode || getVideoMode(result.type),
       prompt: result.prompt,
-      creditsUsed: 36,
+      creditsUsed: result.creditsUsed ?? 0,
       capability: getCapabilityFromVideoResult(result),
       inputAssets: getInputAssetsFromVideoResult(result),
       generationParameters: {

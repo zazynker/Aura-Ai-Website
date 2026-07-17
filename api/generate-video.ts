@@ -30,10 +30,16 @@ const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 const KLING_IMAGE_TO_VIDEO_ENDPOINT =
   process.env.FAL_KLING_IMAGE_TO_VIDEO_ENDPOINT ||
   'fal-ai/kling-video/v3/standard/image-to-video';
+const KLING_IMAGE_TO_VIDEO_PRO_ENDPOINT =
+  process.env.FAL_KLING_IMAGE_TO_VIDEO_PRO_ENDPOINT ||
+  'fal-ai/kling-video/v3/pro/image-to-video';
 
 const KLING_MOTION_CONTROL_ENDPOINT =
   process.env.FAL_KLING_MOTION_CONTROL_ENDPOINT ||
   'fal-ai/kling-video/v3/standard/motion-control';
+const KLING_MOTION_CONTROL_PRO_ENDPOINT =
+  process.env.FAL_KLING_MOTION_CONTROL_PRO_ENDPOINT ||
+  'fal-ai/kling-video/v3/pro/motion-control';
 
 const KLING_LIP_SYNC_VIDEO_ENDPOINT =
   process.env.FAL_KLING_LIP_SYNC_VIDEO_ENDPOINT ||
@@ -44,8 +50,16 @@ const KLING_LIP_SYNC_IMAGE_ENDPOINT =
   'fal-ai/kling-video/ai-avatar/v2/standard';
 
 function getKlingEndpoint(mode: VideoMode, body: RequestBody): string {
-  if (mode === 'image_to_video') return KLING_IMAGE_TO_VIDEO_ENDPOINT;
-  if (mode === 'motion_control') return KLING_MOTION_CONTROL_ENDPOINT;
+  if (mode === 'image_to_video') {
+    return body.resolution === '1080p'
+      ? KLING_IMAGE_TO_VIDEO_PRO_ENDPOINT
+      : KLING_IMAGE_TO_VIDEO_ENDPOINT;
+  }
+  if (mode === 'motion_control') {
+    return body.resolution === '1080p'
+      ? KLING_MOTION_CONTROL_PRO_ENDPOINT
+      : KLING_MOTION_CONTROL_ENDPOINT;
+  }
 
   // Lip Sync has two Fal endpoints:
   // - image + audio: fal-ai/kling-video/ai-avatar/v2/standard
@@ -597,9 +611,13 @@ function estimateVideoCredits(mode: VideoMode, body: RequestBody): number {
   }
   let costUsd = 0;
   if (mode === 'image_to_video') {
-    costUsd = normalizeDuration(body.duration) * (body.generateAudio === false ? 0.084 : 0.126);
+    const pricePerSecond = body.resolution === '1080p'
+      ? (body.generateAudio === false ? 0.112 : 0.168)
+      : (body.generateAudio === false ? 0.084 : 0.126);
+    costUsd = normalizeDuration(body.duration) * pricePerSecond;
   } else if (mode === 'motion_control') {
-    costUsd = normalizePositiveDuration(body.duration, 5) * 0.126;
+    const pricePerSecond = body.resolution === '1080p' ? 0.168 : 0.126;
+    costUsd = normalizePositiveDuration(body.duration, 5) * pricePerSecond;
   } else if (body.videoUrl) {
     costUsd = Math.ceil(normalizePositiveDuration(body.duration, 5) / 5) * 5 * 0.014;
   } else {

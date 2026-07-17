@@ -35,7 +35,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
 
   const [resolution, setResolution] = useState<Resolution>('720p');
   const [quantity, setQuantity] = useState<number>(1);
-  const duration = 5;
+  const [duration, setDuration] = useState<number>(5);
 
   const [isParamsOpen, setIsParamsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -60,6 +60,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
     setSelectedVideo(existing.inputVideoUrl || null);
     setDirectionMatch(existing.characterOrientation || 'video');
     setResolution(existing.resolution || '720p');
+    setDuration(existing.duration || 5);
 
     onGenerate({
       id: existing.clientJobId,
@@ -76,6 +77,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       sourceImage: existing.startImageUrl,
       status: 'pending',
       requestId: existing.requestId,
+      creditsUsed: existing.creditsUsed,
       error: 'This motion-control job was already submitted. Click Resume to check the same Fal job.',
     });
   }, [onGenerate]);
@@ -117,6 +119,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         timestamp: 'Just now',
         error: undefined,
         requestId: result.requestId,
+        creditsUsed: result.creditsUsed,
       });
       return;
     }
@@ -189,7 +192,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
     }
 
     const requiredCredits = estimateVideoCredits({
-      mode: 'motion_control', duration, generationCount: quantity,
+      mode: 'motion_control', duration, resolution, generationCount: quantity,
     });
     if (userCredits < requiredCredits) {
       onInsufficientCredits(requiredCredits);
@@ -235,6 +238,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         startImageUrl: characterImageUrl,
         videoUrl: driverVideoUrl,
         characterOrientation: directionMatch,
+        duration,
         resolution,
         generationCount: quantity,
         clientJobId: placeholderId,
@@ -243,6 +247,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
           onUpdate?.(placeholderId, {
             status: 'pending',
             requestId: job.requestId,
+            creditsUsed: job.creditsUsed,
           });
         },
       });
@@ -278,7 +283,13 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
   };
 
   const isGenerateDisabled = isGenerating || ((!selectedImage || !selectedVideo || !motionPrompt.trim()) && !pendingJob);
-  const buttonLabel = pendingJob ? 'Resume' : '36 Generate';
+  const estimatedCredits = estimateVideoCredits({
+    mode: 'motion_control',
+    duration,
+    resolution,
+    generationCount: quantity,
+  });
+  const buttonLabel = pendingJob ? 'Resume' : `${estimatedCredits} Generate`;
 
   return (
     <>
@@ -297,6 +308,10 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
                         loop
                         muted
                         playsInline
+                        onLoadedMetadata={(event) => {
+                          const detectedDuration = Math.ceil(event.currentTarget.duration || 5);
+                          setDuration(Math.max(1, detectedDuration));
+                        }}
                       />
                     </div>
                     <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
