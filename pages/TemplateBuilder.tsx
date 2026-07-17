@@ -617,7 +617,7 @@ export const TemplateBuilder = () => {
         {/* Center Column - Main Working Area */}
         <div className="md:col-span-8 lg:col-span-9 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 p-6 sm:p-8 shadow-sm">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-8 pb-4 border-b border-slate-100 dark:border-white/5">
-          DEPLOY TEST M1 - Step {steps.findIndex(s => s.id === activeStepId) + 1}
+          Step {steps.findIndex(s => s.id === activeStepId) + 1} Configuration
           </h2>
 
           <div className="space-y-12">
@@ -1065,7 +1065,6 @@ export const TemplateBuilder = () => {
             </div>
         </div>
       </Modal>
-      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-16-M1</p>
     </div>
   );
 };
