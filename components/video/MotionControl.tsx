@@ -78,7 +78,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       status: 'pending',
       requestId: existing.requestId,
       creditsUsed: existing.creditsUsed,
-      error: 'This motion-control job was already submitted. Click Resume to check the same Fal job.',
+      error: 'This motion-control job was already submitted. Click Resume to check the same job.',
     });
   }, [onGenerate]);
 
@@ -464,7 +464,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
 
         {pendingJob && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-            A Fal motion-control job is already submitted. Use Resume to check the same job. Do not generate again.
+            A motion-control job is already submitted. Use Resume to check the same job. Do not generate again.
           </div>
         )}
       </div>

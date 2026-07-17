@@ -58,7 +58,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     onGenerate({
       id: existing.clientJobId,
       type: 'Image to Video',
-      model: 'Kling 3.0',
+      model: existing.resolution === '1080p' ? 'Pro' : 'Standard',
       resolution: existing.resolution || '720p',
       prompt: existing.prompt || '',
       duration: formatDuration(existing.duration),
@@ -69,7 +69,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       status: 'pending',
       requestId: existing.requestId,
       creditsUsed: existing.creditsUsed,
-      error: 'This video was already submitted. Click Resume to check the same Fal job.',
+      error: 'This video was already submitted. Click Resume to check the same job.',
     });
   }, [onGenerate]);
 
@@ -181,32 +181,36 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       return;
     }
     
-    const placeholderId = `video-${Date.now()}`;
-    const pendingResult: VideoResult = {
-      id: placeholderId,
-      type: 'Image to Video',
-      model: 'Kling 3.0',
-      resolution,
-      prompt,
-      duration: formatDuration(duration),
-      aspectRatio: '16:9',
-      timestamp: 'Uploading',
-      bgColor: 'bg-slate-900/50',
-      sourceImage: selectedImage,
-      status: 'pending',
-    };
-
-    onGenerate(pendingResult);
+    const batchTimestamp = Date.now();
+    const placeholderIds = Array.from(
+      { length: generationCount },
+      (_, index) => `video-${batchTimestamp}-${index + 1}`,
+    );
+    placeholderIds.forEach((placeholderId, index) => {
+      onGenerate({
+        id: placeholderId,
+        type: 'Image to Video',
+        model: resolution === '1080p' ? 'Pro' : 'Standard',
+        resolution,
+        prompt,
+        duration: formatDuration(duration),
+        aspectRatio: '16:9',
+        timestamp: index === 0 ? 'Uploading' : 'Queued',
+        bgColor: 'bg-slate-900/50',
+        sourceImage: selectedImage,
+        status: 'pending',
+      });
+    });
     setIsGenerating(true);
     
     try {
       const startImageUrl = await uploadImageIfNeeded(selectedImage, startImageFile, 'start');
       if (!startImageUrl) throw new Error('Please upload a first frame image.');
 
-      onUpdate?.(placeholderId, {
+      placeholderIds.forEach((placeholderId) => onUpdate?.(placeholderId, {
         sourceImage: startImageUrl,
-        timestamp: 'Generating',
-      });
+        timestamp: 'Submitting',
+      }));
 
       let endImageUrl: string | undefined;
       if (selectedEndImage && endImageFile) {
@@ -217,34 +221,39 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         }
       }
 
-      const result = await generateVideo({
-        mode: 'image_to_video',
-        prompt,
-        startImageUrl,
-        endImageUrl,
-        duration,
-        resolution,
-        generationCount,
-        generateAudio,
-        clientJobId: placeholderId,
-        onJobSubmitted: (job) => {
-          setPendingJob(job);
-          onUpdate?.(placeholderId, {
-            status: 'pending',
-            requestId: job.requestId,
-            creditsUsed: job.creditsUsed,
+      await Promise.all(
+        placeholderIds.map(async (placeholderId) => {
+          const result = await generateVideo({
+            mode: 'image_to_video',
+            prompt,
+            startImageUrl,
+            endImageUrl,
+            duration,
+            resolution,
+            generationCount: 1,
+            generateAudio,
+            allowConcurrent: generationCount > 1,
+            clientJobId: placeholderId,
+            onJobSubmitted: (job) => {
+              setPendingJob(job);
+              onUpdate?.(placeholderId, {
+                status: 'pending',
+                timestamp: 'Generating',
+                requestId: job.requestId,
+                creditsUsed: job.creditsUsed,
+              });
+            },
           });
-        },
-      });
-
-      applyResult(placeholderId, result);
+          applyResult(placeholderId, result);
+        }),
+      );
     } catch (error) {
       console.error('Video generation error:', error);
-      onUpdate?.(placeholderId, {
+      placeholderIds.forEach((placeholderId) => onUpdate?.(placeholderId, {
         status: 'failed',
         error: error instanceof Error ? error.message : 'Video generation failed. Please try again.',
         timestamp: 'Failed',
-      });
+      }));
       alert(error instanceof Error ? error.message : 'Video generation failed. Please try again.');
     } finally {
       setIsGenerating(false);
@@ -345,7 +354,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
 
         {pendingJob && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-            A Fal job is already submitted. Use Resume to check the same job. Do not generate again.
+            A job is already submitted. Use Resume to check the same job. Do not generate again.
           </div>
         )}
       </div>
@@ -411,7 +420,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
               <div>
                 <label className="mb-2 block text-xs font-semibold tracking-wider text-slate-500 dark:text-slate-400 uppercase">Generation Count</label>
                 <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 p-0.5 dark:bg-slate-800/50">
-                  {[1].map((count) => (
+                  {[1, 2, 3, 4].map((count) => (
                     <button
                       key={count}
                       onClick={() => setGenerationCount(count)}
@@ -422,12 +431,12 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                       }`}
                     >
                       {count}
-                      {count > 1 && (
-                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-pink-400 to-purple-500 px-1 text-[8px] font-bold text-white shadow-sm">PRO</span>
-                      )}
                     </button>
                   ))}
                 </div>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
+                  Creates separate variations in parallel. Total credits equal the single-video cost × count.
+                </p>
               </div>
             </div>
           </div>

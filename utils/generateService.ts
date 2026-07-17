@@ -293,6 +293,7 @@ export interface VideoGenerateOptions {
   characterOrientation?: "video" | "image";
   generationCount?: number;
   generateAudio?: boolean;
+  allowConcurrent?: boolean;
   clientJobId?: string;
   onJobSubmitted?: (job: PendingVideoJob) => void;
 }
@@ -374,7 +375,8 @@ const VIDEO_ERROR_MESSAGES: Record<number, string> = {
 
 const VIDEO_POLL_INTERVAL_MS = 3000;
 const VIDEO_MAX_POLL_ATTEMPTS = 200;
-const PENDING_VIDEO_JOB_KEY = "lazora-pending-video-job-v1";
+const PENDING_VIDEO_JOBS_KEY = "lazora-pending-video-jobs-v2";
+const LEGACY_PENDING_VIDEO_JOB_KEY = "lazora-pending-video-job-v1";
 const PENDING_VIDEO_JOB_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -386,41 +388,70 @@ const makeClientJobId = () => {
   return `job-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 };
 
-export function getPendingVideoJob(): PendingVideoJob | null {
-  const raw = localStorage.getItem(PENDING_VIDEO_JOB_KEY);
-  if (!raw) return null;
+const isValidPendingVideoJob = (job: PendingVideoJob | null | undefined) =>
+  Boolean(
+    job?.requestId &&
+      job?.endpoint &&
+      job?.userId &&
+      job?.mode &&
+      Date.now() - Number(job.createdAt || 0) <= PENDING_VIDEO_JOB_MAX_AGE_MS,
+  );
 
+export function getPendingVideoJobs(): PendingVideoJob[] {
+  const raw = localStorage.getItem(PENDING_VIDEO_JOBS_KEY);
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      const jobs = (Array.isArray(parsed) ? parsed : []).filter(isValidPendingVideoJob) as PendingVideoJob[];
+      if (jobs.length) {
+        if (jobs.length !== parsed.length) {
+          localStorage.setItem(PENDING_VIDEO_JOBS_KEY, JSON.stringify(jobs));
+        }
+        return jobs;
+      }
+    } catch {
+      localStorage.removeItem(PENDING_VIDEO_JOBS_KEY);
+    }
+  }
+
+  const legacyRaw = localStorage.getItem(LEGACY_PENDING_VIDEO_JOB_KEY);
+  if (!legacyRaw) return [];
   try {
-    const job = JSON.parse(raw) as PendingVideoJob;
-    if (!job?.requestId || !job?.endpoint || !job?.userId || !job?.mode) {
-      localStorage.removeItem(PENDING_VIDEO_JOB_KEY);
-      return null;
-    }
-
-    if (
-      Date.now() - Number(job.createdAt || 0) >
-      PENDING_VIDEO_JOB_MAX_AGE_MS
-    ) {
-      localStorage.removeItem(PENDING_VIDEO_JOB_KEY);
-      return null;
-    }
-
-    return job;
+    const legacyJob = JSON.parse(legacyRaw) as PendingVideoJob;
+    localStorage.removeItem(LEGACY_PENDING_VIDEO_JOB_KEY);
+    if (!isValidPendingVideoJob(legacyJob)) return [];
+    localStorage.setItem(PENDING_VIDEO_JOBS_KEY, JSON.stringify([legacyJob]));
+    return [legacyJob];
   } catch {
-    localStorage.removeItem(PENDING_VIDEO_JOB_KEY);
-    return null;
+    localStorage.removeItem(LEGACY_PENDING_VIDEO_JOB_KEY);
+    return [];
   }
 }
 
-export function savePendingVideoJob(job: PendingVideoJob) {
-  localStorage.setItem(
-    PENDING_VIDEO_JOB_KEY,
-    JSON.stringify({ ...job, updatedAt: Date.now() }),
-  );
+export function getPendingVideoJob(): PendingVideoJob | null {
+  return getPendingVideoJobs()[0] || null;
 }
 
-export function clearPendingVideoJob() {
-  localStorage.removeItem(PENDING_VIDEO_JOB_KEY);
+export function savePendingVideoJob(job: PendingVideoJob) {
+  const updatedJob = { ...job, updatedAt: Date.now() };
+  const jobs = getPendingVideoJobs();
+  const existingIndex = jobs.findIndex((item) => item.requestId === job.requestId);
+  const next = existingIndex >= 0
+    ? jobs.map((item, index) => (index === existingIndex ? updatedJob : item))
+    : [...jobs, updatedJob];
+  localStorage.setItem(PENDING_VIDEO_JOBS_KEY, JSON.stringify(next));
+  localStorage.removeItem(LEGACY_PENDING_VIDEO_JOB_KEY);
+}
+
+export function clearPendingVideoJob(requestId?: string) {
+  if (!requestId) {
+    localStorage.removeItem(PENDING_VIDEO_JOBS_KEY);
+    localStorage.removeItem(LEGACY_PENDING_VIDEO_JOB_KEY);
+    return;
+  }
+  const next = getPendingVideoJobs().filter((job) => job.requestId !== requestId);
+  if (next.length) localStorage.setItem(PENDING_VIDEO_JOBS_KEY, JSON.stringify(next));
+  else localStorage.removeItem(PENDING_VIDEO_JOBS_KEY);
 }
 
 function isSameResumeCandidate(
@@ -429,6 +460,13 @@ function isSameResumeCandidate(
   mode: VideoGenerateOptions["mode"],
 ) {
   return job.userId === userId && job.mode === mode;
+}
+
+function getUserFacingServiceError(value: unknown, fallback: string): string {
+  const message = typeof value === "string" && value.trim() ? value : fallback;
+  return message
+    .replace(/Fal/gi, "generation service")
+    .replace(/Kling/gi, "generation service");
 }
 
 async function getAccessToken(): Promise<
@@ -448,13 +486,15 @@ async function getAccessToken(): Promise<
   };
 }
 
-export async function pollPendingVideoJob(): Promise<VideoGenerateResult> {
+export async function pollPendingVideoJob(requestId?: string): Promise<VideoGenerateResult> {
   const auth = await getAccessToken();
   if ("error" in auth) {
     return { success: false, error: auth.error };
   }
 
-  const pendingJob = getPendingVideoJob();
+  const pendingJob = requestId
+    ? getPendingVideoJobs().find((job) => job.requestId === requestId) || null
+    : getPendingVideoJob();
   if (!pendingJob) {
     return {
       success: false,
@@ -463,7 +503,7 @@ export async function pollPendingVideoJob(): Promise<VideoGenerateResult> {
   }
 
   if (pendingJob.userId !== auth.userId) {
-    clearPendingVideoJob();
+    clearPendingVideoJob(pendingJob.requestId);
     return {
       success: false,
       error: "Pending job belongs to a different user. It has been cleared.",
@@ -488,6 +528,7 @@ export async function generateVideo(
     characterOrientation,
     generationCount,
     generateAudio,
+    allowConcurrent = false,
     clientJobId,
     onJobSubmitted,
   } = options;
@@ -503,7 +544,7 @@ export async function generateVideo(
     }
 
     const existingJob = getPendingVideoJob();
-    if (existingJob && existingJob.userId === auth.userId) {
+    if (!allowConcurrent && existingJob && existingJob.userId === auth.userId) {
       if (isSameResumeCandidate(existingJob, auth.userId, mode)) {
         console.warn(
           "[generateVideo] Existing pending job found. Resuming instead of submitting a new Fal request:",
@@ -549,10 +590,10 @@ export async function generateVideo(
 
     if (!submitResponse.ok) {
       const errorData = await submitResponse.json().catch(() => ({}));
-      const friendlyMessage =
-        errorData.error ||
-        VIDEO_ERROR_MESSAGES[submitResponse.status] ||
-        `Video generation failed (Error ${submitResponse.status}).`;
+      const friendlyMessage = getUserFacingServiceError(
+        errorData.error || VIDEO_ERROR_MESSAGES[submitResponse.status],
+        `Video generation failed (Error ${submitResponse.status}).`,
+      );
 
       return {
         success: false,
@@ -565,7 +606,10 @@ export async function generateVideo(
     if (!submitData.success || !submitData.requestId || !submitData.endpoint) {
       return {
         success: false,
-        error: submitData.error || "Failed to submit video generation job.",
+        error: getUserFacingServiceError(
+          submitData.error,
+          "Failed to submit video generation job.",
+        ),
       };
     }
 
@@ -632,8 +676,10 @@ export async function generateVideo(
 
     return {
       success: false,
-      error:
-        err instanceof Error ? err.message : "An unexpected error occurred.",
+      error: getUserFacingServiceError(
+        err instanceof Error ? err.message : undefined,
+        "An unexpected error occurred.",
+      ),
     };
   }
 }
@@ -679,21 +725,21 @@ async function pollVideoJob(
         errorCode === "FAL_RESULT_NOT_FOUND";
 
       if (isFalRequestMissing) {
-        clearPendingVideoJob();
+        clearPendingVideoJob(job.requestId);
         return {
           success: false,
           pending: false,
           requestId: job.requestId,
           status: "FAILED",
           error:
-            "This pending Fal request was not found. It has been cleared locally. Click Generate again to submit a new Fal request.",
+            "This pending request was not found. It has been cleared locally. Click Generate again to submit a new request.",
         };
       }
 
-      const friendlyMessage =
-        errorData.error ||
-        VIDEO_ERROR_MESSAGES[statusResponse.status] ||
-        `Video status check failed (Error ${statusResponse.status}).`;
+      const friendlyMessage = getUserFacingServiceError(
+        errorData.error || VIDEO_ERROR_MESSAGES[statusResponse.status],
+        `Video status check failed (Error ${statusResponse.status}).`,
+      );
 
       savePendingVideoJob(job);
       return {
@@ -701,7 +747,7 @@ async function pollVideoJob(
         pending: true,
         pendingJob: job,
         requestId: job.requestId,
-        error: `${friendlyMessage} The Fal job was already submitted. Do not generate again; click Resume to check this same job.`,
+        error: `${friendlyMessage} The job was already submitted. Do not generate again; click Resume to check this same job.`,
       };
     }
 
@@ -727,7 +773,7 @@ async function pollVideoJob(
         };
       }
 
-      clearPendingVideoJob();
+      clearPendingVideoJob(job.requestId);
       return {
         success: true,
         videoUrl: statusData.videoUrl,
@@ -739,13 +785,16 @@ async function pollVideoJob(
     }
 
     if (status === "FAILED" || status === "CANCELLED") {
-      clearPendingVideoJob();
+      clearPendingVideoJob(job.requestId);
       return {
         success: false,
         pending: false,
         requestId: job.requestId,
         status,
-        error: statusData.error || "Video generation failed.",
+        error: getUserFacingServiceError(
+          statusData.error,
+          "Video generation failed.",
+        ),
       };
     }
 
@@ -759,6 +808,6 @@ async function pollVideoJob(
     pendingJob: job,
     requestId: job.requestId,
     error:
-      "Video status checking timed out after about 10 minutes. The Fal job may still be running. Click Check status / Resume instead of Generate.",
+      "Video status checking timed out after about 10 minutes. The job may still be running. Click Check status / Resume instead of Generate.",
   };
 }

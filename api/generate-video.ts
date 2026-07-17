@@ -199,6 +199,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       responseUrl: falJob.responseUrl,
       cancelUrl: falJob.cancelUrl,
       mode,
+      creditsUsed: requiredCredits,
+      creditsDeducted,
+      newCredits,
     });
   } catch (err) {
     if (err instanceof ApiError) {
