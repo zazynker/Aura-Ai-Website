@@ -42,6 +42,13 @@ export interface SaveTemplateDraftResult {
   materialAssetIds: Record<string, string>;
 }
 
+export interface SubmitTemplateForReviewResult {
+  templateId: string;
+  versionId: string;
+  status: 'pending_review';
+  submittedAt: string;
+}
+
 interface ExistingAssetRow {
   id: string;
   asset_key: string;
@@ -467,4 +474,36 @@ export async function saveTemplateDraft(
     ]);
     throw error;
   }
+}
+
+export async function submitTemplateForReview(
+  identity: TemplateDraftIdentity,
+): Promise<SubmitTemplateForReviewResult> {
+  const { data: sessionData, error: sessionError } = await supabase.auth.getUser();
+  if (sessionError || !sessionData.user) {
+    throw new Error('Please log in before submitting a template for review.');
+  }
+  if (sessionData.user.id !== identity.userId) {
+    throw new Error('This draft belongs to a different account.');
+  }
+
+  const { data, error } = await supabase.rpc('submit_template_for_review', {
+    p_template_id: identity.templateId,
+    p_version_id: identity.versionId,
+  });
+  if (error) {
+    throw new Error(`Could not submit the template for review: ${error.message}`);
+  }
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || row.status !== 'pending_review') {
+    throw new Error('The review submission returned an unexpected response.');
+  }
+
+  return {
+    templateId: row.template_id,
+    versionId: row.version_id,
+    status: row.status,
+    submittedAt: row.submitted_at,
+  };
 }

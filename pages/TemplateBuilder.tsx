@@ -14,6 +14,7 @@ import {
 } from '../workflows/builderAdapter';
 import {
   saveTemplateDraft,
+  submitTemplateForReview,
   type PersistedMaterialMap,
   type TemplateDraftIdentity,
 } from '../utils/templateDraftApi';
@@ -167,6 +168,7 @@ export const TemplateBuilder = () => {
   const [materialFiles, setMaterialFiles] = useState<Record<string, File>>({});
   const [persistedMaterials, setPersistedMaterials] = useState<PersistedMaterialMap>({});
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [reviewState, setReviewState] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishFileInputRef = useRef<HTMLInputElement>(null);
@@ -458,6 +460,7 @@ export const TemplateBuilder = () => {
   };
 
   const handleOpenPublish = () => {
+    if (reviewState === 'submitted') return;
     const issue = getPublishGateIssue(templateTitle, steps);
     if (issue) return showPublishGateIssue(issue);
 
@@ -465,11 +468,13 @@ export const TemplateBuilder = () => {
     setShowPublishModal(true);
   };
 
-  const handleSaveDraft = async (): Promise<boolean> => {
+  const handleSaveDraft = async (
+    showSuccessToast = true,
+  ): Promise<TemplateDraftIdentity | null> => {
     if (!user) {
       setBuilderError('Please log in before saving a template draft.');
       addToast('error', 'Please log in before saving a template draft.');
-      return false;
+      return null;
     }
 
     const { workflow, validation } = convertAndValidateBuilderWorkflow(steps);
@@ -480,7 +485,7 @@ export const TemplateBuilder = () => {
       setBuilderError(message);
       addToast('error', message);
       setSaveState('failed');
-      return false;
+      return null;
     }
 
     setSaveState('saving');
@@ -515,14 +520,14 @@ export const TemplateBuilder = () => {
       setPublishCoverFile(null);
       setMaterialFiles({});
       setSaveState('saved');
-      addToast('success', 'Draft saved to your account.');
-      return true;
+      if (showSuccessToast) addToast('success', 'Draft saved to your account.');
+      return saved.identity;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Draft save failed.';
       setBuilderError(message);
       setSaveState('failed');
       addToast('error', message);
-      return false;
+      return null;
     }
   };
 
@@ -530,13 +535,27 @@ export const TemplateBuilder = () => {
     const issue = getPublishGateIssue(templateTitle, steps);
     if (issue) return showPublishGateIssue(issue);
 
-    const saved = await handleSaveDraft();
-    if (!saved) return;
-    addToast(
-      'info',
-      'Draft and cover are saved. Review submission will be connected in M5-4.',
-    );
-    setShowPublishModal(false);
+    setReviewState('submitting');
+    const savedIdentity = await handleSaveDraft(false);
+    if (!savedIdentity) {
+      setReviewState('failed');
+      return;
+    }
+
+    try {
+      await submitTemplateForReview(savedIdentity);
+      setReviewState('submitted');
+      setShowPublishModal(false);
+      setBuilderError(null);
+      addToast('success', 'Template submitted. It is now under review.');
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'Review submission failed.';
+      setReviewState('failed');
+      setBuilderError(message);
+      addToast('error', message);
+    }
   };
 
   return (
@@ -550,13 +569,19 @@ export const TemplateBuilder = () => {
           <div className="flex items-center gap-4">
             <span className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
               <span className={`w-2 h-2 rounded-full ${
-                saveState === 'saved'
+                reviewState === 'submitted'
+                  ? 'bg-amber-500'
+                  : saveState === 'saved'
                   ? 'bg-green-500'
                   : saveState === 'failed'
                     ? 'bg-red-500'
                     : 'bg-slate-300 dark:bg-slate-600'
               }`}></span>
-              {saveState === 'saving'
+              {reviewState === 'submitted'
+                ? 'In review'
+                : reviewState === 'submitting'
+                  ? 'Submitting...'
+                  : saveState === 'saving'
                 ? 'Saving...'
                 : saveState === 'saved'
                   ? 'Saved'
@@ -568,7 +593,7 @@ export const TemplateBuilder = () => {
               variant="outline"
               size="sm"
               onClick={() => void handleSaveDraft()}
-              disabled={saveState === 'saving'}
+              disabled={saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
             >
               {saveState === 'saving' ? 'Saving...' : 'Save draft'}
             </Button>
@@ -576,13 +601,21 @@ export const TemplateBuilder = () => {
               variant="gradient"
               size="sm"
               onClick={handleOpenPublish}
-              disabled={saveState === 'saving'}
+              disabled={saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
             >
-              Publish
+              {reviewState === 'submitted' ? 'Under review' : 'Submit for review'}
             </Button>
           </div>
         </div>
       </div>
+
+      {reviewState === 'submitted' && (
+        <div className="bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
+          <div className="max-w-7xl mx-auto px-4 py-3 text-center text-sm font-medium text-amber-900 dark:text-amber-200">
+            Submitted for review. This saved version is now read-only.
+          </div>
+        </div>
+      )}
 
       {/* Rewards Banner */}
       <div className="bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
@@ -615,7 +648,9 @@ export const TemplateBuilder = () => {
         </div>
       )}
 
-      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-8 grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+      <div className={`flex-1 max-w-7xl mx-auto w-full px-4 py-8 grid grid-cols-1 md:grid-cols-12 gap-8 items-start ${
+        reviewState === 'submitted' ? 'pointer-events-none opacity-75' : ''
+      }`}>
         {/* Left Column - Outline */}
         <div className="md:col-span-4 lg:col-span-3 space-y-6 md:sticky top-44">
           <div>
@@ -746,7 +781,7 @@ export const TemplateBuilder = () => {
                 <span>
                   Result from This Step
                   <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
-                    (Choose from Dashboard — the fields below fill automatically)
+                    (Choose from Dashboard â the fields below fill automatically)
                   </span>
                 </span>
               </h3>
@@ -1138,11 +1173,11 @@ export const TemplateBuilder = () => {
         )}
       </Modal>
 
-      {/* Publish Modal */}
+      {/* Review submission modal */}
       <Modal 
         isOpen={showPublishModal && !publishGateIssue}
         onClose={() => setShowPublishModal(false)}
-        title="Publish Template"
+        title="Submit Template for Review"
         className="max-w-md"
       >
         <div className="space-y-6">
@@ -1244,18 +1279,20 @@ export const TemplateBuilder = () => {
             </div>
             
             <div className="pt-4 flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800">
-              <Button variant="outline" onClick={() => setShowPublishModal(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setShowPublishModal(false)} disabled={reviewState === 'submitting'}>Cancel</Button>
               <Button
                 variant="gradient"
                 onClick={() => void handleConfirmPublish()}
-                disabled={!publishCover || saveState === 'saving'}
+                disabled={!publishCover || saveState === 'saving' || reviewState === 'submitting'}
               >
-                {saveState === 'saving' ? 'Saving...' : 'Save cover & validate'}
+                {reviewState === 'submitting' || saveState === 'saving'
+                  ? 'Submitting...'
+                  : 'Submit for review'}
               </Button>
             </div>
         </div>
       </Modal>
-      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-17-M5-2.1</p>
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-17-M5-4</p>
     </div>
   );
 };
