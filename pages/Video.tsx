@@ -184,6 +184,12 @@ export const Video: React.FC = () => {
     window.location.hash = '#/pricing';
   };
 
+  const handleProRequired = () => {
+    window.location.hash = '#/pricing';
+  };
+
+  const hasProAccess = user?.plan === 'Pro' || Boolean(user?.isWhitelisted);
+
   const handleCopyPrompt = async (prompt: string) => {
     try {
       await navigator.clipboard.writeText(prompt || '');
@@ -467,10 +473,10 @@ export const Video: React.FC = () => {
         </div>
 
         {activeFeature === 'image-to-video' && (
-          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
+          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
         )}
         {activeFeature === 'motion-control' && (
-          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
+          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
         )}
         {activeFeature === 'lip-sync' && (
           <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />

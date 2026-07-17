@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { Analytics } from '@vercel/analytics/react';
 import { StoreProvider } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
@@ -49,6 +49,9 @@ const RequireAuth = ({ children }: React.PropsWithChildren) => {
   if (authLoading) return <PageLoader />;
 
   if (!user) {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('postAuthDestination', `${location.pathname}${location.search}`);
+    }
     return (
       <Navigate
         to="/login"
@@ -63,6 +66,7 @@ const RequireAuth = ({ children }: React.PropsWithChildren) => {
 
 const AppContent = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const { user } = useStore();
   const [showReward, setShowReward] = React.useState(false);
 
@@ -72,6 +76,16 @@ const AppContent = () => {
       sessionStorage.setItem('rewardCelebrationShown', 'true');
     }
   }, [user]);
+
+  React.useEffect(() => {
+    if (!user) return;
+    const destination = sessionStorage.getItem('postAuthDestination');
+    if (!destination) return;
+    sessionStorage.removeItem('postAuthDestination');
+    if (destination.startsWith('/') && !destination.startsWith('//') && location.pathname !== destination) {
+      navigate(destination, { replace: true });
+    }
+  }, [user, location.pathname, navigate]);
   
   React.useEffect(() => {
     if (window.location.hash.includes('error=access_denied')) {
@@ -116,7 +130,14 @@ const AppContent = () => {
           />
           <Route path="/templates/:templateId" element={<TemplateDetail />} />
           <Route path="/modify" element={<Modify />} />
-          <Route path="/video" element={<Video />} />
+          <Route
+            path="/video"
+            element={
+              <RequireAuth>
+                <Video />
+              </RequireAuth>
+            }
+          />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Login isSignup />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />

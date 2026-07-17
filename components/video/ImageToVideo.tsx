@@ -14,11 +14,13 @@ interface ImageToVideoProps {
   initialImage: string | null;
   userCredits: number;
   onInsufficientCredits: (requiredCredits: number) => void;
+  isPro: boolean;
+  onProRequired: () => void;
 }
 
 const formatDuration = (seconds?: number) => `00:${String(seconds || 3).padStart(2, '0')}`;
 
-export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits }) => {
+export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
   const [prompt, setPrompt] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedEndImage, setSelectedEndImage] = useState<string | null>(null);
@@ -53,6 +55,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     setSelectedEndImage(existing.endImageUrl || null);
     setDuration(existing.duration || 3);
     setResolution(existing.resolution || '720p');
+    setGenerationCount(existing.requestedOutputCount || 1);
     setGenerateAudio(existing.generateAudio !== false);
 
     onGenerate({
@@ -173,6 +176,10 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       alert('Please upload a first frame image.');
       return;
     }
+    if (!isPro && (resolution === '1080p' || generationCount > 1)) {
+      onProRequired();
+      return;
+    }
     const requiredCredits = estimateVideoCredits({
       mode: 'image_to_video', duration, resolution, generationCount, generateAudio,
     });
@@ -231,6 +238,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
             duration,
             resolution,
             generationCount: 1,
+            requestedOutputCount: generationCount,
             generateAudio,
             allowConcurrent: generationCount > 1,
             clientJobId: placeholderId,
@@ -369,7 +377,13 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                   {['720p', '1080p'].map((res) => (
                     <button
                       key={res}
-                      onClick={() => setResolution(res as any)}
+                      onClick={() => {
+                        if (res === '1080p' && !isPro) {
+                          onProRequired();
+                          return;
+                        }
+                        setResolution(res as '720p' | '1080p');
+                      }}
                       className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                         resolution === res 
                           ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100' 
@@ -378,7 +392,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                     >
                       {res}
                       {res !== '720p' && (
-                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-pink-400 to-purple-500 px-1 text-[8px] font-bold text-white shadow-sm">PRO</span>
+                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-purple-500 to-pink-500 px-1 text-[8px] font-bold text-white shadow-sm">PRO</span>
                       )}
                     </button>
                   ))}
@@ -423,7 +437,13 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                   {[1, 2, 3, 4].map((count) => (
                     <button
                       key={count}
-                      onClick={() => setGenerationCount(count)}
+                      onClick={() => {
+                        if (count > 1 && !isPro) {
+                          onProRequired();
+                          return;
+                        }
+                        setGenerationCount(count);
+                      }}
                       className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                         generationCount === count 
                           ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100' 
@@ -431,6 +451,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                       }`}
                     >
                       {count}
+                      {count > 1 && (
+                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-purple-500 to-pink-500 px-1 text-[8px] font-bold text-white shadow-sm">PRO</span>
+                      )}
                     </button>
                   ))}
                 </div>

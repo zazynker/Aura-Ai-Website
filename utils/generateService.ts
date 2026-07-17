@@ -292,6 +292,7 @@ export interface VideoGenerateOptions {
   resolution?: "720p" | "1080p";
   characterOrientation?: "video" | "image";
   generationCount?: number;
+  requestedOutputCount?: number;
   generateAudio?: boolean;
   allowConcurrent?: boolean;
   clientJobId?: string;
@@ -356,6 +357,7 @@ export interface PendingVideoJob {
   resolution?: "720p" | "1080p";
   characterOrientation?: "video" | "image";
   generationCount?: number;
+  requestedOutputCount?: number;
   generateAudio?: boolean;
   creditsUsed?: number;
   createdAt: number;
@@ -366,6 +368,7 @@ const VIDEO_ERROR_MESSAGES: Record<number, string> = {
   400: "Invalid request. Please check your inputs and try again.",
   401: "Please log in to generate videos.",
   402: "Not enough credits for video generation.",
+  403: "A Pro plan is required for this video setting.",
   429: "Slow down! Please wait a moment before generating more videos.",
   500: "Video generation server error. Please try again.",
   502: "Video service temporarily unavailable. The job may still be running. Use Resume instead of Generate.",
@@ -527,6 +530,7 @@ export async function generateVideo(
     resolution,
     characterOrientation,
     generationCount,
+    requestedOutputCount,
     generateAudio,
     allowConcurrent = false,
     clientJobId,
@@ -584,6 +588,7 @@ export async function generateVideo(
         resolution,
         characterOrientation,
         generationCount,
+        requestedOutputCount,
         generateAudio,
       }),
     });
@@ -642,6 +647,7 @@ export async function generateVideo(
       resolution,
       characterOrientation,
       generationCount,
+      requestedOutputCount,
       generateAudio,
       creditsUsed: Number(submitData.creditsUsed) || 0,
       createdAt: Date.now(),

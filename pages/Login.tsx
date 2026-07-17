@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Sparkles, ArrowRight, Mail } from 'lucide-react';
@@ -39,6 +39,7 @@ function isAllowedEmail(email: string): boolean {
 
 export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { browsing, saveBrowsingState, addToast } = useStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -69,6 +70,15 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   };
 
   const handleRedirect = () => {
+    const routeDestination = (location.state as { from?: string } | null)?.from;
+    const storedDestination = sessionStorage.getItem('postAuthDestination');
+    const authDestination = routeDestination || storedDestination;
+    if (authDestination?.startsWith('/') && !authDestination.startsWith('//')) {
+      sessionStorage.removeItem('postAuthDestination');
+      navigate(authDestination, { replace: true });
+      return;
+    }
+
     if (browsing.intendedDestination) {
       const dest = browsing.intendedDestination;
       saveBrowsingState({ intendedDestination: null });

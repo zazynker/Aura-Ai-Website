@@ -18,6 +18,8 @@ interface MotionControlProps {
   initialImage: string | null;
   userCredits: number;
   onInsufficientCredits: (requiredCredits: number) => void;
+  isPro: boolean;
+  onProRequired: () => void;
 }
 
 type DirectionMatch = 'video' | 'image';
@@ -25,7 +27,7 @@ type Resolution = '720p' | '1080p';
 
 const formatDuration = (seconds?: number) => `00:${String(seconds || 5).padStart(2, '0')}`;
 
-export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits }) => {
+export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -60,6 +62,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
     setSelectedVideo(existing.inputVideoUrl || null);
     setDirectionMatch(existing.characterOrientation || 'video');
     setResolution(existing.resolution || '720p');
+    setQuantity(existing.requestedOutputCount || 1);
     setDuration(existing.duration || 5);
 
     onGenerate({
@@ -190,6 +193,10 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       alert('Please enter a motion prompt.');
       return;
     }
+    if (!isPro && (resolution === '1080p' || quantity > 1)) {
+      onProRequired();
+      return;
+    }
 
     const requiredCredits = estimateVideoCredits({
       mode: 'motion_control', duration, resolution, generationCount: quantity,
@@ -199,24 +206,28 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       return;
     }
 
-    const placeholderId = `motion-${Date.now()}`;
-    const pendingResult: VideoResult = {
-      id: placeholderId,
-      type: 'Motion Control',
-      model: directionMatch === 'video'
-        ? 'Motion Control · Video Orientation'
-        : 'Motion Control · Image Orientation',
-      resolution,
-      prompt: motionPrompt,
-      duration: formatDuration(duration),
-      aspectRatio: '16:9',
-      timestamp: 'Uploading',
-      bgColor: 'bg-indigo-900/50',
-      sourceImage: selectedImage,
-      status: 'pending',
-    };
-
-    onGenerate(pendingResult);
+    const batchTimestamp = Date.now();
+    const placeholderIds = Array.from(
+      { length: quantity },
+      (_, index) => `motion-${batchTimestamp}-${index + 1}`,
+    );
+    placeholderIds.forEach((placeholderId, index) => {
+      onGenerate({
+        id: placeholderId,
+        type: 'Motion Control',
+        model: directionMatch === 'video'
+          ? 'Motion Control · Video Orientation'
+          : 'Motion Control · Image Orientation',
+        resolution,
+        prompt: motionPrompt,
+        duration: formatDuration(duration),
+        aspectRatio: '16:9',
+        timestamp: index === 0 ? 'Uploading' : 'Queued',
+        bgColor: 'bg-indigo-900/50',
+        sourceImage: selectedImage,
+        status: 'pending',
+      });
+    });
     setIsGenerating(true);
 
     try {
@@ -227,39 +238,46 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         throw new Error('Both character image and motion reference video are required.');
       }
 
-      onUpdate?.(placeholderId, {
+      placeholderIds.forEach((placeholderId) => onUpdate?.(placeholderId, {
         sourceImage: characterImageUrl,
-        timestamp: 'Generating',
-      });
+        timestamp: 'Submitting',
+      }));
 
-      const result = await generateVideo({
-        mode: 'motion_control',
-        prompt: motionPrompt,
-        startImageUrl: characterImageUrl,
-        videoUrl: driverVideoUrl,
-        characterOrientation: directionMatch,
-        duration,
-        resolution,
-        generationCount: quantity,
-        clientJobId: placeholderId,
-        onJobSubmitted: (job) => {
-          setPendingJob(job);
-          onUpdate?.(placeholderId, {
-            status: 'pending',
-            requestId: job.requestId,
-            creditsUsed: job.creditsUsed,
+      await Promise.all(
+        placeholderIds.map(async (placeholderId) => {
+          const result = await generateVideo({
+            mode: 'motion_control',
+            prompt: motionPrompt,
+            startImageUrl: characterImageUrl,
+            videoUrl: driverVideoUrl,
+            characterOrientation: directionMatch,
+            duration,
+            resolution,
+            generationCount: 1,
+            requestedOutputCount: quantity,
+            allowConcurrent: quantity > 1,
+            clientJobId: placeholderId,
+            onJobSubmitted: (job) => {
+              setPendingJob(job);
+              onUpdate?.(placeholderId, {
+                status: 'pending',
+                timestamp: 'Generating',
+                requestId: job.requestId,
+                creditsUsed: job.creditsUsed,
+              });
+            },
           });
-        },
-      });
 
-      applyResult(placeholderId, result);
+          applyResult(placeholderId, result);
+        }),
+      );
     } catch (error) {
       console.error('Motion control error:', error);
-      onUpdate?.(placeholderId, {
+      placeholderIds.forEach((placeholderId) => onUpdate?.(placeholderId, {
         status: 'failed',
         error: error instanceof Error ? error.message : 'Motion-control generation failed. Please try again.',
         timestamp: 'Failed',
-      });
+      }));
       alert(error instanceof Error ? error.message : 'Motion-control generation failed. Please try again.');
     } finally {
       setIsGenerating(false);
@@ -471,17 +489,23 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
 
       <div className="relative z-50 w-full shrink-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-4px_24px_rgba(0,0,0,0.05)] backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]">
         {isParamsOpen && (
-          <div className="absolute bottom-[calc(100%+8px)] left-4 w-[calc(100%-32px)] rounded-xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-            <div className="space-y-5">
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Mode</label>
-                <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+          <div className="absolute bottom-[calc(100%+8px)] left-4 w-[calc(100%-32px)] rounded-xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-800">
+            <div className="mb-4 flex flex-col gap-5">
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Resolution</label>
+                <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-700 dark:bg-slate-800/50">
                   {(['720p', '1080p'] as const).map((res) => (
                     <button
                       key={res}
-                      onClick={() => setResolution(res)}
+                      onClick={() => {
+                        if (res === '1080p' && !isPro) {
+                          onProRequired();
+                          return;
+                        }
+                        setResolution(res);
+                      }}
                       type="button"
-                      className={`relative flex-1 rounded-md py-2 text-sm font-semibold transition-all ${
+                      className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                         resolution === res
                           ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
                           : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
@@ -489,7 +513,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
                     >
                       {res}
                       {res === '1080p' && (
-                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-pink-400 to-purple-500 px-1 text-[8px] font-bold text-white shadow-sm">
+                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-purple-500 to-pink-500 px-1 text-[8px] font-bold text-white shadow-sm">
                           PRO
                         </span>
                       )}
@@ -498,15 +522,21 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Number of Outputs</label>
-                <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+              <div>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">Generation Count</label>
+                <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5 dark:border-slate-700 dark:bg-slate-800/50">
                   {[1, 2, 3, 4].map((num) => (
                     <button
                       key={num}
-                      onClick={() => setQuantity(num)}
+                      onClick={() => {
+                        if (num > 1 && !isPro) {
+                          onProRequired();
+                          return;
+                        }
+                        setQuantity(num);
+                      }}
                       type="button"
-                      className={`relative flex-1 rounded-md py-2 text-sm font-semibold transition-all ${
+                      className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                         quantity === num
                           ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
                           : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
@@ -514,13 +544,16 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
                     >
                       {num}
                       {num > 1 && (
-                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-pink-400 to-purple-500 px-1 text-[8px] font-bold text-white shadow-sm">
+                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-purple-500 to-pink-500 px-1 text-[8px] font-bold text-white shadow-sm">
                           PRO
                         </span>
                       )}
                     </button>
                   ))}
                 </div>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
+                  Creates separate variations in parallel. Total credits equal the single-video cost × count.
+                </p>
               </div>
             </div>
           </div>
@@ -529,28 +562,26 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         <div className="flex items-center gap-3">
           <button
             onClick={() => setIsParamsOpen(!isParamsOpen)}
-            className="flex h-11 min-w-[108px] items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800"
+            className="flex h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800"
             type="button"
           >
-            <div className="flex items-center gap-1.5">
-              <Settings className="h-4 w-4 text-slate-500" />
-              <span className="text-xs font-semibold text-slate-700 dark:text-slate-200">
-                {resolution} · {quantity}
-              </span>
-            </div>
+            <Settings className="h-4 w-4 text-slate-500" />
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
+              {resolution} · {duration}s · {quantity}
+            </span>
             <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${isParamsOpen ? 'rotate-180' : ''}`} />
           </button>
 
           <button
             onClick={handleGenerate}
             disabled={isGenerateDisabled}
-            className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 px-4 text-sm font-semibold text-white shadow-md transition-all hover:from-blue-700 hover:to-indigo-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-slate-900"
+            className="flex h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 px-4 text-sm font-semibold text-white shadow-md transition-all hover:from-purple-700 hover:to-pink-700 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-slate-900"
             type="button"
           >
             {isGenerating ? (
               <>
                 <RefreshCw className="h-4 w-4 animate-spin text-white" />
-                <span>{pendingJob ? 'Checking...' : 'Applying Motion...'}</span>
+                <span>{pendingJob ? 'Checking...' : 'Generating...'}</span>
               </>
             ) : (
               <>

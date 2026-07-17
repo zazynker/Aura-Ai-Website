@@ -15,6 +15,7 @@ type RequestBody = {
   resolution?: '720p' | '1080p';
   characterOrientation?: CharacterOrientation;
   generationCount?: number;
+  requestedOutputCount?: number;
   generateAudio?: boolean;
 };
 
@@ -146,10 +147,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
     }
 
+    const requestedOutputCount = validateRequestedOutputCount(mode, body);
     const endpoint = getKlingEndpoint(mode, body);
     const requiredCredits = estimateVideoCredits(mode, body);
     await checkRateLimit(supabase, user.id);
     const userData = await checkCredits(supabase, user.id, requiredCredits);
+    assertProAccess(mode, body, requestedOutputCount, userData);
     const payload = buildFalPayload(mode, body);
 
     console.log('[generate-video] Submitting Fal job:', {
@@ -159,6 +162,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       duration: body.duration,
       normalizedDuration: mode === 'image_to_video' ? normalizeDuration(body.duration) : undefined,
       resolution: body.resolution,
+      requestedOutputCount,
       isWhitelisted: userData.is_whitelisted,
       payloadKeys: Object.keys(payload),
     });
@@ -246,6 +250,39 @@ function parseBody(body: unknown): RequestBody {
 
 function isVideoMode(value: string): value is VideoMode {
   return value === 'image_to_video' || value === 'motion_control' || value === 'lip_sync';
+}
+
+function validateRequestedOutputCount(mode: VideoMode, body: RequestBody): number {
+  const value = Number(body.requestedOutputCount ?? body.generationCount ?? 1);
+  if (!Number.isInteger(value) || value < 1 || value > 4) {
+    throw new ApiError(400, 'INVALID_OUTPUT_COUNT', 'Output count must be an integer from 1 to 4');
+  }
+  if (mode === 'lip_sync' && value !== 1) {
+    throw new ApiError(400, 'MULTIPLE_OUTPUTS_UNSUPPORTED', 'Lip Sync supports one output per request');
+  }
+  return value;
+}
+
+function assertProAccess(
+  mode: VideoMode,
+  body: RequestBody,
+  requestedOutputCount: number,
+  userData: { plan?: unknown; is_whitelisted: boolean },
+) {
+  const hasProAccess =
+    String(userData.plan || '').toLowerCase() === 'pro' || userData.is_whitelisted;
+  const usesProResolution =
+    (mode === 'image_to_video' || mode === 'motion_control') && body.resolution === '1080p';
+  const usesMultipleOutputs =
+    (mode === 'image_to_video' || mode === 'motion_control') && requestedOutputCount > 1;
+
+  if (!hasProAccess && (usesProResolution || usesMultipleOutputs)) {
+    throw new ApiError(
+      403,
+      'PRO_REQUIRED',
+      'A Pro plan is required for 1080p resolution and multiple video outputs',
+    );
+  }
 }
 
 function getHeaderValue(value: string | string[] | undefined): string | undefined {
