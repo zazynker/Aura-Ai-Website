@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Settings, ChevronDown, ArrowRightLeft, ImagePlus, 
-  Image as ImageIcon, RefreshCw, Sparkles 
+  Image as ImageIcon, RefreshCw, Sparkles, Trash2, Maximize2,
 } from 'lucide-react';
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
 import { estimateVideoCredits } from '../../context/StoreContext';
 import type { WorkflowHandoff } from '../workflow/workflowManager';
+import { MediaLightbox } from './MediaLightbox';
 
 interface ImageToVideoProps {
   onGenerate: (result: VideoResult) => void;
@@ -39,6 +40,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
   const restoredPendingRef = useRef(false);
   const [startImageFile, setStartImageFile] = useState<File | null>(null);
   const [endImageFile, setEndImageFile] = useState<File | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; alt: string } | null>(null);
 
   useEffect(() => {
     if (initialImage) {
@@ -328,17 +330,57 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
           </div>
           
           <div className="flex items-center gap-3">
-            <div 
-              className="group relative flex h-32 flex-1 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800 transition-all"
-              onClick={() => fileInputRef.current?.click()}
-            >
+            <div className="group relative flex aspect-square flex-1 flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-all hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800">
               {selectedImage ? (
-                <img src={selectedImage} alt="First frame" className="h-full w-full object-cover" />
-              ) : (
                 <>
+                  <button
+                    type="button"
+                    className="absolute inset-0 z-10 cursor-zoom-in"
+                    onClick={() => setPreviewImage({ url: selectedImage, alt: 'First frame' })}
+                    aria-label="Preview first frame"
+                  >
+                    <img src={selectedImage} alt="First frame" className="h-full w-full object-contain" />
+                  </button>
+                  <div className="absolute right-2 top-2 z-20 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage({ url: selectedImage, alt: 'First frame' })}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                      title="Preview image"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                      title="Replace image"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedImage(null);
+                        setStartImageFile(null);
+                        if (fileInputRef.current) fileInputRef.current.value = '';
+                      }}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-red-500"
+                      title="Delete image"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="flex h-full w-full cursor-pointer flex-col items-center justify-center"
+                  onClick={() => fileInputRef.current?.click()}
+                >
                   <ImagePlus className="mb-2 h-6 w-6 text-slate-400 group-hover:text-purple-500 transition-colors" />
                   <span className="text-xs font-medium text-slate-500">First frame</span>
-                </>
+                </button>
               )}
               <input 
                 type="file" 
@@ -353,17 +395,57 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
               <ArrowRightLeft className="h-4 w-4 text-slate-400" />
             </div>
 
-            <div 
-              className="group relative flex h-32 flex-1 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800 transition-all"
-              onClick={() => endFileInputRef.current?.click()}
-            >
+            <div className="group relative flex aspect-square flex-1 flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-all hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800">
               {selectedEndImage ? (
-                <img src={selectedEndImage} alt="End frame" className="h-full w-full object-cover" />
-              ) : (
                 <>
+                  <button
+                    type="button"
+                    className="absolute inset-0 z-10 cursor-zoom-in"
+                    onClick={() => setPreviewImage({ url: selectedEndImage, alt: 'End frame' })}
+                    aria-label="Preview end frame"
+                  >
+                    <img src={selectedEndImage} alt="End frame" className="h-full w-full object-contain" />
+                  </button>
+                  <div className="absolute right-2 top-2 z-20 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage({ url: selectedEndImage, alt: 'End frame' })}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                      title="Preview image"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => endFileInputRef.current?.click()}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                      title="Replace image"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedEndImage(null);
+                        setEndImageFile(null);
+                        if (endFileInputRef.current) endFileInputRef.current.value = '';
+                      }}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-red-500"
+                      title="Delete image"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="flex h-full w-full cursor-pointer flex-col items-center justify-center"
+                  onClick={() => endFileInputRef.current?.click()}
+                >
                   <ImageIcon className="mb-2 h-6 w-6 text-slate-400 group-hover:text-purple-500 transition-colors" />
                   <span className="text-xs font-medium text-slate-500">End frame (opt)</span>
-                </>
+                </button>
               )}
               <input 
                 type="file" 
@@ -486,7 +568,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                   ))}
                 </div>
                 <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
-                  Creates separate variations in parallel. Total credits equal the single-video cost Ã count.
+                  Creates separate variations in parallel. Total credits equal the single-video cost × count.
                 </p>
               </div>
             </div>
@@ -500,7 +582,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
           >
             <Settings className="h-4 w-4 text-slate-500" />
             <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              {resolution} Â· {duration}s Â· {generateAudio ? 'Audio on' : 'Audio off'} Â· {generationCount}
+              {resolution} · {duration}s · {generateAudio ? 'Audio on' : 'Audio off'} · {generationCount}
             </span>
             <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${isParamsOpen ? 'rotate-180' : ''}`} />
           </button>
@@ -523,6 +605,12 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
           </button>
         </div>
       </div>
+      <MediaLightbox
+        url={previewImage?.url || null}
+        type="image"
+        alt={previewImage?.alt}
+        onClose={() => setPreviewImage(null)}
+      />
     </>
   );
 };

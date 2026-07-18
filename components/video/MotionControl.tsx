@@ -6,12 +6,15 @@ import {
   RefreshCw,
   Trash2,
   Sparkles,
+  Maximize2,
+  Play,
 } from 'lucide-react';
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
 import { estimateVideoCredits } from '../../context/StoreContext';
 import type { WorkflowHandoff } from '../workflow/workflowManager';
+import { MediaLightbox } from './MediaLightbox';
 
 interface MotionControlProps {
   onGenerate: (result: VideoResult) => void;
@@ -44,6 +47,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
   const [isParamsOpen, setIsParamsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [pendingJob, setPendingJob] = useState<PendingVideoJob | null>(null);
+  const [previewMedia, setPreviewMedia] = useState<{ url: string; type: 'image' | 'video'; alt: string } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
@@ -98,8 +102,8 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       id: existing.clientJobId,
       type: 'Motion Control',
       model: existing.characterOrientation === 'image'
-        ? 'Motion Control Â· Image Orientation'
-        : 'Motion Control Â· Video Orientation',
+        ? 'Motion Control · Image Orientation'
+        : 'Motion Control · Video Orientation',
       resolution: existing.resolution || '720p',
       prompt: existing.prompt || '',
       duration: formatDuration(existing.duration),
@@ -245,8 +249,8 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         id: placeholderId,
         type: 'Motion Control',
         model: directionMatch === 'video'
-          ? 'Motion Control Â· Video Orientation'
-          : 'Motion Control Â· Image Orientation',
+          ? 'Motion Control · Video Orientation'
+          : 'Motion Control · Image Orientation',
         resolution,
         prompt: motionPrompt,
         duration: formatDuration(duration),
@@ -347,21 +351,39 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
               <div className="group relative flex aspect-square w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-all dark:border-slate-700 dark:bg-slate-800/50">
                 {selectedVideo ? (
                   <>
-                    <div className="absolute inset-0 flex items-center justify-center bg-slate-900/5 dark:bg-slate-900">
+                    <button
+                      type="button"
+                      className="absolute inset-0 flex cursor-zoom-in items-center justify-center bg-slate-900/5 dark:bg-slate-900"
+                      onClick={() => setPreviewMedia({ url: selectedVideo, type: 'video', alt: 'Driver video' })}
+                      aria-label="Preview driver video"
+                    >
                       <video
                         src={selectedVideo}
                         className="h-full w-full object-contain"
-                        autoPlay
-                        loop
                         muted
                         playsInline
+                        preload="metadata"
                         onLoadedMetadata={(event) => {
                           const detectedDuration = Math.ceil(event.currentTarget.duration || 5);
                           setDuration(Math.max(1, detectedDuration));
                         }}
                       />
-                    </div>
-                    <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                      <span className="pointer-events-none absolute flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white shadow-lg">
+                        <Play className="ml-0.5 h-5 w-5" />
+                      </span>
+                    </button>
+                    <div className="absolute right-2 top-2 z-20 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreviewMedia({ url: selectedVideo, type: 'video', alt: 'Driver video' });
+                        }}
+                        className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                        title="Preview video"
+                        type="button"
+                      >
+                        <Maximize2 className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -424,10 +446,26 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
               <div className="group relative flex aspect-square w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-all dark:border-slate-700 dark:bg-slate-800/50">
                 {selectedImage ? (
                   <>
-                    <div className="absolute inset-0 flex items-center justify-center bg-slate-900/5 dark:bg-slate-900">
+                    <button
+                      type="button"
+                      className="absolute inset-0 flex cursor-zoom-in items-center justify-center bg-slate-900/5 dark:bg-slate-900"
+                      onClick={() => setPreviewMedia({ url: selectedImage, type: 'image', alt: 'Character image' })}
+                      aria-label="Preview character image"
+                    >
                       <img src={selectedImage} alt="Character" className="h-full w-full object-contain" />
-                    </div>
-                    <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                    </button>
+                    <div className="absolute right-2 top-2 z-20 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreviewMedia({ url: selectedImage, type: 'image', alt: 'Character image' });
+                        }}
+                        className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                        title="Preview image"
+                        type="button"
+                      >
+                        <Maximize2 className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -581,7 +619,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
                   ))}
                 </div>
                 <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
-                  Creates separate variations in parallel. Total credits equal the single-video cost Ã count.
+                  Creates separate variations in parallel. Total credits equal the single-video cost × count.
                 </p>
               </div>
             </div>
@@ -596,7 +634,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
           >
             <Settings className="h-4 w-4 text-slate-500" />
             <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              {resolution} Â· {duration}s Â· {quantity}
+              {resolution} · {duration}s · {quantity}
             </span>
             <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${isParamsOpen ? 'rotate-180' : ''}`} />
           </button>
@@ -621,6 +659,12 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
           </button>
         </div>
       </div>
+      <MediaLightbox
+        url={previewMedia?.url || null}
+        type={previewMedia?.type || 'image'}
+        alt={previewMedia?.alt}
+        onClose={() => setPreviewMedia(null)}
+      />
     </>
   );
 };
