@@ -27,6 +27,10 @@ import {
   fetchTemplateDetail,
   type RealTemplateDetail,
 } from '../utils/templateDetailApi';
+import {
+  createRunIdempotencyKey,
+  startTemplateRun,
+} from '../utils/templateRunApi';
 
 const getFeatureIcon = (featureName: string) => {
   if (featureName.includes('Lip Sync')) return Mic;
@@ -45,6 +49,9 @@ export const TemplateDetail = () => {
   const [activeStep, setActiveStep] = useState<string>('');
   const [modalContent, setModalContent] = useState<{ type: string; url: string } | null>(null);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
+  const [startingRun, setStartingRun] = useState(false);
+  const startingRunRef = useRef(false);
+  const startKeyRef = useRef<string | null>(null);
 
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -113,7 +120,7 @@ export const TemplateDetail = () => {
     }
   };
 
-  const handleUseTemplate = () => {
+  const handleUseTemplate = async () => {
     if (!template || template.status !== 'published') {
       addToast('info', 'This template is not published yet.');
       return;
@@ -125,7 +132,61 @@ export const TemplateDetail = () => {
       navigate('/login');
       return;
     }
-    startWorkflow();
+    if (startingRunRef.current) return;
+
+    startingRunRef.current = true;
+    setStartingRun(true);
+    const idempotencyKey = startKeyRef.current || createRunIdempotencyKey(template.id);
+    startKeyRef.current = idempotencyKey;
+    try {
+      const run = await startTemplateRun(template.id, idempotencyKey);
+      const workflowSteps = run.steps.map((runStep, index) => {
+        const savedStep = run.workflow.steps.find((step) => step.id === runStep.stepId)
+          || run.workflow.steps[index];
+        const detailStep = template.steps.find((step) => step.id === runStep.stepId)
+          || template.steps[index];
+        const referenceResult = detailStep?.results[0]
+          || (index === run.steps.length - 1 ? template.finalResult : undefined);
+        return {
+          id: runStep.stepId,
+          runStepId: runStep.id,
+          stepNumber: runStep.stepOrder,
+          capability: runStep.capability,
+          feature: detailStep?.featureName || savedStep?.title || runStep.capability,
+          targetRoute: runStep.capability.startsWith('video.') ? '/video' : '/modify',
+          reusableMaterials: Boolean(
+            detailStep?.materials.some((material) => material.permission === 'download'),
+          ),
+          prompt: detailStep?.prompt || savedStep?.instruction || '',
+          settings: savedStep?.parameters || {},
+          result: referenceResult?.url
+            ? {
+                type: referenceResult.type,
+                url: referenceResult.url,
+                thumbnail: referenceResult.thumbnail,
+              }
+            : undefined,
+        };
+      });
+
+      startWorkflow({
+        runId: run.id,
+        templateId: run.templateId,
+        templateVersionId: run.templateVersionId,
+        status: run.status,
+        steps: workflowSteps,
+      });
+      startKeyRef.current = null;
+      addToast('success', 'Workflow started. Your progress is now saved.');
+      navigate(workflowSteps[0]?.targetRoute || '/dashboard');
+    } catch (error) {
+      startingRunRef.current = false;
+      setStartingRun(false);
+      addToast(
+        'error',
+        error instanceof Error ? error.message : 'Could not start this workflow.',
+      );
+    }
   };
 
   const handleShare = async () => {
@@ -198,8 +259,13 @@ export const TemplateDetail = () => {
             <Share className="w-4 h-4" />
             Share
           </Button>
-          <Button variant="gradient" onClick={handleUseTemplate} disabled={!isPublished}>
-            {primaryButtonLabel}
+          <Button
+            variant="gradient"
+            onClick={() => void handleUseTemplate()}
+            disabled={!isPublished || startingRun}
+          >
+            {startingRun && <Loader2 className="w-4 h-4 animate-spin" />}
+            {startingRun ? 'Starting…' : primaryButtonLabel}
           </Button>
         </div>
       </div>
@@ -526,7 +592,7 @@ export const TemplateDetail = () => {
           </div>
         </div>
       )}
-      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 pt-4 select-all">Build: 2026-07-18-M5-5.1</p>
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 pt-4 select-all">Build: 2026-07-18-M5-8</p>
     </div>
   );
 };

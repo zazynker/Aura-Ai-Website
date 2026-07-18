@@ -12,6 +12,7 @@ export const WorkflowDock = () => {
 
   const [position, setPosition] = useState({ x: 24, y: window.innerHeight - 300 });
   const [isDragging, setIsDragging] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; initX: number; initY: number } | null>(null);
   const dockRef = useRef<HTMLDivElement>(null);
 
@@ -127,7 +128,26 @@ export const WorkflowDock = () => {
   };
 
   const handleViewResult = (step: WorkflowStep) => {
+    if (!step.result?.url) {
+      addToast('info', 'This step has no reference result to preview.');
+      return;
+    }
     setModalStep(step);
+  };
+
+  const handleCancelWorkflow = async () => {
+    if (isCancelling) return;
+    setIsCancelling(true);
+    try {
+      await clearWorkflow(true);
+      addToast('info', 'Workflow cancelled. Your run history was kept.');
+    } catch (error) {
+      addToast(
+        'error',
+        error instanceof Error ? error.message : 'Could not cancel this workflow.',
+      );
+      setIsCancelling(false);
+    }
   };
 
   if (minimized) {
@@ -165,9 +185,10 @@ export const WorkflowDock = () => {
         <div className="absolute top-1 right-1 flex flex-col gap-1">
           <button 
             className="p-1 text-slate-400 hover:text-pink-500 no-drag rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-            onClick={(e) => { e.stopPropagation(); clearWorkflow(); }}
-            title="Close"
-            aria-label="Close workflow dock"
+            onClick={(e) => { e.stopPropagation(); void handleCancelWorkflow(); }}
+            disabled={isCancelling}
+            title="Cancel workflow"
+            aria-label="Cancel workflow and close dock"
           >
             <X className="w-3 h-3" />
           </button>
@@ -256,8 +277,13 @@ export const WorkflowDock = () => {
 
                     {/* Purple Bead (Result) */}
                     <button
-                      className="w-8 h-8 rounded-full bg-purple-500 hover:bg-purple-400 hover:scale-110 text-white flex items-center justify-center shadow-md transition-all group/btn cursor-pointer"
+                      className={`w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all group/btn ${
+                        step.result?.url
+                          ? 'bg-purple-500 hover:bg-purple-400 hover:scale-110 text-white cursor-pointer'
+                          : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                      }`}
                       onClick={() => handleViewResult(step)}
+                      disabled={!step.result?.url}
                       aria-label="View step result and details"
                       tabIndex={isExpanded ? 0 : -1}
                     >
@@ -276,7 +302,7 @@ export const WorkflowDock = () => {
       </div>
 
       {/* Full-screen media viewer overlay for step result */}
-      {modalStep && (
+      {modalStep?.result && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200">
           <button 
             onClick={() => setModalStep(null)}

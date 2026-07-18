@@ -1,106 +1,124 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { cancelTemplateRun, type TemplateRunStatus } from '../../utils/templateRunApi';
 
 export interface WorkflowStep {
   id: string;
+  runStepId: string;
   stepNumber: number;
+  capability: string;
   feature: string;
   targetRoute: string;
   reusableMaterials: boolean;
   prompt: string;
-  settings: Record<string, any>;
-  result: {
+  settings: Record<string, unknown>;
+  result?: {
     type: 'image' | 'video';
     url: string;
+    thumbnail?: string;
   };
 }
 
-export const MOCK_WORKFLOW_STEPS: WorkflowStep[] = [
-  {
-    id: 's1',
-    stepNumber: 1,
-    feature: 'Text to Image',
-    targetRoute: '/modify',
-    reusableMaterials: false,
-    prompt: 'A modern minimalist product shot, clean background, soft studio lighting, high resolution.',
-    settings: { style: 'Photorealistic', ratio: '1:1' },
-    result: { type: 'image', url: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&q=80' }
-  },
-  {
-    id: 's2',
-    stepNumber: 2,
-    feature: 'Replace Product',
-    targetRoute: '/modify',
-    reusableMaterials: true,
-    prompt: 'Place the product on a sleek wooden table with subtle plant shadows.',
-    settings: { preserveScale: true },
-    result: { type: 'image', url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&q=80' }
-  },
-  {
-    id: 's3',
-    stepNumber: 3,
-    feature: 'Modify Image',
-    targetRoute: '/modify',
-    reusableMaterials: true,
-    prompt: 'Make the lighting warmer and add a subtle lens flare.',
-    settings: { strength: 0.5 },
-    result: { type: 'image', url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&q=80' }
-  },
-  {
-    id: 's4',
-    stepNumber: 4,
-    feature: 'Image to Video',
-    targetRoute: '/video',
-    reusableMaterials: true,
-    prompt: 'Smooth slow pan from left to right, cinematic depth of field.',
-    settings: { motion: 'pan_right', duration: 4 },
-    result: { type: 'video', url: 'https://www.w3schools.com/html/mov_bbb.mp4' }
+export interface WorkflowSession {
+  runId: string;
+  templateId: string;
+  templateVersionId: string;
+  status: TemplateRunStatus;
+  steps: WorkflowStep[];
+}
+
+interface StoredWorkflowState {
+  session: WorkflowSession | null;
+  steps: WorkflowStep[] | null;
+  activeStepId: string | null;
+  minimized: boolean;
+  runId: string | null;
+  status: TemplateRunStatus | null;
+}
+
+const WORKFLOW_STORAGE_KEY = 'lazora_active_workflow';
+const ACTIVE_STEP_STORAGE_KEY = 'lazora_active_step';
+const MINIMIZED_STORAGE_KEY = 'lazora_workflow_minimized';
+
+const notifyWorkflowChanged = () => {
+  window.dispatchEvent(new Event('workflow-changed'));
+};
+
+export const startWorkflow = (session: WorkflowSession) => {
+  if (!session.runId || session.steps.length === 0) {
+    throw new Error('The workflow run has no executable steps.');
   }
-];
-
-export const startWorkflow = () => {
-  sessionStorage.setItem('lazora_active_workflow', JSON.stringify(MOCK_WORKFLOW_STEPS));
-  sessionStorage.setItem('lazora_active_step', 's1');
-  sessionStorage.setItem('lazora_workflow_minimized', 'false');
-  window.dispatchEvent(new Event('workflow-changed'));
+  sessionStorage.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(session));
+  sessionStorage.setItem(ACTIVE_STEP_STORAGE_KEY, session.steps[0].id);
+  sessionStorage.setItem(MINIMIZED_STORAGE_KEY, 'false');
+  notifyWorkflowChanged();
 };
 
-export const clearWorkflow = () => {
-  sessionStorage.removeItem('lazora_active_workflow');
-  sessionStorage.removeItem('lazora_active_step');
-  sessionStorage.removeItem('lazora_workflow_minimized');
-  window.dispatchEvent(new Event('workflow-changed'));
+const clearStoredWorkflow = () => {
+  sessionStorage.removeItem(WORKFLOW_STORAGE_KEY);
+  sessionStorage.removeItem(ACTIVE_STEP_STORAGE_KEY);
+  sessionStorage.removeItem(MINIMIZED_STORAGE_KEY);
+  notifyWorkflowChanged();
 };
 
-export const getWorkflowState = () => {
+export const getWorkflowState = (): StoredWorkflowState => {
   try {
-    const steps = JSON.parse(sessionStorage.getItem('lazora_active_workflow') || 'null');
-    const activeStepId = sessionStorage.getItem('lazora_active_step') || null;
-    const minimized = sessionStorage.getItem('lazora_workflow_minimized') === 'true';
-    return { steps, activeStepId, minimized };
+    const stored = JSON.parse(sessionStorage.getItem(WORKFLOW_STORAGE_KEY) || 'null');
+    // Old UI-only builds stored a bare array of mock Unsplash steps. Ignore it
+    // so a stale browser session can never masquerade as a real template run.
+    const session = stored && !Array.isArray(stored) && stored.runId
+      ? stored as WorkflowSession
+      : null;
+    const activeStepId = sessionStorage.getItem(ACTIVE_STEP_STORAGE_KEY) || null;
+    const minimized = sessionStorage.getItem(MINIMIZED_STORAGE_KEY) === 'true';
+    return {
+      session,
+      steps: session?.steps || null,
+      activeStepId,
+      minimized,
+      runId: session?.runId || null,
+      status: session?.status || null,
+    };
   } catch {
-    return { steps: null, activeStepId: null, minimized: false };
+    return {
+      session: null,
+      steps: null,
+      activeStepId: null,
+      minimized: false,
+      runId: null,
+      status: null,
+    };
   }
+};
+
+export const clearWorkflow = async (cancelRun = true) => {
+  const { session } = getWorkflowState();
+  if (cancelRun && session?.runId && session.status === 'started') {
+    await cancelTemplateRun(session.runId);
+  }
+  clearStoredWorkflow();
 };
 
 export const setActiveStep = (stepId: string) => {
-  sessionStorage.setItem('lazora_active_step', stepId);
-  window.dispatchEvent(new Event('workflow-changed'));
+  sessionStorage.setItem(ACTIVE_STEP_STORAGE_KEY, stepId);
+  notifyWorkflowChanged();
 };
 
 export const setWorkflowMinimized = (minimized: boolean) => {
-  sessionStorage.setItem('lazora_workflow_minimized', String(minimized));
-  window.dispatchEvent(new Event('workflow-changed'));
+  sessionStorage.setItem(MINIMIZED_STORAGE_KEY, String(minimized));
+  notifyWorkflowChanged();
 };
 
 export const useWorkflowState = () => {
   const [state, setState] = useState(getWorkflowState());
 
   useEffect(() => {
-    const handleUpdate = () => {
-      setState(getWorkflowState());
-    };
+    const handleUpdate = () => setState(getWorkflowState());
     window.addEventListener('workflow-changed', handleUpdate);
-    return () => window.removeEventListener('workflow-changed', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('workflow-changed', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
   }, []);
 
   return state;
