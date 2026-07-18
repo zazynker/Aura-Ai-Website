@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -13,6 +14,7 @@ import {
   type BuilderMaterial as Material,
 } from '../workflows/builderAdapter';
 import {
+  loadTemplateDraft,
   saveTemplateDraft,
   submitTemplateForReview,
   type PersistedMaterialMap,
@@ -126,6 +128,7 @@ const getPublishGateIssue = (
 };
 
 export const TemplateBuilder = () => {
+  const location = useLocation();
   const {
     addToast,
     generations,
@@ -169,10 +172,46 @@ export const TemplateBuilder = () => {
   const [persistedMaterials, setPersistedMaterials] = useState<PersistedMaterialMap>({});
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const [reviewState, setReviewState] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle');
+  const [draftLoadState, setDraftLoadState] = useState<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishFileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const loadedDraftIdRef = useRef<string | null>(null);
+
+  const requestedTemplateId = new URLSearchParams(location.search).get('templateId');
+
+  useEffect(() => {
+    if (!user || !requestedTemplateId || loadedDraftIdRef.current === requestedTemplateId) return;
+    loadedDraftIdRef.current = requestedTemplateId;
+    setDraftLoadState('loading');
+    setBuilderError(null);
+    void loadTemplateDraft(requestedTemplateId, user.id)
+      .then((draft) => {
+        setDraftIdentity(draft.identity);
+        setTemplateTitle(draft.title);
+        setTemplateDescription(draft.description);
+        setSteps(draft.steps);
+        setActiveStepId(draft.steps[0]?.id || 'step-1');
+        setFinalResult(draft.finalResultUrl);
+        setFinalResultType(draft.finalResultType);
+        setPersistedCover(draft.cover);
+        setPublishCover(draft.coverUrl);
+        setPublishCoverType(draft.coverType);
+        setPublishCoverFile(null);
+        setPersistedMaterials(draft.materials);
+        setMaterialFiles({});
+        setSaveState('saved');
+        setReviewState('idle');
+        setDraftLoadState('loaded');
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Could not load this draft.';
+        setBuilderError(message);
+        setDraftLoadState('failed');
+        addToast('error', message);
+      });
+  }, [requestedTemplateId, user, addToast]);
 
   const activeStep = steps.find(s => s.id === activeStepId) || steps[0];
   const activeResultGeneration = generations.find(
@@ -593,7 +632,7 @@ export const TemplateBuilder = () => {
               variant="outline"
               size="sm"
               onClick={() => void handleSaveDraft()}
-              disabled={saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
+              disabled={draftLoadState === 'loading' || saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
             >
               {saveState === 'saving' ? 'Saving...' : 'Save draft'}
             </Button>
@@ -601,7 +640,7 @@ export const TemplateBuilder = () => {
               variant="gradient"
               size="sm"
               onClick={handleOpenPublish}
-              disabled={saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
+              disabled={draftLoadState === 'loading' || saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
             >
               {reviewState === 'submitted' ? 'Under review' : 'Submit for review'}
             </Button>
@@ -613,6 +652,14 @@ export const TemplateBuilder = () => {
         <div className="bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
           <div className="max-w-7xl mx-auto px-4 py-3 text-center text-sm font-medium text-amber-900 dark:text-amber-200">
             Submitted for review. This saved version is now read-only.
+          </div>
+        </div>
+      )}
+
+      {draftLoadState === 'loading' && (
+        <div className="border-b border-purple-200 bg-purple-50 dark:border-purple-500/20 dark:bg-purple-500/10">
+          <div className="mx-auto max-w-7xl px-4 py-3 text-center text-sm font-medium text-purple-800 dark:text-purple-200">
+            Loading your saved draft...
           </div>
         </div>
       )}
@@ -1292,7 +1339,7 @@ export const TemplateBuilder = () => {
             </div>
         </div>
       </Modal>
-      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-17-M5-4</p>
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-18-M5-5</p>
     </div>
   );
 };

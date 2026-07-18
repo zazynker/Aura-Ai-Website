@@ -2,6 +2,8 @@ import type { WorkflowDefinition } from '../workflows/types';
 import {
   convertAndValidateBuilderWorkflow,
   type BuilderDraftStep,
+  type BuilderFeatureType,
+  type BuilderMaterial,
 } from '../workflows/builderAdapter';
 import { supabase } from './supabase';
 import {
@@ -49,6 +51,19 @@ export interface SubmitTemplateForReviewResult {
   submittedAt: string;
 }
 
+export interface LoadTemplateDraftResult {
+  identity: TemplateDraftIdentity;
+  title: string;
+  description: string;
+  steps: BuilderDraftStep[];
+  finalResultUrl: string | null;
+  finalResultType: 'image' | 'video' | null;
+  cover: UploadedTemplateCover | null;
+  coverUrl: string | null;
+  coverType: 'image' | 'video' | null;
+  materials: PersistedMaterialMap;
+}
+
 interface ExistingAssetRow {
   id: string;
   asset_key: string;
@@ -75,6 +90,50 @@ interface AssetInsertRow {
   sort_order: number;
   is_reusable: boolean;
 }
+
+interface SavedAssetRow {
+  id: string;
+  asset_key: string;
+  asset_type: 'image' | 'video' | 'audio';
+  source_kind: 'upload' | 'generation';
+  generation_id: string | null;
+  storage_bucket: string | null;
+  storage_path: string | null;
+  public_url: string | null;
+  mime_type: string | null;
+  byte_size: number | null;
+  width: number | null;
+  height: number | null;
+  duration_seconds: number | null;
+  is_reusable: boolean;
+}
+
+const CAPABILITY_TO_FEATURE: Record<string, BuilderFeatureType> = {
+  'image.text_to_image': 'Text to Image',
+  'image.replace_product': 'Replace Product',
+  'image.modify': 'Modify Image',
+  'video.image_to_video': 'Image to Video',
+  'video.motion_control': 'Motion Control',
+  'video.lip_sync_image': 'Image Lip Sync',
+  'video.lip_sync_video': 'Video Lip Sync',
+};
+
+const DEFAULT_MATERIAL_TYPES: Record<BuilderFeatureType, BuilderMaterial['type'][]> = {
+  'Text to Image': ['Image'],
+  'Replace Product': ['Image', 'Image'],
+  'Modify Image': ['Image'],
+  'Image to Video': ['Image'],
+  'Motion Control': ['Image', 'Video'],
+  'Image Lip Sync': ['Image', 'Audio'],
+  'Video Lip Sync': ['Video', 'Audio'],
+};
+
+const VIDEO_FEATURES = new Set<BuilderFeatureType>([
+  'Image to Video',
+  'Motion Control',
+  'Image Lip Sync',
+  'Video Lip Sync',
+]);
 
 function newUuid(): string {
   if (!globalThis.crypto?.randomUUID) {
@@ -367,7 +426,7 @@ export async function saveTemplateDraft(
             identity,
             input.userId,
             `step-${stepIndex + 1}-result`,
-            step.feature === 'Image to Video' ? 'video' : 'image',
+            VIDEO_FEATURES.has(step.feature) ? 'video' : 'image',
             step.resultGenerationId,
             step.resultUrl,
             sortOrder++,
@@ -474,6 +533,180 @@ export async function saveTemplateDraft(
     ]);
     throw error;
   }
+}
+
+function savedObject(row: SavedAssetRow): UploadedTemplateObject | null {
+  if (!row.storage_bucket || !row.storage_path) return null;
+  return {
+    bucket: row.storage_bucket,
+    path: row.storage_path,
+    publicUrl: row.storage_bucket === TEMPLATE_PREVIEWS_BUCKET ? row.public_url : null,
+    mimeType: row.mime_type || 'application/octet-stream',
+    byteSize: Number(row.byte_size || 0),
+    width: row.width,
+    height: row.height,
+    durationSeconds: row.duration_seconds,
+  };
+}
+
+async function readableAssetUrls(
+  assets: SavedAssetRow[],
+): Promise<Map<string, string>> {
+  const urls = new Map<string, string>();
+  await Promise.all(
+    assets.map(async (asset) => {
+      if (asset.public_url) {
+        urls.set(asset.id, asset.public_url);
+        return;
+      }
+      if (!asset.storage_bucket || !asset.storage_path) return;
+      const { data, error } = await supabase.storage
+        .from(asset.storage_bucket)
+        .createSignedUrl(asset.storage_path, 60 * 60);
+      if (!error && data?.signedUrl) urls.set(asset.id, data.signedUrl);
+    }),
+  );
+  return urls;
+}
+
+export async function loadTemplateDraft(
+  templateId: string,
+  userId: string,
+): Promise<LoadTemplateDraftResult> {
+  const { data: template, error: templateError } = await supabase
+    .from('templates')
+    .select('id,name,display_name,description,status,current_version_id,cover_type,cover_url')
+    .eq('id', templateId)
+    .eq('creator_id', userId)
+    .in('status', ['draft', 'rejected'])
+    .single();
+  if (templateError || !template) {
+    throw new Error('This editable template draft could not be found.');
+  }
+  if (!template.current_version_id) {
+    throw new Error('This draft has no workflow version yet.');
+  }
+
+  const [{ data: version, error: versionError }, { data: assetData, error: assetError }] =
+    await Promise.all([
+      supabase
+        .from('template_versions')
+        .select('id,version_number,workflow')
+        .eq('id', template.current_version_id)
+        .eq('template_id', templateId)
+        .single(),
+      supabase
+        .from('template_assets')
+        .select('id,asset_key,asset_type,source_kind,generation_id,storage_bucket,storage_path,public_url,mime_type,byte_size,width,height,duration_seconds,is_reusable')
+        .eq('template_id', templateId)
+        .eq('version_id', template.current_version_id)
+        .order('sort_order', { ascending: true }),
+    ]);
+  if (versionError || !version) {
+    throw new Error('The saved workflow version could not be loaded.');
+  }
+  if (assetError) {
+    throw new Error(`The saved template materials could not be loaded: ${assetError.message}`);
+  }
+
+  const assets = (assetData || []) as SavedAssetRow[];
+  const urls = await readableAssetUrls(assets);
+  const workflow = version.workflow as WorkflowDefinition;
+  if (!workflow || !Array.isArray(workflow.steps)) {
+    throw new Error('The saved workflow has an invalid format.');
+  }
+
+  const persistedMaterials: PersistedMaterialMap = {};
+  const steps: BuilderDraftStep[] = workflow.steps.map((workflowStep, stepIndex) => {
+    const feature = CAPABILITY_TO_FEATURE[workflowStep.capability];
+    if (!feature) {
+      throw new Error(`This draft uses an unsupported feature: ${workflowStep.capability}`);
+    }
+    const resultAsset = assets.find(
+      (asset) => asset.asset_key === `step-${stepIndex + 1}-result`,
+    );
+    const materialAssets = assets.filter((asset) =>
+      asset.asset_key.startsWith(`step-${stepIndex + 1}-material-`),
+    );
+    const materials: BuilderMaterial[] = materialAssets.map((asset, materialIndex) => {
+      const materialId = `loaded-${workflowStep.id}-material-${materialIndex + 1}`;
+      const stored = savedObject(asset);
+      if (stored && asset.source_kind === 'upload') {
+        persistedMaterials[materialId] = stored;
+      }
+      return {
+        id: materialId,
+        type: `${asset.asset_type[0].toUpperCase()}${asset.asset_type.slice(1)}` as BuilderMaterial['type'],
+        url: urls.get(asset.id) || asset.public_url,
+        allowDownload: Boolean(asset.is_reusable),
+        templateAssetId: asset.id,
+        sourceGenerationId: asset.generation_id || undefined,
+      };
+    });
+    if (materials.length === 0) {
+      DEFAULT_MATERIAL_TYPES[feature].forEach((type, materialIndex) => {
+        materials.push({
+          id: `loaded-${workflowStep.id}-material-${materialIndex + 1}`,
+          type,
+          url: null,
+          allowDownload: true,
+        });
+      });
+    }
+    const parameters = workflowStep.parameters || {};
+    return {
+      id: workflowStep.id,
+      feature,
+      resultUrl: resultAsset ? urls.get(resultAsset.id) || resultAsset.public_url : null,
+      resultGenerationId: resultAsset?.generation_id || undefined,
+      materials,
+      prompt:
+        typeof parameters.prompt === 'string'
+          ? parameters.prompt
+          : workflowStep.instruction || '',
+      videoParams: VIDEO_FEATURES.has(feature)
+        ? {
+            duration: `${Number(parameters.duration || 3)}s`,
+            resolution: String(parameters.resolution || '720p'),
+            generateAudio: parameters.generateAudio !== false,
+          }
+        : undefined,
+      inputBindings: workflowStep.inputs.map((input) => ({ ...input })),
+    };
+  });
+
+  const coverOriginalRow = assets.find((asset) => asset.asset_key === 'cover-original');
+  const coverThumbnailRow = assets.find((asset) => asset.asset_key === 'cover-thumbnail');
+  const original = coverOriginalRow ? savedObject(coverOriginalRow) : null;
+  const thumbnail = coverThumbnailRow ? savedObject(coverThumbnailRow) : null;
+  const cover = original && thumbnail
+    ? {
+        coverType: template.cover_type === 'video' ? 'video' as const : 'image' as const,
+        original,
+        thumbnail,
+      }
+    : null;
+  const finalStep = steps[steps.length - 1];
+
+  return {
+    identity: {
+      userId,
+      templateId,
+      versionId: version.id,
+      versionNumber: version.version_number,
+    },
+    title: template.display_name || template.name,
+    description: template.description || '',
+    steps,
+    finalResultUrl: finalStep?.resultUrl || null,
+    finalResultType: finalStep
+      ? VIDEO_FEATURES.has(finalStep.feature) ? 'video' : 'image'
+      : null,
+    cover,
+    coverUrl: template.cover_url || (coverOriginalRow ? urls.get(coverOriginalRow.id) : null) || null,
+    coverType: template.cover_type === 'video' ? 'video' : 'image',
+    materials: persistedMaterials,
+  };
 }
 
 export async function submitTemplateForReview(
