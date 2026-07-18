@@ -75,7 +75,7 @@ export async function fetchCreatorTemplates(
     .map((template) => template.current_version_id)
     .filter((id): id is string => Boolean(id));
 
-  const [versionsResult, logsResult, rewardsResult] = await Promise.all([
+  const [versionsResult, logsResult, rewardsResult, coverAssetsResult] = await Promise.all([
     versionIds.length
       ? supabase
           .from('template_versions')
@@ -92,6 +92,11 @@ export async function fetchCreatorTemplates(
       .select('template_id,reward_credits')
       .eq('creator_id', userId)
       .in('template_id', templateIds),
+    supabase
+      .from('template_assets')
+      .select('template_id,asset_key,asset_type,public_url')
+      .in('template_id', templateIds)
+      .in('asset_key', ['cover-thumbnail', 'cover-original']),
   ]);
 
   if (versionsResult.error) {
@@ -128,21 +133,46 @@ export async function fetchCreatorTemplates(
     }
   }
 
-  return templates.map((template) => ({
-    id: template.id,
-    slug: template.slug,
-    name: template.display_name || template.name,
-    coverUrl: template.thumb_url || template.cover_url || template.image_url,
-    coverType: template.cover_type === 'video' ? 'video' : 'image',
-    status: STATUS_LABELS[template.status],
-    updatedAt: template.updated_at,
-    stepsCount: template.current_version_id
-      ? workflowStepCount(workflowByVersion.get(template.current_version_id))
-      : 0,
-    uses: Number(template.use_count || 0),
-    creditsEarned: creditsByTemplate.get(template.id) || 0,
-    feedback: latestFeedbackByTemplate.get(template.id),
-  }));
+  const coverAssetsByTemplate = new Map<
+    string,
+    { thumbnail?: string; original?: string; originalType?: 'image' | 'video' }
+  >();
+  if (!coverAssetsResult.error) {
+    for (const row of coverAssetsResult.data || []) {
+      const cover = coverAssetsByTemplate.get(row.template_id) || {};
+      if (row.asset_key === 'cover-thumbnail' && row.public_url) {
+        cover.thumbnail = row.public_url;
+      }
+      if (row.asset_key === 'cover-original' && row.public_url) {
+        cover.original = row.public_url;
+        cover.originalType = row.asset_type === 'video' ? 'video' : 'image';
+      }
+      coverAssetsByTemplate.set(row.template_id, cover);
+    }
+  }
+
+  return templates.map((template) => {
+    const savedCover = coverAssetsByTemplate.get(template.id);
+    const thumbnailUrl = savedCover?.thumbnail || template.thumb_url;
+    const originalUrl = savedCover?.original || template.cover_url;
+    return {
+      id: template.id,
+      slug: template.slug,
+      name: template.display_name || template.name,
+      coverUrl: thumbnailUrl || originalUrl || '',
+      coverType: thumbnailUrl
+        ? 'image'
+        : savedCover?.originalType || (template.cover_type === 'video' ? 'video' : 'image'),
+      status: STATUS_LABELS[template.status],
+      updatedAt: template.updated_at,
+      stepsCount: template.current_version_id
+        ? workflowStepCount(workflowByVersion.get(template.current_version_id))
+        : 0,
+      uses: Number(template.use_count || 0),
+      creditsEarned: creditsByTemplate.get(template.id) || 0,
+      feedback: latestFeedbackByTemplate.get(template.id),
+    };
+  });
 }
 
 export async function deleteCreatorDraft(

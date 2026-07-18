@@ -17,121 +17,66 @@ import {
   Wand2,
   Film,
   Mic,
-  X
+  X,
+  Loader2
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { Modal } from '../components/ui/Modal';
 import { startWorkflow } from '../components/workflow/workflowManager';
 import { useStore } from '../context/StoreContext';
+import {
+  fetchTemplateDetail,
+  type RealTemplateDetail,
+} from '../utils/templateDetailApi';
 
-// Mock Data
-const MOCK_TEMPLATE = {
-  id: 'template-1',
-  name: 'Minimal Product Story',
-  usageCount: 128,
-  author: {
-    name: 'Alex Design',
-    avatar: 'https://i.pravatar.cc/150?u=alex',
-  },
-  description: 'Turn a simple product photo into a polished promotional story with consistent scenes and motion.',
-  finalResult: {
-    type: 'video',
-    url: 'https://www.w3schools.com/html/mov_bbb.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&q=80',
-  },
-  steps: [
-    {
-      id: 'step-1',
-      name: 'Main Object Preparation',
-      featureUsed: {
-        name: 'Replace Product',
-        icon: Layers,
-      },
-      materials: [
-        {
-          id: 'm1',
-          name: 'Original Product',
-          type: 'image',
-          permission: 'preview',
-          url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&q=80',
-        },
-      ],
-      prompt: 'A modern minimalist product shot, clean background, soft studio lighting, high resolution.',
-      results: [
-        {
-          id: 'r1',
-          type: 'image',
-          url: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&q=80',
-        }
-      ]
-    },
-    {
-      id: 'step-2',
-      name: 'Background Generation',
-      featureUsed: {
-        name: 'Image to Image',
-        icon: Wand2,
-      },
-      materials: [],
-      prompt: 'A clean bright room with natural sunlight, minimalist aesthetic, subtle plant shadows on the wall.',
-      results: [
-        {
-          id: 'r2',
-          type: 'image',
-          url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&q=80',
-        }
-      ]
-    },
-    {
-      id: 'step-3',
-      name: 'Motion Application',
-      featureUsed: {
-        name: 'Motion Control',
-        icon: Film,
-      },
-      materials: [],
-      prompt: 'Smooth slow pan from left to right, focusing on the product, cinematic depth of field.',
-      results: [
-        {
-          id: 'r3',
-          type: 'video',
-          url: 'https://www.w3schools.com/html/mov_bbb.mp4',
-          thumbnail: 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&q=80',
-        }
-      ]
-    },
-    {
-      id: 'step-4',
-      name: 'Voiceover & Lip Sync',
-      featureUsed: {
-        name: 'Lip Sync',
-        icon: Mic,
-      },
-      materials: [
-        {
-          id: 'm2',
-          name: 'Promotional_Voiceover.mp3',
-          type: 'audio',
-          permission: 'download',
-          url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-        }
-      ],
-      prompt: '',
-      results: []
-    }
-  ]
+const getFeatureIcon = (featureName: string) => {
+  if (featureName.includes('Lip Sync')) return Mic;
+  if (featureName.includes('Video') || featureName.includes('Motion')) return Film;
+  if (featureName.includes('Modify')) return Wand2;
+  return Layers;
 };
 
 export const TemplateDetail = () => {
   const { templateId } = useParams();
   const navigate = useNavigate();
-  const { user, saveBrowsingState } = useStore();
-  const [activeStep, setActiveStep] = useState<string>(MOCK_TEMPLATE.steps[0].id);
+  const { user, saveBrowsingState, addToast } = useStore();
+  const [template, setTemplate] = useState<RealTemplateDetail | null>(null);
+  const [loadingTemplate, setLoadingTemplate] = useState(true);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [activeStep, setActiveStep] = useState<string>('');
   const [modalContent, setModalContent] = useState<{ type: string; url: string } | null>(null);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
 
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!templateId) {
+      setTemplateError('No template was selected.');
+      setLoadingTemplate(false);
+      return;
+    }
+
+    setLoadingTemplate(true);
+    setTemplateError(null);
+    fetchTemplateDetail(templateId)
+      .then((data) => {
+        if (cancelled) return;
+        setTemplate(data);
+        setActiveStep(data.steps[0]?.id || '');
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setTemplateError(error instanceof Error ? error.message : 'The template could not be loaded.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTemplate(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [templateId]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -169,14 +114,29 @@ export const TemplateDetail = () => {
   };
 
   const handleUseTemplate = () => {
+    if (!template || template.status !== 'published') {
+      addToast('info', 'This template is not published yet.');
+      return;
+    }
     if (!user) {
       saveBrowsingState({ 
-        intendedDestination: '/'
+        intendedDestination: `/templates/${template.slug || template.id}`
       });
       navigate('/login');
       return;
     }
     startWorkflow();
+  };
+
+  const handleShare = async () => {
+    if (!template || template.status !== 'published') return;
+    const shareUrl = `${window.location.origin}/#/templates/${template.slug || template.id}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      addToast('success', 'Template link copied.');
+    } catch {
+      addToast('error', 'Could not copy the template link.');
+    }
   };
 
   const handleCopyPrompt = (prompt: string, id: string) => {
@@ -194,6 +154,37 @@ export const TemplateDetail = () => {
     }
   };
 
+  if (loadingTemplate) {
+    return (
+      <div className="min-h-screen pt-28 flex items-start justify-center">
+        <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span>Loading template…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (templateError || !template) {
+    return (
+      <div className="min-h-screen pt-28 px-4 flex items-start justify-center">
+        <div className="max-w-lg w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 p-8 text-center">
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white">Template unavailable</h1>
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{templateError || 'The template could not be loaded.'}</p>
+          <Button className="mt-6" variant="secondary" onClick={() => navigate('/dashboard?tab=templates')}>Back to My Templates</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const creatorName = template.creatorId === user?.id ? 'You' : 'Lazora creator';
+  const isPublished = template.status === 'published';
+  const primaryButtonLabel = template.status === 'pending_review'
+    ? 'Under review'
+    : isPublished
+      ? 'Use this template'
+      : 'Preview only';
+
   return (
     <div className="min-h-screen pt-20 pb-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
       {/* Header Area */}
@@ -203,12 +194,12 @@ export const TemplateDetail = () => {
           <p className="text-slate-500 dark:text-slate-400 mt-1">Review the workflow and materials</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="secondary" className="gap-2">
+          <Button variant="secondary" className="gap-2" onClick={handleShare} disabled={!isPublished}>
             <Share className="w-4 h-4" />
             Share
           </Button>
-          <Button variant="gradient" onClick={handleUseTemplate}>
-            Use this template
+          <Button variant="gradient" onClick={handleUseTemplate} disabled={!isPublished}>
+            {primaryButtonLabel}
           </Button>
         </div>
       </div>
@@ -223,7 +214,8 @@ export const TemplateDetail = () => {
             <div 
               className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden group cursor-pointer"
               onClick={(e) => {
-                if (MOCK_TEMPLATE.finalResult.type === 'video') {
+                if (!template.finalResult.url) return;
+                if (template.finalResult.type === 'video') {
                   const videoEl = e.currentTarget.querySelector('video');
                   if (videoEl) {
                     // Reset to beginning, unmute (if it was muted for preview)
@@ -240,14 +232,20 @@ export const TemplateDetail = () => {
                     }
                   }
                 } else {
-                  setModalContent({ type: MOCK_TEMPLATE.finalResult.type, url: MOCK_TEMPLATE.finalResult.url });
+                  setModalContent({ type: template.finalResult.type, url: template.finalResult.url });
                 }
               }}
             >
-              {MOCK_TEMPLATE.finalResult.type === 'video' ? (
+              {!template.finalResult.url ? (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-slate-400">
+                  <ImageIcon className="w-10 h-10" />
+                  <span className="text-sm">No result preview</span>
+                </div>
+              ) : template.finalResult.type === 'video' ? (
                 <>
                   <video 
-                    src={MOCK_TEMPLATE.finalResult.url} 
+                    src={template.finalResult.url}
+                    poster={template.finalResult.thumbnail}
                     className="w-full h-full object-cover"
                     autoPlay 
                     muted 
@@ -270,7 +268,7 @@ export const TemplateDetail = () => {
                 </>
               ) : (
                 <img 
-                  src={MOCK_TEMPLATE.finalResult.url} 
+                  src={template.finalResult.url}
                   alt="Final Result" 
                   className="w-full h-full object-cover"
                 />
@@ -286,24 +284,22 @@ export const TemplateDetail = () => {
             {/* Basic Info */}
             <div className="mt-6 space-y-4">
               <div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white">{MOCK_TEMPLATE.name}</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Used {MOCK_TEMPLATE.usageCount} times</p>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">{template.name}</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Used {template.usageCount} times</p>
               </div>
 
               <div className="flex items-center gap-3 py-3 border-y border-slate-200 dark:border-white/10">
-                <img 
-                  src={MOCK_TEMPLATE.author.avatar} 
-                  alt={MOCK_TEMPLATE.author.name}
-                  className="w-10 h-10 rounded-full border border-slate-200 dark:border-white/10"
-                />
+                <div className="w-10 h-10 rounded-full border border-slate-200 dark:border-white/10 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 flex items-center justify-center font-semibold">
+                  {creatorName.charAt(0).toUpperCase()}
+                </div>
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Created by</p>
-                  <p className="text-sm font-medium text-slate-900 dark:text-white">{MOCK_TEMPLATE.author.name}</p>
+                  <p className="text-sm font-medium text-slate-900 dark:text-white">{creatorName}</p>
                 </div>
               </div>
 
               <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-3">
-                {MOCK_TEMPLATE.description}
+                {template.description || 'No description provided.'}
               </p>
             </div>
           </div>
@@ -315,9 +311,9 @@ export const TemplateDetail = () => {
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">How this template was made</h2>
             
             <div className="space-y-4">
-              {MOCK_TEMPLATE.steps.map((step, index) => {
+              {template.steps.map((step, index) => {
                 const isExpanded = activeStep === step.id;
-                const FeatureIcon = step.featureUsed.icon;
+                const FeatureIcon = getFeatureIcon(step.featureName);
 
                 return (
                   <div 
@@ -337,7 +333,7 @@ export const TemplateDetail = () => {
                           <h3 className="font-medium text-slate-900 dark:text-white">{step.name}</h3>
                           <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500 dark:text-slate-400">
                             <FeatureIcon className="w-3.5 h-3.5" />
-                            <span>{step.featureUsed.name}</span>
+                            <span>{step.featureName}</span>
                           </div>
                         </div>
                       </div>
@@ -355,7 +351,7 @@ export const TemplateDetail = () => {
                           <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Feature I Used</h4>
                           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 rounded-lg text-sm font-medium border border-purple-100 dark:border-purple-800/30">
                             <FeatureIcon className="w-4 h-4" />
-                            {step.featureUsed.name}
+                            {step.featureName}
                           </div>
                         </div>
 
@@ -387,11 +383,7 @@ export const TemplateDetail = () => {
                                     </div>
                                   </div>
                                   <div className="flex-shrink-0 ml-3">
-                                    {material.permission === 'preview' ? (
-                                      <span className="text-xs font-medium px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-md">
-                                        Preview only
-                                      </span>
-                                    ) : material.type === 'audio' ? (
+                                    {material.type === 'audio' ? (
                                       <Button 
                                         variant="secondary" 
                                         size="sm" 
@@ -410,6 +402,10 @@ export const TemplateDetail = () => {
                                           {playingAudioId === material.id ? 'Pause' : 'Play'}
                                         </span>
                                       </Button>
+                                    ) : material.permission === 'preview' ? (
+                                      <span className="text-xs font-medium px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-md">
+                                        Preview only
+                                      </span>
                                     ) : (
                                       <Button variant="secondary" size="sm" className="h-8 gap-1.5 px-3">
                                         <Download className="w-3.5 h-3.5" />
@@ -458,7 +454,11 @@ export const TemplateDetail = () => {
                                 >
                                   {result.type === 'video' ? (
                                     <>
-                                      <img src={result.thumbnail || result.url} alt="Result" className="w-full h-full object-cover" />
+                                      {result.thumbnail ? (
+                                        <img src={result.thumbnail} alt="Result" className="w-full h-full object-cover" />
+                                      ) : (
+                                        <video src={result.url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                                      )}
                                       <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
                                         <Play className="w-6 h-6 text-white ml-0.5" fill="currentColor" />
                                       </div>
@@ -526,7 +526,7 @@ export const TemplateDetail = () => {
           </div>
         </div>
       )}
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 pt-4 select-all">Build: 2026-07-18-M5-5.1</p>
     </div>
   );
 };
-

@@ -88,6 +88,7 @@ export const Dashboard = () => {
   const [myTemplates, setMyTemplates] = useState<CreatorTemplateCard[]>([]);
   const [loadingMyTemplates, setLoadingMyTemplates] = useState(false);
   const [myTemplatesError, setMyTemplatesError] = useState<string | null>(null);
+  const [failedTemplateCovers, setFailedTemplateCovers] = useState<Set<string>>(new Set());
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [currentFeedback, setCurrentFeedback] = useState('');
   const [currentFeedbackTemplateId, setCurrentFeedbackTemplateId] = useState<string | null>(null);
@@ -350,6 +351,12 @@ useEffect(() => {
           playsInline
           preload="metadata"
           poster={gen.imageUrl && gen.imageUrl !== gen.videoUrl ? gen.imageUrl : undefined}
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            if (!controls && !(gen.imageUrl && gen.imageUrl !== gen.videoUrl) && Number.isFinite(video.duration)) {
+              video.currentTime = Math.min(0.1, Math.max(0, video.duration / 20));
+            }
+          }}
         />
       );
     }
@@ -889,7 +896,7 @@ useEffect(() => {
                 {myTemplates.map(template => (
                   <div key={template.id} className="glass-panel border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col group hover:shadow-xl hover:-translate-y-1 transition-all bg-white dark:bg-slate-800" onClick={() => navigate(`/templates/${template.id}`)}>
                     <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-900">
-                      {!template.coverUrl ? (
+                      {!template.coverUrl || failedTemplateCovers.has(template.id) ? (
                         <div className="flex h-full w-full items-center justify-center text-slate-400 dark:text-slate-600">
                           <ImageIcon className="h-10 w-10" />
                         </div>
@@ -902,9 +909,15 @@ useEffect(() => {
                           playsInline
                           onMouseEnter={(e) => { e.currentTarget.play().catch(()=>{}); }}
                           onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }}
+                          onError={() => setFailedTemplateCovers((current) => new Set(current).add(template.id))}
                         />
                       ) : (
-                        <img src={template.coverUrl} className="w-full h-full object-cover" alt={template.name} />
+                        <img
+                          src={template.coverUrl}
+                          className="w-full h-full object-cover"
+                          alt={template.name}
+                          onError={() => setFailedTemplateCovers((current) => new Set(current).add(template.id))}
+                        />
                       )}
                       
                       {/* Status Tag */}
