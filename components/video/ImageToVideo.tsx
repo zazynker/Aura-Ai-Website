@@ -7,11 +7,13 @@ import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
 import { estimateVideoCredits } from '../../context/StoreContext';
+import type { WorkflowHandoff } from '../workflow/workflowManager';
 
 interface ImageToVideoProps {
   onGenerate: (result: VideoResult) => void;
   onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
+  workflowHandoff?: WorkflowHandoff | null;
   userCredits: number;
   onInsufficientCredits: (requiredCredits: number) => void;
   isPro: boolean;
@@ -20,7 +22,7 @@ interface ImageToVideoProps {
 
 const formatDuration = (seconds?: number) => `00:${String(seconds || 3).padStart(2, '0')}`;
 
-export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
+export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
   const [prompt, setPrompt] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedEndImage, setSelectedEndImage] = useState<string | null>(null);
@@ -43,6 +45,32 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       setSelectedImage(initialImage);
     }
   }, [initialImage]);
+
+  useEffect(() => {
+    if (!workflowHandoff || workflowHandoff.capability !== 'video.image_to_video') return;
+    if (workflowHandoff.action === 'materials') {
+      const start = workflowHandoff.materials.find((item) => item.slot === 'start_image')
+        || workflowHandoff.materials.find((item) => item.type === 'image');
+      const end = workflowHandoff.materials.find((item) => item.slot === 'end_image');
+      const willOverwrite = Boolean(
+        (start && selectedImage && selectedImage !== start.url)
+        || (end && selectedEndImage && selectedEndImage !== end.url),
+      );
+      if (willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
+      if (start) { setSelectedImage(start.url); setStartImageFile(null); }
+      if (end) { setSelectedEndImage(end.url); setEndImageFile(null); }
+      return;
+    }
+    const next = workflowHandoff.settings;
+    const nextPrompt = workflowHandoff.prompt || (typeof next.prompt === 'string' ? next.prompt : '');
+    const willOverwrite = Boolean(prompt.trim() && prompt !== nextPrompt);
+    if (willOverwrite && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
+    setPrompt(nextPrompt);
+    if (next.resolution === '720p' || next.resolution === '1080p') setResolution(next.resolution);
+    if (typeof next.duration === 'number') setDuration(next.duration);
+    if (typeof next.outputCount === 'number') setGenerationCount(next.outputCount);
+    if (typeof next.generateAudio === 'boolean') setGenerateAudio(next.generateAudio);
+  }, [workflowHandoff?.nonce]);
 
   useEffect(() => {
     const existing = getPendingVideoJob();
@@ -458,7 +486,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                   ))}
                 </div>
                 <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
-                  Creates separate variations in parallel. Total credits equal the single-video cost × count.
+                  Creates separate variations in parallel. Total credits equal the single-video cost Ã count.
                 </p>
               </div>
             </div>
@@ -472,7 +500,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
           >
             <Settings className="h-4 w-4 text-slate-500" />
             <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              {resolution} · {duration}s · {generateAudio ? 'Audio on' : 'Audio off'} · {generationCount}
+              {resolution} Â· {duration}s Â· {generateAudio ? 'Audio on' : 'Audio off'} Â· {generationCount}
             </span>
             <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${isParamsOpen ? 'rotate-180' : ''}`} />
           </button>

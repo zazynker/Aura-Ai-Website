@@ -29,6 +29,7 @@ import { Button } from '../components/ui/Button';
 import { Generation, VideoMode, type GenerationInputAssetSnapshot } from '../types';
 import type { WorkflowCapabilityKey } from '../workflows/types';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
+import { consumeWorkflowHandoff, type WorkflowHandoff } from '../components/workflow/workflowManager';
 
 const parseDurationSeconds = (duration: string): number | undefined => {
   if (!duration) return undefined;
@@ -173,6 +174,7 @@ export const Video: React.FC = () => {
   const location = useLocation();
   const navigationState = location.state as { initialImage?: string } | null;
   const [initialImage] = useState<string | null>(navigationState?.initialImage || null);
+  const [workflowHandoff, setWorkflowHandoff] = useState<WorkflowHandoff | null>(null);
 
   const [results, setResults] = useState<VideoResult[]>([]);
   const resultsRef = useRef<VideoResult[]>([]);
@@ -188,6 +190,8 @@ export const Video: React.FC = () => {
 
   useEffect(() => {
     setActiveFeature(getFeatureFromSearch(location.search));
+    const handoff = consumeWorkflowHandoff();
+    if (handoff) setWorkflowHandoff(handoff);
   }, [location.search]);
 
   const handleInsufficientCredits = () => {
@@ -487,13 +491,13 @@ export const Video: React.FC = () => {
         </div>
 
         {activeFeature === 'image-to-video' && (
-          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
+          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
         )}
         {activeFeature === 'motion-control' && (
-          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
+          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
         )}
         {activeFeature === 'lip-sync' && (
-          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
+          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
         )}
         {activeFeature === 'free-mode' && (
           <FreeMode onGenerate={handleNewResult} initialImage={initialImage} />

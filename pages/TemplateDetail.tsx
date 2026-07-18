@@ -150,6 +150,30 @@ export const TemplateDetail = () => {
           || template.steps[index];
         const referenceResult = detailStep?.results[0]
           || (index === run.steps.length - 1 ? template.finalResult : undefined);
+        const reusableStepMaterials = (detailStep?.materials || [])
+          .filter((material) => material.permission === 'download')
+          .map((material) => {
+            const matchingInput = savedStep?.inputs?.find(
+              (input) => input.templateAssetId === material.id,
+            );
+            const sameTypeInputs = savedStep?.inputs?.filter(
+              (input) => input.assetType === material.type && input.source === 'template_asset',
+            ) || [];
+            const sameTypeMaterialIndex = (detailStep?.materials || [])
+              .filter((item) => item.permission === 'download' && item.type === material.type)
+              .findIndex((item) => item.id === material.id);
+            return {
+              id: material.id,
+              name: material.name,
+              type: material.type,
+              url: material.url,
+              slot: typeof matchingInput?.slot === 'string'
+                ? matchingInput.slot
+                : typeof sameTypeInputs[sameTypeMaterialIndex]?.slot === 'string'
+                  ? sameTypeInputs[sameTypeMaterialIndex].slot
+                  : undefined,
+            };
+          });
         return {
           id: runStep.stepId,
           runStepId: runStep.id,
@@ -157,9 +181,8 @@ export const TemplateDetail = () => {
           capability: runStep.capability,
           feature: detailStep?.featureName || savedStep?.title || runStep.capability,
           targetRoute: getWorkflowTargetRoute(runStep.capability),
-          reusableMaterials: Boolean(
-            detailStep?.materials.some((material) => material.permission === 'download'),
-          ),
+          reusableMaterials: reusableStepMaterials.length > 0,
+          materials: reusableStepMaterials,
           prompt: detailStep?.prompt || savedStep?.instruction || '',
           settings: savedStep?.parameters || {},
           status: runStep.status,

@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { GripHorizontal, Sparkles, Image as ImageIcon, WandSparkles, Eye, X, Minus } from 'lucide-react';
-import { useWorkflowState, setActiveStep, setWorkflowMinimized, WorkflowStep, clearWorkflow } from './workflowManager';
-import { Modal } from '../ui/Modal';
+import { useWorkflowState, setActiveStep, setWorkflowMinimized, WorkflowStep, clearWorkflow, queueWorkflowHandoff, type WorkflowHandoffAction } from './workflowManager';
 import { useStore } from '../../context/StoreContext';
 
 export const WorkflowDock = () => {
@@ -130,14 +129,19 @@ export const WorkflowDock = () => {
     }
   };
 
-  const handleMaterialClick = (step: WorkflowStep) => {
-    if (step.reusableMaterials) {
-      addToast('success', 'Materials ready');
+  const openWorkflowAction = async (step: WorkflowStep, action: WorkflowHandoffAction) => {
+    if (action === 'materials' && (step.materials || []).length === 0) return;
+    try {
+      await setActiveStep(step.id);
+      const handoff = queueWorkflowHandoff(step, action);
+      const separator = step.targetRoute.includes('?') ? '&' : '?';
+      navigate(`${step.targetRoute}${separator}workflowAction=${action}&workflowNonce=${encodeURIComponent(handoff.nonce)}`);
+    } catch (error) {
+      addToast(
+        'error',
+        error instanceof Error ? error.message : 'Could not reuse this workflow step.',
+      );
     }
-  };
-
-  const handlePromptClick = () => {
-    addToast('success', 'Prompt added');
   };
 
   const handleViewResult = (step: WorkflowStep) => {
@@ -268,7 +272,7 @@ export const WorkflowDock = () => {
                           ? 'bg-amber-500 hover:bg-amber-400 hover:scale-110 text-white cursor-pointer' 
                           : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
                       }`}
-                      onClick={() => handleMaterialClick(step)}
+                      onClick={() => { void openWorkflowAction(step, 'materials'); }}
                       aria-label="Reuse template materials"
                       tabIndex={isExpanded ? 0 : -1}
                     >
@@ -281,7 +285,7 @@ export const WorkflowDock = () => {
                     {/* Green Bead (Prompt) */}
                     <button
                       className="w-8 h-8 rounded-full bg-emerald-500 hover:bg-emerald-400 hover:scale-110 text-white flex items-center justify-center shadow-md transition-all group/btn cursor-pointer"
-                      onClick={handlePromptClick}
+                      onClick={() => { void openWorkflowAction(step, 'prompt'); }}
                       aria-label="Reuse template's prompt"
                       tabIndex={isExpanded ? 0 : -1}
                     >
@@ -368,6 +372,30 @@ export const WorkflowDock = () => {
                 <p className="text-sm text-white whitespace-pre-wrap font-mono">
                   {modalStep.prompt}
                 </p>
+              </div>
+            )}
+            {(modalStep.materials || []).length > 0 && (
+              <div className="mt-3 p-4 bg-white/10 backdrop-blur-md rounded-lg max-w-3xl w-full">
+                <h4 className="font-medium text-white/80 mb-3 text-sm uppercase tracking-wider">Reusable materials</h4>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {(modalStep.materials || []).map((material) => (
+                    <div key={material.id} className="rounded-lg overflow-hidden bg-black/30 min-h-20 flex items-center justify-center">
+                      {material.type === 'image' ? (
+                        <img src={material.url} alt={material.name} className="w-full h-24 object-cover" />
+                      ) : material.type === 'video' ? (
+                        <video src={material.url} controls className="w-full h-24 object-cover" />
+                      ) : (
+                        <audio src={material.url} controls className="w-full px-2" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {Object.keys(modalStep.settings).length > 0 && (
+              <div className="mt-3 p-4 bg-white/10 backdrop-blur-md rounded-lg max-w-3xl w-full">
+                <h4 className="font-medium text-white/80 mb-2 text-sm uppercase tracking-wider">Settings</h4>
+                <pre className="text-xs text-white/90 whitespace-pre-wrap break-words">{JSON.stringify(modalStep.settings, null, 2)}</pre>
               </div>
             )}
           </div>

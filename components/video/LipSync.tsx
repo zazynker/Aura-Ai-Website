@@ -15,11 +15,13 @@ import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
 import { estimateVideoCredits } from '../../context/StoreContext';
+import type { WorkflowHandoff } from '../workflow/workflowManager';
 
 interface LipSyncProps {
   onGenerate: (result: VideoResult) => void;
   onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
+  workflowHandoff?: WorkflowHandoff | null;
   userCredits: number;
   onInsufficientCredits: (requiredCredits: number) => void;
 }
@@ -45,7 +47,7 @@ const formatTime = (timeInSeconds: number) => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
-export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits }) => {
+export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits }) => {
   const [selectedMedia, setSelectedMedia] = useState<MediaState | null>(
     initialImage ? { url: initialImage, type: 'image' } : null
   );
@@ -84,6 +86,40 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const audioPreviewTimerRef = useRef<number | null>(null);
   const timelineAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isAudioPreviewPlaying, setIsAudioPreviewPlaying] = useState(false);
+
+  useEffect(() => {
+    if (!workflowHandoff || !workflowHandoff.capability.startsWith('video.lip_sync_')) return;
+    if (workflowHandoff.action === 'materials') {
+      const media = workflowHandoff.materials.find((item) => item.slot === 'portrait_image' || item.slot === 'source_video')
+        || workflowHandoff.materials.find((item) => item.type === 'image' || item.type === 'video');
+      const audio = workflowHandoff.materials.find((item) => item.slot === 'audio')
+        || workflowHandoff.materials.find((item) => item.type === 'audio');
+      const willOverwrite = Boolean(
+        (media && selectedMedia && selectedMedia.url !== media.url)
+        || (audio && audioUrl && audioUrl !== audio.url),
+      );
+      if (willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
+      if (media) setSelectedMedia({ url: media.url, type: media.type === 'video' ? 'video' : 'image' });
+      if (audio) {
+        setAudioUrl(audio.url);
+        setAudioFile(null);
+        const probe = new Audio(audio.url);
+        probe.preload = 'metadata';
+        probe.onloadedmetadata = () => {
+          const duration = Number.isFinite(probe.duration) ? probe.duration : 0;
+          setAudioDuration(duration);
+          setAudioTrimStart(0);
+          setAudioTrimEnd(duration);
+        };
+      }
+      return;
+    }
+    const nextPrompt = workflowHandoff.prompt
+      || (typeof workflowHandoff.settings.prompt === 'string' ? workflowHandoff.settings.prompt : '');
+    if (prompt.trim() && prompt !== nextPrompt
+      && !window.confirm('Replace the prompt currently entered on this page?')) return;
+    setPrompt(nextPrompt);
+  }, [workflowHandoff?.nonce]);
 
   const timelineDuration = Math.max(videoDuration || 0, selectedMedia?.type === 'video' ? 3 : 0);
   const minAudioClipLength = Math.min(2, Math.max(0.2, audioDuration || 0.2));
@@ -346,7 +382,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       alert('Please upload a character image or video.');
       return;
     }
-    if (!audioFile || !audioUrl) {
+    if (!audioUrl) {
       alert('Please upload an audio track.');
       return;
     }
@@ -1214,7 +1250,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       <div className="relative w-full shrink-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-4px_24px_rgba(0,0,0,0.05)] backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]">
         <button
           onClick={handleGenerate}
-          disabled={isGenerating || (!pendingJob && (!selectedMedia || !audioFile))}
+          disabled={isGenerating || (!pendingJob && (!selectedMedia || !audioUrl))}
           className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 text-sm font-semibold text-white shadow-md transition-all hover:from-emerald-600 hover:to-teal-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-slate-900"
         >
           {isGenerating ? (

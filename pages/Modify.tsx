@@ -11,6 +11,7 @@ import { generateImages } from '../utils/generateService';
 import { uploadUserImage, validateFile } from '../utils/uploadService';
 import { logVideoInterest } from '../utils/api';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
+import { consumeWorkflowHandoff } from '../components/workflow/workflowManager';
 
 // === Admin Fake Generation Queue ===
 interface FakeQueueItem {
@@ -282,6 +283,75 @@ export const Modify = () => {
           window.history.replaceState({}, document.title);
       }
   }, []); // Run only once on mount
+
+  useEffect(() => {
+    const handoff = consumeWorkflowHandoff();
+    if (!handoff || !handoff.capability.startsWith('image.')) return;
+
+    if (handoff.action === 'materials') {
+      const preferredSlots: Record<string, string[]> = {
+        'image.replace_product': ['scene_image'],
+        'image.modify': ['source_image', 'reference_image'],
+        'image.change_ratio': ['source_image'],
+        'image.enhance': ['source_image'],
+        'image.upscale': ['source_image'],
+        'image.text_to_image': ['reference_images'],
+      };
+      const material = handoff.materials.find(
+        (item) => item.type === 'image' && preferredSlots[handoff.capability]?.includes(item.slot || ''),
+      ) || handoff.materials.find((item) => item.type === 'image');
+      if (!material) return;
+      const hasUserImage = currentImage !== DEFAULT_TEMPLATE_URL
+        && currentImage !== material.url;
+      if (hasUserImage && !window.confirm('Replace the image currently selected on this page with the template material?')) return;
+      setCurrentImage(material.url);
+      setOriginalUploadedImage(material.url);
+      setCurrentImageSource({ templateId: `workflow:${handoff.stepId}`, templateName: 'Workflow material' });
+      setHasSelectedImage(true);
+      setUploadedFile(null);
+      return;
+    }
+
+    const settings = handoff.settings;
+    const nextPrompt = handoff.prompt || (typeof settings.prompt === 'string' ? settings.prompt : '');
+    const capabilityTool: Record<string, string> = {
+      'image.text_to_image': 'text2img',
+      'image.replace_product': 'replace',
+      'image.modify': 'modify',
+      'image.change_ratio': 'ratio',
+      'image.enhance': 'enhance',
+      'image.upscale': 'enhance',
+    };
+    const existingPrompt = handoff.capability === 'image.text_to_image'
+      ? t2iPrompt
+      : handoff.capability === 'image.modify'
+        ? modifyPrompt
+        : handoff.capability === 'image.change_ratio'
+          ? ratioPrompt
+          : prompt;
+    if (existingPrompt.trim() && existingPrompt !== nextPrompt
+      && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
+
+    setActiveTool(capabilityTool[handoff.capability] || 'replace');
+    if (handoff.capability === 'image.text_to_image') {
+      setT2iPrompt(nextPrompt);
+      if (typeof settings.ratio === 'string') setT2iRatio(settings.ratio);
+      if (typeof settings.resolution === 'string') setT2iSize(settings.resolution);
+      if (typeof settings.outputCount === 'number') setT2iOutputCount(settings.outputCount);
+    } else if (handoff.capability === 'image.modify') {
+      setModifyPrompt(nextPrompt);
+    } else if (handoff.capability === 'image.change_ratio') {
+      setRatioPrompt(nextPrompt);
+      if (typeof settings.ratio === 'string') setSelectedRatio(settings.ratio);
+      if (typeof settings.outputCount === 'number') setOutputCount(settings.outputCount);
+    } else {
+      setPrompt(nextPrompt);
+      if (typeof settings.extraBlend === 'boolean') setExtraBlend(settings.extraBlend);
+      if (typeof settings.productSizePercent === 'number') setProductSizePercent(String(settings.productSizePercent));
+      if (typeof settings.outputCount === 'number') setOutputCount(settings.outputCount);
+      if (typeof settings.resolution === 'string') setSelectedResolution(settings.resolution);
+    }
+  }, [location.search]);
 
   // 🔧 CHANGED: Persist fake queue to sessionStorage
   useEffect(() => {

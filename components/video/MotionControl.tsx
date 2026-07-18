@@ -11,11 +11,13 @@ import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
 import { estimateVideoCredits } from '../../context/StoreContext';
+import type { WorkflowHandoff } from '../workflow/workflowManager';
 
 interface MotionControlProps {
   onGenerate: (result: VideoResult) => void;
   onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
+  workflowHandoff?: WorkflowHandoff | null;
   userCredits: number;
   onInsufficientCredits: (requiredCredits: number) => void;
   isPro: boolean;
@@ -27,7 +29,7 @@ type Resolution = '720p' | '1080p';
 
 const formatDuration = (seconds?: number) => `00:${String(seconds || 5).padStart(2, '0')}`;
 
-export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
+export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -52,6 +54,33 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
   }, [initialImage]);
 
   useEffect(() => {
+    if (!workflowHandoff || workflowHandoff.capability !== 'video.motion_control') return;
+    if (workflowHandoff.action === 'materials') {
+      const image = workflowHandoff.materials.find((item) => item.slot === 'character_image')
+        || workflowHandoff.materials.find((item) => item.type === 'image');
+      const video = workflowHandoff.materials.find((item) => item.slot === 'driver_video')
+        || workflowHandoff.materials.find((item) => item.type === 'video');
+      const willOverwrite = Boolean(
+        (image && selectedImage && selectedImage !== image.url)
+        || (video && selectedVideo && selectedVideo !== video.url),
+      );
+      if (willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
+      if (image) { setSelectedImage(image.url); setImageFile(null); }
+      if (video) { setSelectedVideo(video.url); setVideoFile(null); }
+      return;
+    }
+    const next = workflowHandoff.settings;
+    const nextPrompt = workflowHandoff.prompt || (typeof next.prompt === 'string' ? next.prompt : '');
+    if (motionPrompt.trim() && motionPrompt !== nextPrompt
+      && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
+    setMotionPrompt(nextPrompt);
+    if (next.characterOrientation === 'video' || next.characterOrientation === 'image') setDirectionMatch(next.characterOrientation);
+    if (next.resolution === '720p' || next.resolution === '1080p') setResolution(next.resolution);
+    if (typeof next.outputCount === 'number') setQuantity(next.outputCount);
+    if (typeof next.duration === 'number') setDuration(next.duration);
+  }, [workflowHandoff?.nonce]);
+
+  useEffect(() => {
     const existing = getPendingVideoJob();
     if (!existing || existing.mode !== 'motion_control' || restoredPendingRef.current) return;
 
@@ -69,8 +98,8 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       id: existing.clientJobId,
       type: 'Motion Control',
       model: existing.characterOrientation === 'image'
-        ? 'Motion Control · Image Orientation'
-        : 'Motion Control · Video Orientation',
+        ? 'Motion Control Â· Image Orientation'
+        : 'Motion Control Â· Video Orientation',
       resolution: existing.resolution || '720p',
       prompt: existing.prompt || '',
       duration: formatDuration(existing.duration),
@@ -216,8 +245,8 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         id: placeholderId,
         type: 'Motion Control',
         model: directionMatch === 'video'
-          ? 'Motion Control · Video Orientation'
-          : 'Motion Control · Image Orientation',
+          ? 'Motion Control Â· Video Orientation'
+          : 'Motion Control Â· Image Orientation',
         resolution,
         prompt: motionPrompt,
         duration: formatDuration(duration),
@@ -552,7 +581,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
                   ))}
                 </div>
                 <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
-                  Creates separate variations in parallel. Total credits equal the single-video cost × count.
+                  Creates separate variations in parallel. Total credits equal the single-video cost Ã count.
                 </p>
               </div>
             </div>
@@ -567,7 +596,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
           >
             <Settings className="h-4 w-4 text-slate-500" />
             <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              {resolution} · {duration}s · {quantity}
+              {resolution} Â· {duration}s Â· {quantity}
             </span>
             <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${isParamsOpen ? 'rotate-180' : ''}`} />
           </button>
