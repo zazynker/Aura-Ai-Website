@@ -87,20 +87,32 @@ export const Dashboard = () => {
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
   const [generatedThumbnails, setGeneratedThumbnails] = useState<Record<string, string>>({});
   const generatedThumbnailsRef = useRef<Record<string, string>>({});
+  const attemptedThumbnailsRef = useRef<Set<string>>(new Set());
+  const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
     const queue = generations.filter((generation) => (
       !generation.thumbnailUrl &&
       !generatedThumbnailsRef.current[generation.id] &&
+      !attemptedThumbnailsRef.current.has(generation.id) &&
       !generation.id.startsWith('session_')
     ));
     let cursor = 0;
     const worker = async () => {
       while (!cancelled && cursor < queue.length) {
         const generation = queue[cursor++];
+        attemptedThumbnailsRef.current.add(generation.id);
         const thumbnailUrl = await ensureGenerationThumbnail(generation);
-        if (cancelled || !thumbnailUrl) continue;
+        if (cancelled) continue;
+        if (!thumbnailUrl) {
+          setFailedThumbnails((current) => {
+            const next = new Set(current);
+            next.add(generation.id);
+            return next;
+          });
+          continue;
+        }
         generatedThumbnailsRef.current[generation.id] = thumbnailUrl;
         setGeneratedThumbnails((current) => ({ ...current, [generation.id]: thumbnailUrl }));
       }
@@ -385,7 +397,11 @@ useEffect(() => {
           />
         ) : (
           <div className={`${className} flex items-center justify-center bg-slate-100 dark:bg-slate-800`}>
-            <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
+            {failedThumbnails.has(gen.id) ? (
+              <Film className="w-8 h-8 text-slate-400 dark:text-slate-500" />
+            ) : (
+              <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
+            )}
           </div>
         );
       }
@@ -402,11 +418,15 @@ useEffect(() => {
       );
     }
 
-    const displayUrl = fullResolution ? gen.imageUrl : thumbnailUrl;
+    const displayUrl = fullResolution ? gen.imageUrl : (thumbnailUrl || gen.imageUrl);
     if (!displayUrl) {
       return (
         <div className={`${className} flex items-center justify-center bg-slate-100 dark:bg-slate-800`}>
-          <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
+          {failedThumbnails.has(gen.id) ? (
+            <ImageIcon className="w-8 h-8 text-slate-400 dark:text-slate-500" />
+          ) : (
+            <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
+          )}
         </div>
       );
     }
