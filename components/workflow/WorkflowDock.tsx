@@ -6,7 +6,7 @@ import { Modal } from '../ui/Modal';
 import { useStore } from '../../context/StoreContext';
 
 export const WorkflowDock = () => {
-  const { steps, activeStepId, minimized } = useWorkflowState();
+  const { steps, activeStepId, minimized, runId } = useWorkflowState();
   const navigate = useNavigate();
   const { addToast } = useStore();
 
@@ -21,6 +21,16 @@ export const WorkflowDock = () => {
   
   // For modal
   const [modalStep, setModalStep] = useState<WorkflowStep | null>(null);
+
+  // WorkflowDock stays mounted when a workflow is cleared; it only renders
+  // null while there are no steps. Reset transient state whenever the bound
+  // run changes so a successful cancel cannot leave the next run's X button
+  // disabled.
+  useEffect(() => {
+    setIsCancelling(false);
+    setExpandedStepId(steps?.[0]?.id || null);
+    setModalStep(null);
+  }, [runId]);
 
   useEffect(() => {
     if (steps && steps.length > 0 && !expandedStepId) {
@@ -360,4 +370,3 @@ export const WorkflowDock = () => {
     </>
   );
 };
-
