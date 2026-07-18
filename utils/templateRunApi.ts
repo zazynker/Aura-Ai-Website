@@ -47,9 +47,11 @@ export interface StartedTemplateRun {
 
 export interface TemplateRunMaterial {
   id: string;
+  assetKey: string;
   name: string;
   type: 'image' | 'video' | 'audio';
   url: string;
+  isReusable: boolean;
 }
 
 const normalizeRun = (value: unknown): StartedTemplateRun => {
@@ -99,7 +101,6 @@ export async function fetchReusableTemplateAssets(
     .select('id,asset_key,asset_type,storage_bucket,storage_path,public_url,is_reusable')
     .eq('template_id', templateId)
     .eq('version_id', versionId)
-    .eq('is_reusable', true)
     .order('sort_order', { ascending: true });
   if (error) throw new Error(`Could not restore template materials: ${error.message}`);
 
@@ -110,8 +111,12 @@ export async function fetchReusableTemplateAssets(
     storage_bucket: string | null;
     storage_path: string | null;
     public_url: string | null;
+    is_reusable: boolean;
   }>;
-  const materials = await Promise.all(rows.map(async (row): Promise<TemplateRunMaterial | null> => {
+  const usefulRows = rows.filter(
+    (row) => row.is_reusable || /^step-\d+-result$/.test(row.asset_key),
+  );
+  const materials = await Promise.all(usefulRows.map(async (row): Promise<TemplateRunMaterial | null> => {
     let url = row.public_url || '';
     if (!url && row.storage_bucket && row.storage_path) {
       const { data: signed, error: signError } = await supabase.storage
@@ -122,9 +127,11 @@ export async function fetchReusableTemplateAssets(
     if (!url) return null;
     return {
       id: row.id,
+      assetKey: row.asset_key,
       name: row.asset_key || 'Template material',
       type: row.asset_type,
       url,
+      isReusable: Boolean(row.is_reusable),
     };
   }));
   return materials.filter((item): item is TemplateRunMaterial => Boolean(item));

@@ -525,13 +525,34 @@ export const TemplateBuilder = () => {
     const parameterResolution = generation.generationParameters?.resolution;
     const parameterGenerateAudio = generation.generationParameters?.generateAudio;
 
-    const nextFeature = feature ?? activeStep.feature;
+    const nextFeature: FeatureType = feature ?? (
+      generation.videoUrl || generation.mediaType === 'video'
+        ? 'Image to Video'
+        : 'Text to Image'
+    );
     const nextMaterials = ensureRequiredMaterialCards(
       nextFeature,
-      restoredMaterials.length > 0 ? restoredMaterials : activeStep.materials,
+      restoredMaterials,
     );
-
-    updateActiveStep({
+    const nextVideoParams = nextFeature === 'Image to Video'
+      ? {
+          duration: `${
+            typeof parameterDuration === 'number'
+              ? parameterDuration
+              : generation.videoDuration || 5
+          }s`,
+          resolution:
+            typeof parameterResolution === 'string'
+              ? parameterResolution
+              : '720p',
+          generateAudio:
+            typeof parameterGenerateAudio === 'boolean'
+              ? parameterGenerateAudio
+              : true,
+        }
+      : undefined;
+    const nextStep: WorkflowStep = {
+      ...activeStep,
       resultUrl,
       resultGenerationId: generation.id,
       feature: nextFeature,
@@ -541,25 +562,20 @@ export const TemplateBuilder = () => {
           : generation.prompt ?? '',
       materials: nextMaterials,
       inputBindings: undefined,
-      videoParams:
-        feature === 'Image to Video'
-          ? {
-              duration: `${
-                typeof parameterDuration === 'number'
-                  ? parameterDuration
-                  : generation.videoDuration || 5
-              }s`,
-              resolution:
-                typeof parameterResolution === 'string'
-                  ? parameterResolution
-                  : activeStep.videoParams?.resolution || '720p',
-              generateAudio:
-                typeof parameterGenerateAudio === 'boolean'
-                  ? parameterGenerateAudio
-                  : activeStep.videoParams?.generateAudio ?? true,
-            }
-          : activeStep.videoParams,
-    });
+      videoParams: nextVideoParams,
+    };
+
+    // A Dashboard result is one immutable generation snapshot. Remove every
+    // local/persisted association from the previous selection so old uploads
+    // can never leak into the newly selected feature, prompt, or settings.
+    const replacedMaterialIds = new Set(activeStep.materials.map((material) => material.id));
+    setMaterialFiles((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => !replacedMaterialIds.has(id)),
+    ));
+    setPersistedMaterials((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => !replacedMaterialIds.has(id)),
+    ));
+    updateActiveStep(nextStep);
 
     if (activeStep.id === steps[steps.length - 1]?.id) {
       setFinalResult(resultUrl);
@@ -571,7 +587,6 @@ export const TemplateBuilder = () => {
     }
 
     const activeIndex = steps.findIndex((step) => step.id === activeStep.id);
-    const nextStep = { ...activeStep, feature: nextFeature, materials: nextMaterials };
     const nextSteps = steps.map((step) => step.id === activeStep.id ? nextStep : step);
     if (getMissingRequiredMaterialTypes(nextStep, activeIndex, nextSteps).length > 0) {
       addToast(
@@ -982,7 +997,7 @@ export const TemplateBuilder = () => {
                 <span>
                   Result from This Step
                   <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
-                    (Choose from Dashboard â the fields below fill automatically)
+                    (Choose from Dashboard — the fields below fill automatically)
                   </span>
                 </span>
               </h3>

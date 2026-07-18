@@ -101,7 +101,7 @@ const buildSessionFromRun = (
       : undefined;
     const savedInputs = savedStep?.inputs || [];
     const stepMaterials = availableMaterials
-      .filter((asset) => savedInputs.some((input) => input.templateAssetId === asset.id))
+      .filter((asset) => asset.isReusable && savedInputs.some((input) => input.templateAssetId === asset.id))
       .map((asset) => {
         const binding = savedInputs.find((input) => input.templateAssetId === asset.id);
         return {
@@ -112,6 +112,17 @@ const buildSessionFromRun = (
           slot: typeof binding?.slot === 'string' ? binding.slot : undefined,
         };
       });
+    const referenceResult = availableMaterials.find(
+      (asset) => asset.assetKey === `step-${runStep.stepOrder}-result`,
+    );
+    const savedResult = referenceResult
+      ? {
+          type: savedStep?.output?.assetType === 'video'
+            ? 'video' as const
+            : 'image' as const,
+          url: referenceResult.url,
+        }
+      : undefined;
     return {
       id: runStep.stepId,
       runStepId: runStep.id,
@@ -126,7 +137,7 @@ const buildSessionFromRun = (
         ? existingStep!.settings
         : savedStep?.parameters || {},
       status: runStep.status,
-      result: existingStep?.result,
+      result: existingStep?.result || savedResult,
     };
   }),
 });

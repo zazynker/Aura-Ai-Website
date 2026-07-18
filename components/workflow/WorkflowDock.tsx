@@ -350,7 +350,7 @@ export const WorkflowDock = () => {
                 </button>
               </header>
 
-              <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
+              <div className="space-y-5 p-5">
                 <div className="space-y-5">
                   <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                     <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/60">Materials uploaded</h3>
@@ -401,13 +401,13 @@ export const WorkflowDock = () => {
                   )}
                 </div>
 
-                <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4 lg:self-start">
+                <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
                   <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/60">Final result from this step</h3>
                   {modalStep.result?.url ? (
                     modalStep.result.type === 'video' ? (
-                      <video src={modalStep.result.url} controls playsInline preload="metadata" className="max-h-[60vh] w-full rounded-lg bg-black object-contain" />
+                      <video src={modalStep.result.url} controls playsInline preload="metadata" className="mx-auto max-h-[65vh] w-full rounded-lg bg-black object-contain" />
                     ) : (
-                      <img src={modalStep.result.url} alt={`Step ${modalStep.stepNumber} result`} className="max-h-[60vh] w-full rounded-lg bg-black object-contain" />
+                      <img src={modalStep.result.url} alt={`Step ${modalStep.stepNumber} result`} className="mx-auto max-h-[65vh] w-full rounded-lg bg-black object-contain" />
                     )
                   ) : (
                     <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/30 px-6 text-center text-sm text-white/45">
