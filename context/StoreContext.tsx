@@ -11,6 +11,7 @@ import {
   fetchUserCredits
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
+import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
@@ -427,6 +428,12 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (savedGen) {
       // Add to local state immediately (at the beginning)
       setDbGenerations(prev => [savedGen, ...prev]);
+      void ensureGenerationThumbnail(savedGen).then((thumbnailUrl) => {
+        if (!thumbnailUrl) return;
+        setDbGenerations((prev) => prev.map((item) => (
+          item.id === savedGen.id ? { ...item, thumbnailUrl } : item
+        )));
+      });
       
       // 后端已扣分，刷新本地积分
       const { data: creditsData } = await fetchUserCredits();
@@ -504,6 +511,14 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       } else if (savedGens.length > 0) {
         console.log('Saved to DB successfully:', savedGens.length);
         setDbGenerations(prev => [...savedGens, ...prev]);
+        savedGens.forEach((saved) => {
+          void ensureGenerationThumbnail(saved).then((thumbnailUrl) => {
+            if (!thumbnailUrl) return;
+            setDbGenerations((prev) => prev.map((item) => (
+              item.id === saved.id ? { ...item, thumbnailUrl } : item
+            )));
+          });
+        });
       }
     }
 
@@ -710,3 +725,4 @@ export const useStore = () => {
   if (!context) throw new Error('useStore must be used within StoreProvider');
   return context;
 };
+

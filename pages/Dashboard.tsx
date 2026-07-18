@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Collection, Template } from '../types';
 import { supabase } from '../utils/supabase';
+import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import {
   deleteCreatorDraft,
   fetchCreatorTemplates,
@@ -84,6 +85,31 @@ export const Dashboard = () => {
   }, [location.search]);
   const [selectedImage, setSelectedImage] = useState<Generation | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
+  const [generatedThumbnails, setGeneratedThumbnails] = useState<Record<string, string>>({});
+  const generatedThumbnailsRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const queue = generations.filter((generation) => (
+      !generation.thumbnailUrl &&
+      !generatedThumbnailsRef.current[generation.id] &&
+      !generation.id.startsWith('session_')
+    ));
+    let cursor = 0;
+    const worker = async () => {
+      while (!cancelled && cursor < queue.length) {
+        const generation = queue[cursor++];
+        const thumbnailUrl = await ensureGenerationThumbnail(generation);
+        if (cancelled || !thumbnailUrl) continue;
+        generatedThumbnailsRef.current[generation.id] = thumbnailUrl;
+        setGeneratedThumbnails((current) => ({ ...current, [generation.id]: thumbnailUrl }));
+      }
+    };
+    void Promise.all([worker(), worker(), worker()]);
+    return () => {
+      cancelled = true;
+    };
+  }, [generations]);
 
   const [myTemplates, setMyTemplates] = useState<CreatorTemplateCard[]>([]);
   const [loadingMyTemplates, setLoadingMyTemplates] = useState(false);
@@ -340,8 +366,29 @@ useEffect(() => {
     });
   };
 
-  const renderGenerationMedia = (gen: Generation, className: string, controls = false) => {
+  const renderGenerationMedia = (
+    gen: Generation,
+    className: string,
+    controls = false,
+    fullResolution = false,
+  ) => {
+    const thumbnailUrl = generatedThumbnails[gen.id] || gen.thumbnailUrl || '';
     if (isVideoGeneration(gen) && gen.videoUrl) {
+      if (!controls) {
+        return thumbnailUrl ? (
+          <img
+            src={thumbnailUrl}
+            className={className}
+            loading="lazy"
+            decoding="async"
+            alt={getGenerationDisplayName(gen)}
+          />
+        ) : (
+          <div className={`${className} flex items-center justify-center bg-slate-100 dark:bg-slate-800`}>
+            <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
+          </div>
+        );
+      }
       return (
         <video
           src={gen.videoUrl}
@@ -350,22 +397,25 @@ useEffect(() => {
           muted={!controls}
           playsInline
           preload="metadata"
-          poster={gen.imageUrl && gen.imageUrl !== gen.videoUrl ? gen.imageUrl : undefined}
-          onLoadedMetadata={(event) => {
-            const video = event.currentTarget;
-            if (!controls && !(gen.imageUrl && gen.imageUrl !== gen.videoUrl) && Number.isFinite(video.duration)) {
-              video.currentTime = Math.min(0.1, Math.max(0, video.duration / 20));
-            }
-          }}
+          poster={thumbnailUrl || (gen.imageUrl && gen.imageUrl !== gen.videoUrl ? gen.imageUrl : undefined)}
         />
       );
     }
 
+    const displayUrl = fullResolution ? gen.imageUrl : thumbnailUrl;
+    if (!displayUrl) {
+      return (
+        <div className={`${className} flex items-center justify-center bg-slate-100 dark:bg-slate-800`}>
+          <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
+        </div>
+      );
+    }
     return (
       <img
-        src={gen.imageUrl}
+        src={displayUrl}
         className={className}
         loading="lazy"
+        decoding="async"
         alt={getGenerationDisplayName(gen)}
       />
     );
@@ -1125,7 +1175,7 @@ useEffect(() => {
            
            <div className="max-w-6xl w-full p-4 flex flex-col md:flex-row gap-8 items-center justify-center" onClick={e => e.stopPropagation()}>
                <div className="relative flex-1 flex flex-col items-center justify-center max-h-[80vh]">
-                    {renderGenerationMedia(selectedImage, 'max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl', isVideoGeneration(selectedImage))}
+                    {renderGenerationMedia(selectedImage, 'max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl', isVideoGeneration(selectedImage), true)}
                     
                     {/* Group thumbnails */}
                     {selectedGroup && selectedGroup.length > 1 && (

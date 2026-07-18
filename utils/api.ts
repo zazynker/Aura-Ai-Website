@@ -135,6 +135,7 @@ interface DbGeneration {
   credits_used: number;
   created_at: string;
   media_type?: string;
+  thumbnail_url?: string;
   video_url?: string;
   video_duration?: number;
   video_aspect_ratio?: string;
@@ -155,6 +156,7 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   creditsUsed: db.credits_used,
   createdAt: new Date(db.created_at).getTime(),
   mediaType: (db.media_type as 'image' | 'video') || 'image',
+  thumbnailUrl: db.thumbnail_url || undefined,
   videoUrl: db.video_url || undefined,
   videoDuration: db.video_duration || undefined,
   videoAspectRatio: db.video_aspect_ratio || undefined,
@@ -337,6 +339,7 @@ export async function saveGenerationToDb(
       input_assets: generation.inputAssets || [],
       generation_parameters: generation.generationParameters || {},
     };
+    if (generation.thumbnailUrl) dbData.thumbnail_url = generation.thumbnailUrl;
 
     const { data, error } = await supabase
       .from('generations')
@@ -386,6 +389,7 @@ export async function saveGenerationsToDb(
       capability: gen.capability || null,
       input_assets: gen.inputAssets || [],
       generation_parameters: gen.generationParameters || {},
+      ...(gen.thumbnailUrl ? { thumbnail_url: gen.thumbnailUrl } : {}),
     }));
 
     const { data, error } = await supabase
@@ -791,3 +795,4 @@ export async function logVideoInterest(): Promise<{ success: boolean; error: str
     return { success: false, error: 'Failed to log video interest' };
   }
 }
+

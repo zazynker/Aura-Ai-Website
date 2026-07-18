@@ -138,6 +138,7 @@ export interface Generation {
   isSessionOnly?: boolean;
   groupId?: string; // 同一批生成的图片共享同一个 groupId
   mediaType?: 'image' | 'video';
+  thumbnailUrl?: string;
   videoUrl?: string;
   videoDuration?: number;
   videoAspectRatio?: string;
@@ -259,3 +260,4 @@ export interface VideoGenerateRequest {
   characterOrientation?: 'video' | 'image';
   generationCount?: number;
 }
+
