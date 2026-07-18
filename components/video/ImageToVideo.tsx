@@ -50,7 +50,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
 
   useEffect(() => {
     if (!workflowHandoff || workflowHandoff.capability !== 'video.image_to_video') return;
-    if (workflowHandoff.action === 'materials') {
+    if (workflowHandoff.action === 'materials' || workflowHandoff.action === 'all') {
       const start = workflowHandoff.materials.find((item) => item.slot === 'start_image')
         || workflowHandoff.materials.find((item) => item.type === 'image');
       const end = workflowHandoff.materials.find((item) => item.slot === 'end_image');
@@ -58,15 +58,15 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         (start && selectedImage && selectedImage !== start.url)
         || (end && selectedEndImage && selectedEndImage !== end.url),
       );
-      if (willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
+      if (workflowHandoff.action === 'materials' && willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
       if (start) { setSelectedImage(start.url); setStartImageFile(null); }
       if (end) { setSelectedEndImage(end.url); setEndImageFile(null); }
-      return;
+      if (workflowHandoff.action === 'materials') return;
     }
     const next = workflowHandoff.settings;
     const nextPrompt = workflowHandoff.prompt || (typeof next.prompt === 'string' ? next.prompt : '');
     const willOverwrite = Boolean(prompt.trim() && prompt !== nextPrompt);
-    if (willOverwrite && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
+    if (workflowHandoff.action === 'prompt' && willOverwrite && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
     setPrompt(nextPrompt);
     if (next.resolution === '720p' || next.resolution === '1080p') setResolution(next.resolution);
     if (typeof next.duration === 'number') setDuration(next.duration);

@@ -50,6 +50,20 @@ export const WorkflowDock = () => {
     }
   }, []);
 
+  useEffect(() => {
+    if (!modalStep) return;
+    const previousOverflow = document.body.style.overflow;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setModalStep(null);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [modalStep]);
+
   if (!steps || steps.length === 0) return null;
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -114,7 +128,9 @@ export const WorkflowDock = () => {
     setExpandedStepId(step.id);
     try {
       await setActiveStep(step.id);
-      navigate(step.targetRoute);
+      const handoff = queueWorkflowHandoff(step, 'all');
+      const separator = step.targetRoute.includes('?') ? '&' : '?';
+      navigate(`${step.targetRoute}${separator}workflowAction=all&workflowNonce=${encodeURIComponent(handoff.nonce)}`);
     } catch (error) {
       addToast(
         'error',
@@ -145,10 +161,6 @@ export const WorkflowDock = () => {
   };
 
   const handleViewResult = (step: WorkflowStep) => {
-    if (!step.result?.url) {
-      addToast('info', 'This step has no reference result to preview.');
-      return;
-    }
     setModalStep(step);
   };
 
@@ -264,6 +276,18 @@ export const WorkflowDock = () => {
                       ? 'opacity-100 translate-x-0 scale-100 pointer-events-auto' 
                       : 'opacity-0 -translate-x-4 scale-75 pointer-events-none'
                   }`}>
+                    {/* Purple Bead (Step Details) */}
+                    <button
+                      className="w-8 h-8 rounded-full bg-purple-500 hover:bg-purple-400 hover:scale-110 text-white flex items-center justify-center shadow-md transition-all group/btn cursor-pointer"
+                      onClick={() => handleViewResult(step)}
+                      aria-label="View this step's details"
+                      tabIndex={isExpanded ? 0 : -1}
+                    >
+                      <Eye className="w-4 h-4" />
+                      <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-slate-800 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity">
+                        View step details
+                      </div>
+                    </button>
                     
                     {/* Yellow Bead (Materials) */}
                     <button
@@ -295,24 +319,6 @@ export const WorkflowDock = () => {
                       </div>
                     </button>
 
-                    {/* Purple Bead (Result) */}
-                    <button
-                      className={`w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-all group/btn ${
-                        step.result?.url
-                          ? 'bg-purple-500 hover:bg-purple-400 hover:scale-110 text-white cursor-pointer'
-                          : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
-                      }`}
-                      onClick={() => handleViewResult(step)}
-                      disabled={!step.result?.url}
-                      aria-label="View step result and details"
-                      tabIndex={isExpanded ? 0 : -1}
-                    >
-                      <Eye className="w-4 h-4" />
-                      <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-slate-800 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity">
-                        View step result and details
-                      </div>
-                    </button>
-
                   </div>
                 </div>
               </React.Fragment>
@@ -321,83 +327,96 @@ export const WorkflowDock = () => {
         </div>
       </div>
 
-      {/* Full-screen media viewer overlay for step result */}
-      {modalStep?.result && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200">
-          <button 
-            onClick={() => setModalStep(null)}
-            className="absolute top-4 right-4 md:top-6 md:right-6 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors text-white z-10"
-            aria-label="Close fullscreen view"
-          >
-            <X className="w-8 h-8" />
-          </button>
-          
-          <div className="w-full h-full flex flex-col items-center justify-center p-4">
-            <div className="w-full h-full flex items-center justify-center relative">
-              {modalStep.result.type === 'video' ? (
-                <video 
-                  src={modalStep.result.url} 
-                  className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl"
-                  controls 
-                  autoPlay
-                  ref={(el) => {
-                    if (el && !document.fullscreenElement) {
-                      el.play().catch(console.error);
-                      if (el.requestFullscreen) {
-                        el.requestFullscreen().catch(console.error);
-                      } else if ((el as any).webkitRequestFullscreen) {
-                        (el as any).webkitRequestFullscreen();
-                      } else if ((el as any).msRequestFullscreen) {
-                        (el as any).msRequestFullscreen();
-                      }
-                    }
-                  }}
-                  onFullscreenChange={(e) => {
-                    if (!document.fullscreenElement && !(document as any).webkitIsFullScreen) {
-                      setModalStep(null);
-                    }
-                  }}
-                />
-              ) : (
-                <img 
-                  src={modalStep.result.url} 
-                  alt={`Step ${modalStep.stepNumber} result`} 
-                  className="max-w-full max-h-[85vh] object-contain rounded-lg shadow-2xl" 
-                />
-              )}
-            </div>
-            {modalStep.prompt && (
-              <div className="mt-4 p-4 bg-white/10 backdrop-blur-md rounded-lg max-w-3xl w-full">
-                <h4 className="font-medium text-white/80 mb-2 text-sm uppercase tracking-wider">Prompt</h4>
-                <p className="text-sm text-white whitespace-pre-wrap font-mono">
-                  {modalStep.prompt}
-                </p>
-              </div>
-            )}
-            {(modalStep.materials || []).length > 0 && (
-              <div className="mt-3 p-4 bg-white/10 backdrop-blur-md rounded-lg max-w-3xl w-full">
-                <h4 className="font-medium text-white/80 mb-3 text-sm uppercase tracking-wider">Reusable materials</h4>
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {(modalStep.materials || []).map((material) => (
-                    <div key={material.id} className="rounded-lg overflow-hidden bg-black/30 min-h-20 flex items-center justify-center">
-                      {material.type === 'image' ? (
-                        <img src={material.url} alt={material.name} className="w-full h-24 object-cover" />
-                      ) : material.type === 'video' ? (
-                        <video src={material.url} controls className="w-full h-24 object-cover" />
-                      ) : (
-                        <audio src={material.url} controls className="w-full px-2" />
-                      )}
-                    </div>
-                  ))}
+      {/* Scrollable step details; media never forces browser fullscreen. */}
+      {modalStep && (
+        <div
+          className="fixed inset-0 z-[110] overflow-y-auto bg-black/95 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setModalStep(null);
+          }}
+        >
+          <div className="mx-auto min-h-full w-full max-w-5xl px-4 py-8 sm:px-6">
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-950 text-white shadow-2xl">
+              <header className="sticky top-0 z-20 flex items-start justify-between border-b border-white/10 bg-zinc-950/95 px-5 py-4 backdrop-blur">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-pink-400">Step {modalStep.stepNumber}</p>
+                  <h2 className="mt-1 text-xl font-semibold">{modalStep.feature}</h2>
+                  <p className="mt-1 text-sm text-white/55">
+                    {modalStep.targetRoute.startsWith('/video') ? 'Video creation page' : 'Image creation page'} · {modalStep.capability}
+                  </p>
                 </div>
+                <button onClick={() => setModalStep(null)} className="rounded-full bg-white/10 p-2 text-white hover:bg-white/20" aria-label="Close step details">
+                  <X className="h-6 w-6" />
+                </button>
+              </header>
+
+              <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.1fr)_minmax(280px,0.9fr)]">
+                <div className="space-y-5">
+                  <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                    <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/60">Materials uploaded</h3>
+                    {(modalStep.materials || []).length > 0 ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        {(modalStep.materials || []).map((material) => (
+                          <div key={material.id} className="overflow-hidden rounded-lg border border-white/10 bg-black/40">
+                            <div className="flex h-36 items-center justify-center bg-black/60">
+                              {material.type === 'image' ? (
+                                <img src={material.url} alt={material.name} className="h-full w-full object-contain" />
+                              ) : material.type === 'video' ? (
+                                <video src={material.url} controls playsInline preload="metadata" className="h-full w-full object-contain" />
+                              ) : (
+                                <audio src={material.url} controls preload="metadata" className="w-[90%]" />
+                              )}
+                            </div>
+                            <div className="px-3 py-2">
+                              <p className="truncate text-sm font-medium">{material.name || `${material.type} material`}</p>
+                              <p className="mt-0.5 text-xs text-white/45">{material.type}{material.slot ? ` · ${material.slot}` : ''}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-white/45">This step has no reusable uploaded materials.</p>
+                    )}
+                  </section>
+
+                  <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-white/60">Prompt</h3>
+                    <p className="whitespace-pre-wrap text-sm leading-6 text-white/90">{modalStep.prompt || 'No prompt was saved for this step.'}</p>
+                  </section>
+
+                  {Object.keys(modalStep.settings || {}).filter((key) => key !== 'prompt').length > 0 && (
+                    <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+                      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/60">Settings</h3>
+                      <dl className="grid gap-2 sm:grid-cols-2">
+                        {Object.entries(modalStep.settings).filter(([key]) => key !== 'prompt').map(([key, value]) => (
+                          <div key={key} className="rounded-lg bg-black/35 px-3 py-2">
+                            <dt className="text-xs text-white/45">{key.replace(/([A-Z])/g, ' $1').replace(/^./, (letter) => letter.toUpperCase())}</dt>
+                            <dd className="mt-1 break-words text-sm text-white/90">
+                              {typeof value === 'boolean' ? (value ? 'On' : 'Off') : Array.isArray(value) ? value.join(', ') : String(value ?? '—')}
+                            </dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </section>
+                  )}
+                </div>
+
+                <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4 lg:self-start">
+                  <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-white/60">Final result from this step</h3>
+                  {modalStep.result?.url ? (
+                    modalStep.result.type === 'video' ? (
+                      <video src={modalStep.result.url} controls playsInline preload="metadata" className="max-h-[60vh] w-full rounded-lg bg-black object-contain" />
+                    ) : (
+                      <img src={modalStep.result.url} alt={`Step ${modalStep.stepNumber} result`} className="max-h-[60vh] w-full rounded-lg bg-black object-contain" />
+                    )
+                  ) : (
+                    <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-white/15 bg-black/30 px-6 text-center text-sm text-white/45">
+                      This step has not produced a final result yet.
+                    </div>
+                  )}
+                </section>
               </div>
-            )}
-            {Object.keys(modalStep.settings).length > 0 && (
-              <div className="mt-3 p-4 bg-white/10 backdrop-blur-md rounded-lg max-w-3xl w-full">
-                <h4 className="font-medium text-white/80 mb-2 text-sm uppercase tracking-wider">Settings</h4>
-                <pre className="text-xs text-white/90 whitespace-pre-wrap break-words">{JSON.stringify(modalStep.settings, null, 2)}</pre>
-              </div>
-            )}
+            </div>
           </div>
         </div>
       )}

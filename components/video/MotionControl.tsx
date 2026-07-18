@@ -59,7 +59,7 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
 
   useEffect(() => {
     if (!workflowHandoff || workflowHandoff.capability !== 'video.motion_control') return;
-    if (workflowHandoff.action === 'materials') {
+    if (workflowHandoff.action === 'materials' || workflowHandoff.action === 'all') {
       const image = workflowHandoff.materials.find((item) => item.slot === 'character_image')
         || workflowHandoff.materials.find((item) => item.type === 'image');
       const video = workflowHandoff.materials.find((item) => item.slot === 'driver_video')
@@ -68,14 +68,14 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         (image && selectedImage && selectedImage !== image.url)
         || (video && selectedVideo && selectedVideo !== video.url),
       );
-      if (willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
+      if (workflowHandoff.action === 'materials' && willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
       if (image) { setSelectedImage(image.url); setImageFile(null); }
       if (video) { setSelectedVideo(video.url); setVideoFile(null); }
-      return;
+      if (workflowHandoff.action === 'materials') return;
     }
     const next = workflowHandoff.settings;
     const nextPrompt = workflowHandoff.prompt || (typeof next.prompt === 'string' ? next.prompt : '');
-    if (motionPrompt.trim() && motionPrompt !== nextPrompt
+    if (workflowHandoff.action === 'prompt' && motionPrompt.trim() && motionPrompt !== nextPrompt
       && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
     setMotionPrompt(nextPrompt);
     if (next.characterOrientation === 'video' || next.characterOrientation === 'image') setDirectionMatch(next.characterOrientation);

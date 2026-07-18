@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight } from 'lucide-react';
+import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { useStore } from '../context/StoreContext';
@@ -21,6 +21,7 @@ import {
   type TemplateDraftIdentity,
 } from '../utils/templateDraftApi';
 import type { UploadedTemplateCover } from '../utils/templateStorage';
+import { getWorkflowCapability } from '../workflows/registry';
 
 type WorkflowGeneration = Generation;
 
@@ -63,24 +64,72 @@ const isVideoFeature = (feature: FeatureType): boolean =>
 const looksLikeVideoUrl = (url?: string | null): boolean =>
   Boolean(url && /\.(mp4|webm|mov|m4v)(?:[?#]|$)/i.test(url));
 
-const hasCompleteMaterialSnapshot = (
-  feature: FeatureType | null,
-  materials: Material[],
-): boolean => {
-  if (!feature) return false;
-  const remaining = [...FEATURE_REQUIRED_MATERIAL_TYPES[feature]];
-  materials.forEach((material) => {
-    const index = remaining.indexOf(material.type);
-    if (material.url && index >= 0) remaining.splice(index, 1);
+const getMissingRequiredMaterialTypes = (
+  step: WorkflowStep,
+  stepIndex: number,
+  allSteps: WorkflowStep[],
+): Material['type'][] => {
+  const capability = getWorkflowCapability(BUILDER_FEATURE_TO_CAPABILITY[step.feature]);
+  const unusedMaterials = step.materials.filter((material) => Boolean(material.url));
+  const usedMaterialIds = new Set<string>();
+  let previousStepUsed = false;
+  const missing: Material['type'][] = [];
+
+  capability.inputs.filter((slot) => slot.required).forEach((slot) => {
+    const material = unusedMaterials.find(
+      (candidate) =>
+        !usedMaterialIds.has(candidate.id) &&
+        candidate.type.toLowerCase() === slot.assetType,
+    );
+    if (material) {
+      usedMaterialIds.add(material.id);
+      return;
+    }
+
+    const hasPreviousOutput = !previousStepUsed &&
+      slot.allowedSources.includes('previous_step') &&
+      allSteps.slice(0, stepIndex).reverse().some((previous) => {
+        const previousCapability = getWorkflowCapability(
+          BUILDER_FEATURE_TO_CAPABILITY[previous.feature],
+        );
+        return previousCapability.output.assetType === slot.assetType;
+      });
+    if (hasPreviousOutput) {
+      previousStepUsed = true;
+      return;
+    }
+
+    missing.push(
+      slot.assetType === 'image'
+        ? 'Image'
+        : slot.assetType === 'video'
+          ? 'Video'
+          : 'Audio',
+    );
   });
-  return remaining.length === 0;
+
+  return missing;
 };
 
-const hasRequiredBuilderMaterials = (step: WorkflowStep): boolean => {
-  const requiredTypes = FEATURE_REQUIRED_MATERIAL_TYPES[step.feature];
-  return requiredTypes.length === 0
-    ? step.materials.some((material) => Boolean(material.url))
-    : hasCompleteMaterialSnapshot(step.feature, step.materials);
+const ensureRequiredMaterialCards = (
+  feature: FeatureType,
+  materials: Material[],
+): Material[] => {
+  const next = [...materials];
+  const reservedIds = new Set<string>();
+  FEATURE_REQUIRED_MATERIAL_TYPES[feature].forEach((type, index) => {
+    const existing = next.find(
+      (material) => material.type === type && !reservedIds.has(material.id),
+    );
+    if (existing) {
+      reservedIds.add(existing.id);
+      return;
+    }
+    const id = `required-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+    reservedIds.add(id);
+    next.push({ id, type, url: null, allowDownload: true });
+  });
+  return next;
 };
 
 const createInitialStep = (): WorkflowStep => ({
@@ -107,13 +156,25 @@ const getPublishGateIssue = (
   }
 
   const missingMaterialIndex = steps.findIndex(
-    (step) => !hasRequiredBuilderMaterials(step),
+    (step, index) => getMissingRequiredMaterialTypes(step, index, steps).length > 0,
   );
   if (missingMaterialIndex >= 0) {
+    const missingTypes = getMissingRequiredMaterialTypes(
+      steps[missingMaterialIndex],
+      missingMaterialIndex,
+      steps,
+    );
+    const counts = missingTypes.reduce<Record<string, number>>((result, type) => {
+      result[type] = (result[type] || 0) + 1;
+      return result;
+    }, {});
+    const missingLabel = Object.entries(counts)
+      .map(([type, count]) => `${count} ${type}${count > 1 ? 's' : ''}`)
+      .join(' and ');
     return {
       code: 'material',
       stepId: steps[missingMaterialIndex].id,
-      message: `Add every required material used in Step ${missingMaterialIndex + 1}.`,
+      message: `Step ${missingMaterialIndex + 1} still needs ${missingLabel}. Upload it or use a compatible previous step result.`,
     };
   }
 
@@ -194,7 +255,10 @@ export const TemplateBuilder = () => {
         setDraftIdentity(draft.identity);
         setTemplateTitle(draft.title);
         setTemplateDescription(draft.description);
-        setSteps(draft.steps);
+        setSteps(draft.steps.map((step) => ({
+          ...step,
+          materials: ensureRequiredMaterialCards(step.feature, step.materials),
+        })));
         setActiveStepId(draft.steps[0]?.id || 'step-1');
         setFinalResult(draft.finalResultUrl);
         setFinalResultType(draft.finalResultType);
@@ -308,13 +372,15 @@ export const TemplateBuilder = () => {
 
   const addMaterial = () => {
     updateActiveStep({
-      materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }]
+      materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }],
+      inputBindings: undefined,
     });
   };
 
   const updateMaterial = (id: string, updates: Partial<Material>) => {
     updateActiveStep({
-      materials: activeStep.materials.map(m => m.id === id ? { ...m, ...updates } : m)
+      materials: activeStep.materials.map(m => m.id === id ? { ...m, ...updates } : m),
+      inputBindings: undefined,
     });
   };
 
@@ -330,7 +396,8 @@ export const TemplateBuilder = () => {
       return next;
     });
     updateActiveStep({
-      materials: activeStep.materials.filter(m => m.id !== id)
+      materials: activeStep.materials.filter(m => m.id !== id),
+      inputBindings: undefined,
     });
   };
 
@@ -458,18 +525,22 @@ export const TemplateBuilder = () => {
     const parameterResolution = generation.generationParameters?.resolution;
     const parameterGenerateAudio = generation.generationParameters?.generateAudio;
 
+    const nextFeature = feature ?? activeStep.feature;
+    const nextMaterials = ensureRequiredMaterialCards(
+      nextFeature,
+      restoredMaterials.length > 0 ? restoredMaterials : activeStep.materials,
+    );
+
     updateActiveStep({
       resultUrl,
       resultGenerationId: generation.id,
-      feature: feature ?? activeStep.feature,
+      feature: nextFeature,
       prompt:
         typeof parameterPrompt === 'string'
           ? parameterPrompt
           : generation.prompt ?? '',
-      materials:
-        restoredMaterials.length > 0
-          ? restoredMaterials
-          : activeStep.materials,
+      materials: nextMaterials,
+      inputBindings: undefined,
       videoParams:
         feature === 'Image to Video'
           ? {
@@ -499,7 +570,10 @@ export const TemplateBuilder = () => {
       );
     }
 
-    if (!hasCompleteMaterialSnapshot(feature, restoredMaterials)) {
+    const activeIndex = steps.findIndex((step) => step.id === activeStep.id);
+    const nextStep = { ...activeStep, feature: nextFeature, materials: nextMaterials };
+    const nextSteps = steps.map((step) => step.id === activeStep.id ? nextStep : step);
+    if (getMissingRequiredMaterialTypes(nextStep, activeIndex, nextSteps).length > 0) {
       addToast(
         'info',
         'This older result has no complete material snapshot. The available fields were restored; please add the missing material below.',
@@ -511,6 +585,15 @@ export const TemplateBuilder = () => {
   const openDashboardResults = () => {
     setShowHistoryModal(true);
     void refreshGenerations();
+  };
+
+  const clearActiveStepResult = () => {
+    const removedResult = activeStep.resultUrl;
+    updateActiveStep({ resultUrl: null, resultGenerationId: undefined });
+    if (activeStep.id === steps[steps.length - 1]?.id && finalResult === removedResult) {
+      setFinalResult(null);
+      setFinalResultType(null);
+    }
   };
 
   const showPublishGateIssue = (issue: PublishGateIssue) => {
@@ -904,8 +987,10 @@ export const TemplateBuilder = () => {
                 </span>
               </h3>
               <div 
-                onClick={openDashboardResults}
-                className={`w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group ${
+                onClick={activeStep.resultUrl ? undefined : openDashboardResults}
+                className={`relative w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group ${
+                  activeStep.resultUrl ? '' : 'cursor-pointer'
+                } ${
                   builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id
                     ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
                     : 'border-slate-200 dark:border-slate-700'
@@ -934,6 +1019,33 @@ export const TemplateBuilder = () => {
                     </p>
                   </>
                 )}
+                {activeStep.resultUrl && (
+                  <div className="absolute right-2 top-2 z-10 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openDashboardResults();
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black"
+                      aria-label="Replace this step result"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Replace
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        clearActiveStepResult();
+                      }}
+                      className="rounded-lg bg-red-600/90 p-1.5 text-white backdrop-blur hover:bg-red-600"
+                      aria-label="Remove this step result"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
               </div>
               {builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id && (
                 <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
@@ -960,7 +1072,11 @@ export const TemplateBuilder = () => {
                 ] as FeatureType[]).map((feature) => (
                   <button
                     key={feature}
-                    onClick={() => updateActiveStep({ feature })}
+                    onClick={() => updateActiveStep({
+                      feature,
+                      materials: ensureRequiredMaterialCards(feature, activeStep.materials),
+                      inputBindings: undefined,
+                    })}
                     className={`p-4 rounded-xl border text-left transition-all ${
                       activeStep.feature === feature 
                         ? 'border-pink-500 bg-pink-50 dark:bg-pink-500/10 ring-1 ring-pink-500' 
@@ -1110,7 +1226,7 @@ export const TemplateBuilder = () => {
               </div>
               {builderError && publishGateIssue?.code === 'material' && publishGateIssue.stepId === activeStep.id && (
                 <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
-                  Required: upload or restore the material used for this step.
+                  {builderError}
                 </p>
               )}
             </section>

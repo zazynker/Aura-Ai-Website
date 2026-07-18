@@ -37,7 +37,7 @@ export interface WorkflowMaterial {
   slot?: string;
 }
 
-export type WorkflowHandoffAction = 'materials' | 'prompt';
+export type WorkflowHandoffAction = 'all' | 'materials' | 'prompt';
 
 export interface WorkflowHandoff {
   nonce: string;

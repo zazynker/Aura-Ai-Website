@@ -94,7 +94,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
 
   useEffect(() => {
     if (!workflowHandoff || !workflowHandoff.capability.startsWith('video.lip_sync_')) return;
-    if (workflowHandoff.action === 'materials') {
+    if (workflowHandoff.action === 'materials' || workflowHandoff.action === 'all') {
       const media = workflowHandoff.materials.find((item) => item.slot === 'portrait_image' || item.slot === 'source_video')
         || workflowHandoff.materials.find((item) => item.type === 'image' || item.type === 'video');
       const audio = workflowHandoff.materials.find((item) => item.slot === 'audio')
@@ -103,7 +103,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
         (media && selectedMedia && selectedMedia.url !== media.url)
         || (audio && audioUrl && audioUrl !== audio.url),
       );
-      if (willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
+      if (workflowHandoff.action === 'materials' && willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
       if (media) setSelectedMedia({ url: media.url, type: media.type === 'video' ? 'video' : 'image' });
       if (audio) {
         setAudioUrl(audio.url);
@@ -118,11 +118,11 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
           setAudioTrimEnd(duration);
         };
       }
-      return;
+      if (workflowHandoff.action === 'materials') return;
     }
     const nextPrompt = workflowHandoff.prompt
       || (typeof workflowHandoff.settings.prompt === 'string' ? workflowHandoff.settings.prompt : '');
-    if (prompt.trim() && prompt !== nextPrompt
+    if (workflowHandoff.action === 'prompt' && prompt.trim() && prompt !== nextPrompt
       && !window.confirm('Replace the prompt currently entered on this page?')) return;
     setPrompt(nextPrompt);
   }, [workflowHandoff?.nonce]);

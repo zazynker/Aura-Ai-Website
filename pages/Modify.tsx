@@ -288,7 +288,7 @@ export const Modify = () => {
     const handoff = consumeWorkflowHandoff();
     if (!handoff || !handoff.capability.startsWith('image.')) return;
 
-    if (handoff.action === 'materials') {
+    if (handoff.action === 'materials' || handoff.action === 'all') {
       const preferredSlots: Record<string, string[]> = {
         'image.replace_product': ['scene_image'],
         'image.modify': ['source_image', 'reference_image'],
@@ -300,16 +300,17 @@ export const Modify = () => {
       const material = handoff.materials.find(
         (item) => item.type === 'image' && preferredSlots[handoff.capability]?.includes(item.slot || ''),
       ) || handoff.materials.find((item) => item.type === 'image');
-      if (!material) return;
-      const hasUserImage = currentImage !== DEFAULT_TEMPLATE_URL
-        && currentImage !== material.url;
-      if (hasUserImage && !window.confirm('Replace the image currently selected on this page with the template material?')) return;
-      setCurrentImage(material.url);
-      setOriginalUploadedImage(material.url);
-      setCurrentImageSource({ templateId: `workflow:${handoff.stepId}`, templateName: 'Workflow material' });
-      setHasSelectedImage(true);
-      setUploadedFile(null);
-      return;
+      if (material) {
+        const hasUserImage = currentImage !== DEFAULT_TEMPLATE_URL
+          && currentImage !== material.url;
+        if (handoff.action === 'materials' && hasUserImage && !window.confirm('Replace the image currently selected on this page with the template material?')) return;
+        setCurrentImage(material.url);
+        setOriginalUploadedImage(material.url);
+        setCurrentImageSource({ templateId: `workflow:${handoff.stepId}`, templateName: 'Workflow material' });
+        setHasSelectedImage(true);
+        setUploadedFile(null);
+      }
+      if (handoff.action === 'materials') return;
     }
 
     const settings = handoff.settings;
@@ -329,7 +330,7 @@ export const Modify = () => {
         : handoff.capability === 'image.change_ratio'
           ? ratioPrompt
           : prompt;
-    if (existingPrompt.trim() && existingPrompt !== nextPrompt
+    if (handoff.action === 'prompt' && existingPrompt.trim() && existingPrompt !== nextPrompt
       && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
 
     setActiveTool(capabilityTool[handoff.capability] || 'replace');
