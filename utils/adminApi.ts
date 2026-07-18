@@ -351,3 +351,154 @@ export async function adminGetVideoInterestStats(
     return { data: null, error: 'Failed to fetch video interest stats' };
   }
 }
+
+export interface AdminReviewStep {
+  id: string;
+  name: string;
+  feature: string;
+  prompt: string;
+  settings: string;
+  materials?: string;
+  reusable: boolean;
+  resultUrl?: string;
+  resultType?: 'image' | 'video';
+}
+
+export interface AdminReviewTemplate {
+  id: string;
+  versionId: string;
+  name: string;
+  coverUrl: string;
+  authorName: string;
+  authorAvatar: string;
+  submittedAt: string;
+  stepsCount: number;
+  description: string;
+  status: 'In review';
+  steps: AdminReviewStep[];
+}
+
+export interface AdminReviewedTemplate {
+  id: string;
+  name: string;
+  authorName: string;
+  status: 'Published' | 'Changes requested';
+  reviewedAt: string;
+}
+
+type RawReviewAsset = {
+  asset_key?: string;
+  asset_type?: string;
+  public_url?: string | null;
+  storage_bucket?: string | null;
+  storage_path?: string | null;
+  is_reusable?: boolean | null;
+};
+
+type RawReviewTemplate = {
+  id: string;
+  version_id: string;
+  name?: string | null;
+  cover_url?: string | null;
+  thumb_url?: string | null;
+  image_url?: string | null;
+  creator_email?: string | null;
+  submitted_at?: string | null;
+  description?: string | null;
+  workflow?: Record<string, unknown> | null;
+  assets?: RawReviewAsset[] | null;
+};
+
+async function signedAssetUrl(asset?: RawReviewAsset): Promise<string | undefined> {
+  if (!asset) return undefined;
+  if (asset.public_url) return asset.public_url;
+  if (!asset.storage_bucket || !asset.storage_path) return undefined;
+  const { data, error } = await supabase.storage
+    .from(asset.storage_bucket)
+    .createSignedUrl(asset.storage_path, 3600);
+  if (error) return undefined;
+  return data.signedUrl;
+}
+
+async function mapPendingReview(row: RawReviewTemplate): Promise<AdminReviewTemplate> {
+  const workflowSteps = Array.isArray(row.workflow?.steps)
+    ? row.workflow.steps as Array<Record<string, unknown>>
+    : [];
+  const assets = Array.isArray(row.assets) ? row.assets : [];
+  const steps = await Promise.all(workflowSteps.map(async (step, index): Promise<AdminReviewStep> => {
+    const parameters = step.parameters && typeof step.parameters === 'object'
+      ? step.parameters as Record<string, unknown>
+      : {};
+    const resultAsset = assets.find((asset) => asset.asset_key === `step-${index + 1}-result`);
+    const materialAssets = assets.filter((asset) => asset.asset_key?.startsWith(`step-${index + 1}-material-`));
+    const prompt = typeof step.instruction === 'string'
+      ? step.instruction
+      : typeof parameters.prompt === 'string' ? parameters.prompt : '';
+    return {
+      id: typeof step.id === 'string' ? step.id : `step-${index + 1}`,
+      name: typeof step.title === 'string' ? step.title : `Step ${index + 1}`,
+      feature: typeof step.capability === 'string' ? step.capability : 'Unknown capability',
+      prompt,
+      settings: JSON.stringify(parameters, null, 2),
+      materials: materialAssets.length ? `${materialAssets.length} saved material${materialAssets.length === 1 ? '' : 's'}` : undefined,
+      reusable: materialAssets.length === 0 || materialAssets.every((asset) => asset.is_reusable !== false),
+      resultUrl: await signedAssetUrl(resultAsset),
+      resultType: resultAsset?.asset_type === 'video' ? 'video' : 'image',
+    };
+  }));
+  const email = row.creator_email || 'Creator';
+  return {
+    id: row.id,
+    versionId: row.version_id,
+    name: row.name || 'Untitled workflow template',
+    coverUrl: row.thumb_url || row.cover_url || row.image_url || '',
+    authorName: email.includes('@') ? email.split('@')[0] : email,
+    authorAvatar: '',
+    submittedAt: row.submitted_at || new Date().toISOString(),
+    stepsCount: steps.length,
+    description: row.description || 'No description provided.',
+    status: 'In review',
+    steps,
+  };
+}
+
+export async function adminGetTemplateReviews(): Promise<{
+  data: { pending: AdminReviewTemplate[]; recent: AdminReviewedTemplate[] } | null;
+  error: string | null;
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_list_template_reviews', { p_limit: 50 });
+    if (error) return { data: null, error: error.message };
+    if (!data?.success) return { data: null, error: data?.error || 'Could not load reviews.' };
+    const pending = await Promise.all(((data.pending || []) as RawReviewTemplate[]).map(mapPendingReview));
+    const recent = ((data.recent || []) as Array<Record<string, unknown>>).map((row): AdminReviewedTemplate => ({
+      id: String(row.id || ''),
+      name: String(row.name || 'Untitled workflow template'),
+      authorName: String(row.creator_email || 'Creator').split('@')[0],
+      status: row.action === 'approved' ? 'Published' : 'Changes requested',
+      reviewedAt: String(row.reviewed_at || new Date().toISOString()),
+    }));
+    return { data: { pending, recent }, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Could not load reviews.' };
+  }
+}
+
+export async function adminReviewTemplate(
+  templateId: string,
+  decision: 'approve' | 'request_changes',
+  feedback?: string,
+): Promise<{ success: boolean; error: string | null; alreadyProcessed?: boolean }> {
+  try {
+    const { data, error } = await supabase.rpc('admin_review_template', {
+      p_template_id: templateId,
+      p_decision: decision,
+      p_feedback: feedback || null,
+    });
+    if (error) return { success: false, error: error.message };
+    if (!data?.success) return { success: false, error: data?.error || 'Could not save this review.' };
+    return { success: true, error: null, alreadyProcessed: Boolean(data.already_processed) };
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : 'Could not save this review.' };
+  }
+}

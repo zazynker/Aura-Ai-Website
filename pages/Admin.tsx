@@ -19,7 +19,11 @@ import {
   adminUpdatePlan,
   adminGetVideoInterestStats,
   adminGetUserGenerations,
-  AdminGeneration
+  adminGetTemplateReviews,
+  adminReviewTemplate,
+  AdminGeneration,
+  AdminReviewTemplate,
+  AdminReviewedTemplate,
 } from '../utils/adminApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
@@ -37,107 +41,16 @@ export const Admin = () => {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
 
   // Review state
-  const [pendingTemplates, setPendingTemplates] = useState([
-    {
-      id: 'pt-1',
-      name: 'Neon Cyberpunk City',
-      coverUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=500&q=80',
-      authorName: 'Alex Mercer',
-      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Alex',
-      submittedAt: '2026-07-15T08:30:00Z',
-      stepsCount: 3,
-      description: 'A vibrant neon city generator with glowing accents.',
-      status: 'In review',
-      steps: [
-        {
-          id: 's1',
-          name: 'Base Image Generation',
-          resultUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=500&q=80',
-          feature: 'Text to Image',
-          prompt: 'A futuristic city at night, neon lights, cyberpunk style, high detail',
-          settings: 'Aspect Ratio: 16:9, Quality: High',
-          reusable: true
-        },
-        {
-          id: 's2',
-          name: 'Upscale',
-          resultUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=1000&q=80',
-          feature: 'Upscaler',
-          prompt: '',
-          settings: 'Scale: 2x, Face Enhance: On',
-          reusable: true
-        }
-      ]
-    },
-    {
-      id: 'pt-2',
-      name: 'Vintage Film Effect',
-      coverUrl: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=500&q=80',
-      authorName: 'Sarah Chen',
-      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah',
-      submittedAt: '2026-07-14T15:20:00Z',
-      stepsCount: 2,
-      description: 'Add a nostalgic 35mm film look to any portrait.',
-      status: 'In review',
-      steps: [
-        {
-          id: 's1',
-          name: 'Apply Filter',
-          resultUrl: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=500&q=80',
-          feature: 'Image to Image',
-          materials: 'User uploaded portrait',
-          reusable: false,
-          prompt: 'Vintage 35mm film photography, film grain, nostalgic, soft focus, light leaks',
-          settings: 'Strength: 0.65'
-        }
-      ]
-    },
-    {
-      id: 'pt-3',
-      name: 'Anime Character Design',
-      coverUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
-      authorName: 'Kaito Tanaka',
-      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Kaito',
-      submittedAt: '2026-07-13T09:10:00Z',
-      stepsCount: 4,
-      description: 'Create consistent anime characters from simple descriptions.',
-      status: 'In review',
-      steps: [
-         {
-          id: 's1',
-          name: 'Character Sketch',
-          resultUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
-          feature: 'Text to Image',
-          prompt: 'Anime style character design sheet, full body, multiple angles, flat colors',
-          settings: 'Style: Anime',
-          reusable: true
-        }
-      ]
-    }
-  ]);
-  
-  const [reviewedTemplates, setReviewedTemplates] = useState([
-    {
-      id: 'rt-1',
-      name: 'Watercolor Landscape',
-      authorName: 'Emma Watson',
-      status: 'Published',
-      reviewedAt: '2026-07-15T07:15:00Z'
-    },
-    {
-      id: 'rt-2',
-      name: 'Dynamic Lip Sync',
-      authorName: 'David Kim',
-      status: 'Changes requested',
-      reviewedAt: '2026-07-14T11:30:00Z'
-    }
-  ]);
-  
-  const [reviewingTemplate, setReviewingTemplate] = useState<any>(null);
+  const [pendingTemplates, setPendingTemplates] = useState<AdminReviewTemplate[]>([]);
+  const [reviewedTemplates, setReviewedTemplates] = useState<AdminReviewedTemplate[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsLoaded, setReviewsLoaded] = useState(false);
+  const [reviewingTemplate, setReviewingTemplate] = useState<AdminReviewTemplate | null>(null);
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectFeedback, setRejectFeedback] = useState('');
+  const [reviewActionLoading, setReviewActionLoading] = useState(false);
 
   // Stats state
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -251,6 +164,40 @@ export const Admin = () => {
     setUnusedTemplatesLoading(false);
   }, [addToast]);
 
+  const loadTemplateReviews = useCallback(async () => {
+    setReviewsLoading(true);
+    const { data, error } = await adminGetTemplateReviews();
+    if (error) {
+      addToast('error', `Failed to load template reviews: ${error}`);
+    } else if (data) {
+      setPendingTemplates(data.pending);
+      setReviewedTemplates(data.recent);
+    }
+    setReviewsLoaded(true);
+    setReviewsLoading(false);
+  }, [addToast]);
+
+  const submitTemplateReview = useCallback(async (
+    decision: 'approve' | 'request_changes',
+    feedback?: string,
+  ) => {
+    if (!reviewingTemplate || reviewActionLoading) return;
+    setReviewActionLoading(true);
+    const result = await adminReviewTemplate(reviewingTemplate.id, decision, feedback);
+    if (!result.success) {
+      addToast('error', result.error || 'The review could not be saved.');
+      setReviewActionLoading(false);
+      return;
+    }
+    setApproveConfirmOpen(false);
+    setRejectModalOpen(false);
+    setRejectFeedback('');
+    setReviewingTemplate(null);
+    await loadTemplateReviews();
+    addToast('success', decision === 'approve' ? 'Template approved' : 'Feedback sent');
+    setReviewActionLoading(false);
+  }, [reviewingTemplate, reviewActionLoading, addToast, loadTemplateReviews]);
+
   // Load data when tab changes
   useEffect(() => {
     if (!isAdmin) return;
@@ -265,8 +212,10 @@ export const Admin = () => {
       loadUnusedTemplates();
     } else if (activeTab === 'video' && !videoInterestStats) {
       loadVideoInterestStats(videoSearchEmail, videoDateRange);
+    } else if (activeTab === 'review' && !reviewsLoaded && !reviewsLoading) {
+      loadTemplateReviews();
     }
-  }, [activeTab, isAdmin, stats, users.length, templateStats.length, unusedTemplates.length, loadStats, loadUsers, loadTemplateStats, loadUnusedTemplates]);
+  }, [activeTab, isAdmin, stats, users.length, templateStats.length, unusedTemplates.length, videoInterestStats, reviewsLoaded, reviewsLoading, loadStats, loadUsers, loadTemplateStats, loadUnusedTemplates, loadTemplateReviews]);
 
   // Load video interest stats
   const loadVideoInterestStats = useCallback(async (email: string = '', range: 'all' | '7d' | '30d' | '90d' = 'all') => {
@@ -974,7 +923,11 @@ export const Admin = () => {
                 </div>
               </div>
 
-              {pendingTemplates.length === 0 ? (
+              {reviewsLoading ? (
+                <div className="flex justify-center py-16">
+                  <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+                </div>
+              ) : pendingTemplates.length === 0 ? (
                 <div className="text-center py-12 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20">
                   <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
                   <h3 className="text-lg font-bold text-slate-900 dark:text-white">All caught up!</h3>
@@ -985,7 +938,13 @@ export const Admin = () => {
                   {pendingTemplates.map(template => (
                     <div key={template.id} className="glass-panel border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col bg-white dark:bg-slate-800">
                       <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-900">
-                        <img src={template.coverUrl} className="w-full h-full object-cover" alt={template.name} />
+                        {template.coverUrl ? (
+                          <img src={template.coverUrl} className="w-full h-full object-cover" alt={template.name} loading="lazy" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Image className="w-12 h-12 text-slate-300" />
+                          </div>
+                        )}
                         <div className="absolute top-3 left-3 z-10">
                           <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">In review</span>
                         </div>
@@ -993,7 +952,13 @@ export const Admin = () => {
                       <div className="p-4 flex-1 flex flex-col">
                         <h4 className="font-bold text-slate-900 dark:text-white mb-2 line-clamp-1">{template.name}</h4>
                         <div className="flex items-center gap-2 mb-3">
-                          <img src={template.authorAvatar} alt={template.authorName} className="w-6 h-6 rounded-full bg-slate-200" />
+                          {template.authorAvatar ? (
+                            <img src={template.authorAvatar} alt={template.authorName} className="w-6 h-6 rounded-full bg-slate-200" />
+                          ) : (
+                            <div className="w-6 h-6 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-[10px] font-bold">
+                              {template.authorName.slice(0, 1).toUpperCase()}
+                            </div>
+                          )}
                           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{template.authorName}</span>
                         </div>
                         <div className="text-xs text-slate-500 mb-4 space-y-1">
@@ -1006,7 +971,7 @@ export const Admin = () => {
                             className="w-full"
                             onClick={() => {
                               setReviewingTemplate(template);
-                              setExpandedStep('s1');
+                              setExpandedStep(template.steps[0]?.id || null);
                             }}
                           >
                             <Eye className="w-4 h-4 mr-2" /> Review
@@ -1344,13 +1309,21 @@ export const Admin = () => {
           <div className="space-y-6">
             <div className="flex flex-col md:flex-row gap-6">
               <div className="w-full md:w-1/3">
-                <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full aspect-[3/4] object-cover rounded-xl shadow-sm border border-slate-200 dark:border-white/10" />
+                {reviewingTemplate.coverUrl ? (
+                  <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full aspect-[3/4] object-cover rounded-xl shadow-sm border border-slate-200 dark:border-white/10" />
+                ) : (
+                  <div className="w-full aspect-[3/4] flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10">
+                    <Image className="w-12 h-12 text-slate-300" />
+                  </div>
+                )}
               </div>
               <div className="w-full md:w-2/3 space-y-4">
                 <div>
                   <h3 className="text-xl font-bold text-slate-900 dark:text-white">{reviewingTemplate.name}</h3>
                   <div className="flex items-center gap-2 mt-2">
-                    <img src={reviewingTemplate.authorAvatar} alt="Author" className="w-5 h-5 rounded-full" />
+                    {reviewingTemplate.authorAvatar ? (
+                      <img src={reviewingTemplate.authorAvatar} alt="Author" className="w-5 h-5 rounded-full" />
+                    ) : null}
                     <span className="text-sm text-slate-600 dark:text-slate-300">{reviewingTemplate.authorName}</span>
                   </div>
                 </div>
@@ -1385,7 +1358,17 @@ export const Admin = () => {
                       <div className="flex flex-col md:flex-row gap-4">
                         <div className="w-full md:w-1/3 space-y-2">
                           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Result from This Step</span>
-                          <img src={step.resultUrl} alt="Step Result" className="w-full rounded-lg shadow-sm border border-slate-200 dark:border-white/10" />
+                          {step.resultUrl ? (
+                            step.resultType === 'video' ? (
+                              <video src={step.resultUrl} controls preload="metadata" className="w-full rounded-lg shadow-sm border border-slate-200 dark:border-white/10" />
+                            ) : (
+                              <img src={step.resultUrl} alt="Step Result" className="w-full rounded-lg shadow-sm border border-slate-200 dark:border-white/10" />
+                            )
+                          ) : (
+                            <div className="aspect-video flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-400">
+                              No saved result preview
+                            </div>
+                          )}
                         </div>
                         <div className="w-full md:w-2/3 space-y-4">
                           <div>
@@ -1426,6 +1409,7 @@ export const Admin = () => {
               <Button 
                 variant="secondary" 
                 className="flex-1 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/10"
+                disabled={reviewActionLoading}
                 onClick={() => {
                   setRejectModalOpen(true);
                 }}
@@ -1434,6 +1418,7 @@ export const Admin = () => {
               </Button>
               <Button 
                 className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+                disabled={reviewActionLoading}
                 onClick={() => {
                   setApproveConfirmOpen(true);
                 }}
@@ -1453,21 +1438,13 @@ export const Admin = () => {
           </p>
           <div className="flex gap-3">
             <Button variant="secondary" className="flex-1" onClick={() => setApproveConfirmOpen(false)}>Cancel</Button>
-            <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20" onClick={() => {
-              if (reviewingTemplate) {
-                setPendingTemplates(prev => prev.filter(t => t.id !== reviewingTemplate.id));
-                setReviewedTemplates(prev => [{
-                  id: reviewingTemplate.id,
-                  name: reviewingTemplate.name,
-                  authorName: reviewingTemplate.authorName,
-                  status: 'Published',
-                  reviewedAt: new Date().toISOString()
-                }, ...prev]);
-              }
-              setApproveConfirmOpen(false);
-              setReviewingTemplate(null);
-              addToast('success', 'Template approved');
-            }}>Approve</Button>
+            <Button
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+              disabled={reviewActionLoading}
+              onClick={() => void submitTemplateReview('approve')}
+            >
+              {reviewActionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Approve'}
+            </Button>
           </div>
         </div>
       </Modal>
@@ -1486,22 +1463,14 @@ export const Admin = () => {
           </div>
           <div className="flex gap-3">
             <Button variant="secondary" className="flex-1" onClick={() => { setRejectModalOpen(false); setRejectFeedback(''); }}>Cancel</Button>
-            <Button variant="danger" className="flex-1" disabled={!rejectFeedback.trim()} onClick={() => {
-              if (reviewingTemplate) {
-                setPendingTemplates(prev => prev.filter(t => t.id !== reviewingTemplate.id));
-                setReviewedTemplates(prev => [{
-                  id: reviewingTemplate.id,
-                  name: reviewingTemplate.name,
-                  authorName: reviewingTemplate.authorName,
-                  status: 'Changes requested',
-                  reviewedAt: new Date().toISOString()
-                }, ...prev]);
-              }
-              setRejectModalOpen(false);
-              setRejectFeedback('');
-              setReviewingTemplate(null);
-              addToast('success', 'Feedback sent');
-            }}>Send feedback</Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              disabled={!rejectFeedback.trim() || reviewActionLoading}
+              onClick={() => void submitTemplateReview('request_changes', rejectFeedback.trim())}
+            >
+              {reviewActionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Send feedback'}
+            </Button>
           </div>
         </div>
       </Modal>
