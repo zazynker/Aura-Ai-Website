@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -83,6 +83,16 @@ const hasRequiredBuilderMaterials = (step: WorkflowStep): boolean => {
     : hasCompleteMaterialSnapshot(step.feature, step.materials);
 };
 
+const createInitialStep = (): WorkflowStep => ({
+  id: 'step-1',
+  feature: 'Text to Image',
+  resultUrl: null,
+  materials: [
+    { id: 'mat-1', type: 'Image', url: null, allowDownload: true },
+  ],
+  prompt: '',
+});
+
 const getPublishGateIssue = (
   templateTitle: string,
   steps: WorkflowStep[],
@@ -129,6 +139,7 @@ const getPublishGateIssue = (
 
 export const TemplateBuilder = () => {
   const location = useLocation();
+  const navigate = useNavigate();
   const {
     addToast,
     generations,
@@ -152,15 +163,7 @@ export const TemplateBuilder = () => {
   const [coverVideoDuration, setCoverVideoDuration] = useState<number>(0);
   const [coverVideoStartTime, setCoverVideoStartTime] = useState<number>(0);
 
-  const [steps, setSteps] = useState<WorkflowStep[]>([
-    {
-      id: 'step-1',
-      feature: 'Text to Image',
-      resultUrl: null,
-      materials: [{ id: 'mat-1', type: 'Image', url: null, allowDownload: true }],
-      prompt: ''
-    }
-  ]);
+  const [steps, setSteps] = useState<WorkflowStep[]>([createInitialStep()]);
   const [activeStepId, setActiveStepId] = useState<string>('step-1');
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -597,6 +600,42 @@ export const TemplateBuilder = () => {
     }
   };
 
+  const handleBuildAnother = () => {
+    if (publishCover?.startsWith('blob:')) URL.revokeObjectURL(publishCover);
+    steps.forEach((step) => {
+      step.materials.forEach((material) => {
+        if (material.url?.startsWith('blob:')) URL.revokeObjectURL(material.url);
+      });
+    });
+
+    setFinalResult(null);
+    setFinalResultType(null);
+    setTemplateTitle('');
+    setTemplateDescription('');
+    setPublishCover(null);
+    setPublishCoverFile(null);
+    setPublishCoverType(null);
+    setCoverVideoDuration(0);
+    setCoverVideoStartTime(0);
+    setSteps([createInitialStep()]);
+    setActiveStepId('step-1');
+    setShowPublishModal(false);
+    setShowHistoryModal(false);
+    setPreviewMaterial(null);
+    setBuilderError(null);
+    setDraftIdentity(null);
+    setPersistedCover(null);
+    setMaterialFiles({});
+    setPersistedMaterials({});
+    setSaveState('idle');
+    setReviewState('idle');
+    setDraftLoadState('idle');
+    loadedDraftIdRef.current = null;
+
+    navigate('/templates/create');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   return (
     <div className="min-h-screen pt-16 bg-slate-50 dark:bg-slate-900 flex flex-col">
       {/* Header */}
@@ -606,6 +645,12 @@ export const TemplateBuilder = () => {
             <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Build a workflow template</h1>
           </div>
           <div className="flex items-center gap-4">
+            {reviewState === 'submitted' && (
+              <Button variant="outline" size="sm" onClick={handleBuildAnother}>
+                <Plus className="h-4 w-4" />
+                Build another template
+              </Button>
+            )}
             <span className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
               <span className={`w-2 h-2 rounded-full ${
                 reviewState === 'submitted'
@@ -650,8 +695,15 @@ export const TemplateBuilder = () => {
 
       {reviewState === 'submitted' && (
         <div className="bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
-          <div className="max-w-7xl mx-auto px-4 py-3 text-center text-sm font-medium text-amber-900 dark:text-amber-200">
-            Submitted for review. This saved version is now read-only.
+          <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-center text-sm font-medium text-amber-900 dark:text-amber-200">
+            <span>Submitted for review. This saved version is now read-only.</span>
+            <button
+              type="button"
+              onClick={handleBuildAnother}
+              className="pointer-events-auto font-semibold underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-100"
+            >
+              Build another template
+            </button>
           </div>
         </div>
       )}
@@ -1339,7 +1391,7 @@ export const TemplateBuilder = () => {
             </div>
         </div>
       </Modal>
-      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-18-M5-5</p>
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-18-M5-7</p>
     </div>
   );
 };

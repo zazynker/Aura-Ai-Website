@@ -21,6 +21,7 @@ export interface User {
 
 export interface Template {
   id: string;
+  slug?: string;
   name: string;
   imageUrl: string;
   thumbUrl?: string;
@@ -260,4 +261,3 @@ export interface VideoGenerateRequest {
   characterOrientation?: 'video' | 'image';
   generationCount?: number;
 }
-

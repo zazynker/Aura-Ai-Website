@@ -1,13 +1,11 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Heart, Share2, Crown, Plus, Check, Loader2, Workflow, Play } from 'lucide-react';
-import { startWorkflow } from '../components/workflow/workflowManager';
-import { supabase } from '../utils/supabase';
-import { isSupabaseConfigured } from '../config/env';
 import { useStore } from '../context/StoreContext';
 import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
+import { fetchPublishedTemplates } from '../utils/templatePublicApi';
 
 // Lazy loading image component with skeleton - 使用 aspect-ratio 防止跳动
 const LazyImage = ({ 
@@ -73,56 +71,11 @@ const LazyImage = ({
 };
 
 
-const MOCK_WORKFLOW_TEMPLATES: Template[] = [
-  {
-    id: 'wf-mock-1',
-    name: 'Minimal Product Story',
-    imageUrl: 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&q=80&w=800',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    category: 'Product',
-    tags: ['minimal', 'product', 'story'],
-    isPro: false,
-    width: 800,
-    height: 1200,
-    isWorkflow: true,
-    authorName: 'User13134',
-    usesCount: 128
-  },
-  {
-    id: 'wf-mock-2',
-    name: 'Cosmetic Promo',
-    imageUrl: 'https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&q=80&w=800',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    category: 'Beauty',
-    tags: ['cosmetic', 'promo', 'beauty'],
-    isPro: true,
-    width: 800,
-    height: 1000,
-    isWorkflow: true,
-    authorName: 'Sarah Designs',
-    usesCount: 84
-  },
-  {
-    id: 'wf-mock-3',
-    name: 'Tech Gadget Launch',
-    imageUrl: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&q=80&w=800',
-    category: 'Tech',
-    tags: ['tech', 'gadget', 'launch'],
-    isPro: false,
-    width: 800,
-    height: 800,
-    isWorkflow: true,
-    authorName: 'TechCreator',
-    usesCount: 256
-  }
-];
-
 const TemplateCardItem: React.FC<{ 
   t: Template; 
   onClick: () => void; 
   onAction: (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => void;
   navigate: ReturnType<typeof useNavigate>;
-  addToast: (type: 'success' | 'error' | 'info', msg: string) => void;
   user: any;
   saveBrowsingState: any;
 }> = ({ 
@@ -130,7 +83,6 @@ const TemplateCardItem: React.FC<{
   onClick, 
   onAction,
   navigate,
-  addToast,
   user,
   saveBrowsingState
 }) => {
@@ -150,27 +102,22 @@ const TemplateCardItem: React.FC<{
 
   const handleUseWorkflow = (e: React.MouseEvent) => {
     e.stopPropagation();
+    const detailPath = '/templates/' + (t.slug || t.id);
     if (!user) {
       saveBrowsingState({ 
-        intendedDestination: '/'
+        intendedDestination: detailPath
       });
       navigate('/login');
       return;
     }
-    startWorkflow();
-    addToast('success', 'Workflow started');
+    // M5-8 will create the real run. Until then, never start the old mock
+    // workflow; open the published workflow details instead.
+    navigate(detailPath);
   };
 
   const handleViewDetails = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!user) {
-      saveBrowsingState({ 
-        intendedDestination: '/templates/' + t.id
-      });
-      navigate('/login');
-      return;
-    }
-    navigate('/templates/' + t.id);
+    navigate('/templates/' + (t.slug || t.id));
   };
 
   return (
@@ -311,70 +258,58 @@ export const Home = () => {
   const moods = ['All', 'Minimal', 'Luxury', 'Fashion', 'Playful', 'Dark', 'Casual'];
   const holidays = ['All', 'Christmas', 'Valentine', 'Halloween', 'Easter', "Mother's Day"];
 
-  // Fetch templates from Supabase
+  // M5-7: fetch real public templates only. The RPC returns a safe creator
+  // display name and its fallback query still enforces status=published.
   useEffect(() => {
     const fetchTemplates = async () => {
       setLoading(true);
-      
-      // 添加超时机制
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
-      
-      try {
-        if (!isSupabaseConfigured()) {
-          setTemplates(MOCK_WORKFLOW_TEMPLATES);
-          setLoading(false);
-          return;
-        }
 
-        const { data, error } = await supabase
-          .from('templates')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(1000)
-          .abortSignal(controller.signal);
-        
-        clearTimeout(timeoutId);
-        
-        if (error) {
-          console.error('Error fetching templates:', error);
-          addToast('error', 'Failed to load templates. Please refresh.');
-        } else {
-          console.log('Fetched templates:', data?.length);
-          // Map database fields to Template type
-          const mapped = (data || []).map(t => ({
-            id: t.id,
-            name: t.display_name || t.name,
-            imageUrl: t.image_url,
-            thumbUrl: t.thumb_url,
-            category: t.category,
-            tags: t.tags || [],
-            isPro: t.is_pro || false,
-            scene: t.scene,
-            model: t.model,
-            mood: t.mood,
-            holiday: t.holiday,
-            width: t.width || 896,
-            height: t.height || 1344
-          }));
-          setTemplates([...MOCK_WORKFLOW_TEMPLATES, ...mapped]);
-        }
-      } catch (err: any) {
-        clearTimeout(timeoutId);
-        if (err.name === 'AbortError') {
-          console.error('Template fetch timed out');
-          addToast('error', 'Loading timed out. Please refresh.');
-        } else {
-          console.error('Unexpected error:', err);
-          addToast('error', 'Failed to load templates.');
-        }
+      try {
+        const rows = await fetchPublishedTemplates(1000);
+        const mapped: Template[] = rows.map((row) => {
+          const isWorkflow = row.template_kind.startsWith('workflow_');
+          const isVideoCover = isWorkflow && row.cover_type === 'video';
+          const poster = row.thumb_url || row.image_url || '';
+          const cover = isVideoCover
+            ? poster
+            : row.thumb_url || row.cover_url || row.image_url || '';
+          return {
+            id: row.id,
+            slug: row.slug,
+            name: row.display_name || row.name,
+            imageUrl: cover,
+            thumbUrl: row.thumb_url || undefined,
+            videoUrl: isVideoCover
+              ? row.cover_url || row.preview_url || undefined
+              : undefined,
+            category: row.category || (isWorkflow ? 'Workflow' : 'Other'),
+            tags: row.tags || [],
+            isPro: Boolean(row.is_pro),
+            scene: row.scene || undefined,
+            model: row.model || undefined,
+            mood: row.mood || undefined,
+            holiday: row.holiday || undefined,
+            width: row.width || 896,
+            height: row.height || 1344,
+            isWorkflow,
+            authorName: row.creator_id === user?.id
+              ? user.name
+              : row.author_name || (row.creator_id ? 'Lazora creator' : 'Lazora'),
+            usesCount: Number(row.use_count || 0),
+          };
+        });
+        setTemplates(mapped);
+      } catch (err) {
+        console.error('Unexpected error:', err);
+        addToast('error', 'Failed to load published templates. Please refresh.');
+        setTemplates([]);
+      } finally {
+        setLoading(false);
       }
-      
-      setLoading(false);
     };
-    
-    fetchTemplates();
-  }, []);
+
+    void fetchTemplates();
+  }, [addToast, user?.id, user?.name]);
 
   // Restore scroll position
   useEffect(() => {
@@ -507,6 +442,19 @@ export const Home = () => {
       createCollection(newCollectionName.trim());
       setNewCollectionName('');
       setIsCreatingCollection(false);
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!selectedTemplateForModal) return;
+    const routeKey = selectedTemplateForModal.slug || selectedTemplateForModal.id;
+    const shareUrl = `${window.location.origin}/#/templates/${routeKey}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      addToast('success', 'Template link copied.');
+      setModalType(null);
+    } catch {
+      addToast('error', 'Could not copy the template link.');
     }
   };
 
@@ -693,7 +641,6 @@ export const Home = () => {
               onClick={() => handleTemplateClick(t)}
               onAction={handleAction}
               navigate={navigate}
-              addToast={addToast}
               user={user}
               saveBrowsingState={saveBrowsingState}
             />
@@ -707,8 +654,14 @@ export const Home = () => {
         <div className="space-y-4">
            <p className="text-slate-600 dark:text-slate-300 text-sm">Share this style with your team or social networks.</p>
            <div className="flex gap-2">
-             <input readOnly value={`https://lazora.ai/template/${selectedTemplateForModal?.id}`} className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-sm text-slate-600 dark:text-slate-400" />
-             <Button size="sm" onClick={() => { addToast('success', 'Link copied to clipboard!'); setModalType(null); }}>Copy</Button>
+             <input
+               readOnly
+               value={selectedTemplateForModal
+                 ? `${window.location.origin}/#/templates/${selectedTemplateForModal.slug || selectedTemplateForModal.id}`
+                 : ''}
+               className="flex-1 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-sm text-slate-600 dark:text-slate-400"
+             />
+             <Button size="sm" onClick={() => void handleCopyShareLink()}>Copy</Button>
            </div>
         </div>
       </Modal>
