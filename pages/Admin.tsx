@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
   Settings, BarChart3, RefreshCw, Image, AlertTriangle, Video,
   Eye, X, CheckCircle, MessageSquare, ChevronDown, ChevronUp, Layers,
-  PlayCircle, Maximize2
+  PlayCircle, Maximize2, Music
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
@@ -54,7 +54,7 @@ export const Admin = () => {
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
   const [reviewMediaPreview, setReviewMediaPreview] = useState<{
     url: string;
-    type: 'image' | 'video';
+    type: 'image' | 'video' | 'audio';
     title: string;
   } | null>(null);
 
@@ -1347,6 +1347,19 @@ export const Admin = () => {
                 preload="metadata"
                 className="max-w-full max-h-[82vh] rounded-xl bg-black"
               />
+            ) : reviewMediaPreview.type === 'audio' ? (
+              <div className="w-full max-w-xl rounded-2xl bg-white p-6">
+                <div className="mb-4 flex items-center justify-center gap-2 text-slate-700">
+                  <Music className="h-6 w-6" />
+                  <span className="font-medium">Audio material</span>
+                </div>
+                <audio
+                  src={reviewMediaPreview.url}
+                  controls
+                  autoPlay
+                  className="w-full"
+                />
+              </div>
             ) : (
               <img
                 src={reviewMediaPreview.url}
@@ -1461,10 +1474,52 @@ export const Admin = () => {
                             <div className="text-sm font-medium text-slate-900 dark:text-white">{step.feature}</div>
                           </div>
                           
-                          {step.materials && (
+                          {step.materials.length > 0 && (
                             <div>
                               <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Materials I Uploaded</span>
-                              <div className="text-sm text-slate-700 dark:text-slate-300">{step.materials}</div>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {step.materials.map((material: any, materialIndex: number) => (
+                                  <button
+                                    key={material.id}
+                                    type="button"
+                                    disabled={!material.url}
+                                    onClick={() => material.url && setReviewMediaPreview({
+                                      url: material.url,
+                                      type: material.type,
+                                      title: `${step.name} material ${materialIndex + 1}`,
+                                    })}
+                                    className="relative aspect-video overflow-hidden rounded-lg border border-slate-200 bg-slate-100 text-left disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-slate-800"
+                                  >
+                                    {material.type === 'image' && material.url ? (
+                                      <img
+                                        src={material.url}
+                                        alt={`${step.name} material ${materialIndex + 1}`}
+                                        className="h-full w-full object-cover"
+                                        loading="lazy"
+                                      />
+                                    ) : material.type === 'video' && material.url ? (
+                                      <>
+                                        <video
+                                          src={material.url}
+                                          muted
+                                          playsInline
+                                          preload="metadata"
+                                          className="h-full w-full object-cover"
+                                        />
+                                        <PlayCircle className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-white drop-shadow" />
+                                      </>
+                                    ) : (
+                                      <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs text-slate-500 dark:text-slate-300">
+                                        <Music className="h-6 w-6" />
+                                        {material.url ? 'Play audio' : 'Preview unavailable'}
+                                      </span>
+                                    )}
+                                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium capitalize text-white">
+                                      {material.type}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
                               <div className={`mt-1 text-xs font-medium ${step.reusable ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                                 {step.reusable ? 'Allowed to be reused' : 'Not allowed for reuse'}
                               </div>

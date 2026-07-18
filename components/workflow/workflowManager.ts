@@ -51,8 +51,13 @@ const notifyWorkflowChanged = () => {
   window.dispatchEvent(new Event('workflow-changed'));
 };
 
-const routeForCapability = (capability: string) =>
-  capability.startsWith('video.') ? '/video' : '/modify';
+export const getWorkflowTargetRoute = (capability: string): string => {
+  if (capability === 'video.motion_control') return '/video?mode=motion-control';
+  if (capability === 'video.lip_sync_image') return '/video?mode=lip-sync&input=image';
+  if (capability === 'video.lip_sync_video') return '/video?mode=lip-sync&input=video';
+  if (capability === 'video.image_to_video') return '/video?mode=image-to-video';
+  return capability.startsWith('video.') ? '/video' : '/modify';
+};
 
 const buildSessionFromRun = (
   run: StartedTemplateRun,
@@ -74,7 +79,7 @@ const buildSessionFromRun = (
       stepNumber: runStep.stepOrder,
       capability: runStep.capability,
       feature: existingStep?.feature || savedStep?.title || runStep.capability,
-      targetRoute: existingStep?.targetRoute || routeForCapability(runStep.capability),
+      targetRoute: getWorkflowTargetRoute(runStep.capability),
       reusableMaterials: existingStep?.reusableMaterials || false,
       prompt: existingStep?.prompt || savedStep?.instruction || '',
       settings: Object.keys(existingStep?.settings || {}).length > 0

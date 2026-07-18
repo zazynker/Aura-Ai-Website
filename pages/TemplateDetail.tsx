@@ -21,7 +21,10 @@ import {
   Loader2
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { startWorkflow } from '../components/workflow/workflowManager';
+import {
+  getWorkflowTargetRoute,
+  startWorkflow,
+} from '../components/workflow/workflowManager';
 import { useStore } from '../context/StoreContext';
 import {
   fetchTemplateDetail,
@@ -153,7 +156,7 @@ export const TemplateDetail = () => {
           stepNumber: runStep.stepOrder,
           capability: runStep.capability,
           feature: detailStep?.featureName || savedStep?.title || runStep.capability,
-          targetRoute: runStep.capability.startsWith('video.') ? '/video' : '/modify',
+          targetRoute: getWorkflowTargetRoute(runStep.capability),
           reusableMaterials: Boolean(
             detailStep?.materials.some((material) => material.permission === 'download'),
           ),

@@ -161,6 +161,14 @@ const pendingJobsToVideoResults = (userId?: string): VideoResult[] =>
     error: 'This job was already submitted. Use Resume to check the same request instead of generating again.',
   }));
 
+const getFeatureFromSearch = (search: string): FeatureType => {
+  const requestedMode = new URLSearchParams(search).get('mode');
+  if (requestedMode === 'motion-control') return 'motion-control';
+  if (requestedMode === 'lip-sync') return 'lip-sync';
+  if (requestedMode === 'free-mode') return 'free-mode';
+  return 'image-to-video';
+};
+
 export const Video: React.FC = () => {
   const location = useLocation();
   const navigationState = location.state as { initialImage?: string } | null;
@@ -168,13 +176,19 @@ export const Video: React.FC = () => {
 
   const [results, setResults] = useState<VideoResult[]>([]);
   const resultsRef = useRef<VideoResult[]>([]);
-  const [activeFeature, setActiveFeature] = useState<FeatureType>('image-to-video');
+  const [activeFeature, setActiveFeature] = useState<FeatureType>(() =>
+    getFeatureFromSearch(location.search),
+  );
   const [videoToDelete, setVideoToDelete] = useState<string | null>(null);
   const [showWelcomeGift, setShowWelcomeGift] = useState(false);
   const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
   const { addGeneration, user, generations } = useStore();
   const savedVideoKeysRef = useRef<Set<string>>(new Set());
   const autoResumedRequestIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setActiveFeature(getFeatureFromSearch(location.search));
+  }, [location.search]);
 
   const handleInsufficientCredits = () => {
     if (user?.welcomeGiftEligible && !user.welcomeGiftRedeemed) {

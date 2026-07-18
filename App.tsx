@@ -154,7 +154,14 @@ const AppContent = () => {
               </RequireAuth>
             }
           />
-          <Route path="/templates/:templateId" element={<TemplateDetail />} />
+          <Route
+            path="/templates/:templateId"
+            element={
+              <RequireAuth>
+                <TemplateDetail />
+              </RequireAuth>
+            }
+          />
           <Route path="/modify" element={<Modify />} />
           <Route
             path="/video"

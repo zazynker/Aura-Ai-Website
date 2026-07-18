@@ -112,19 +112,15 @@ export const WorkflowDock = () => {
   };
 
   const handleBeadClick = async (step: WorkflowStep) => {
-    if (expandedStepId === step.id) {
-      // Navigate on second tap or if already expanded
-      try {
-        await setActiveStep(step.id);
-        navigate(step.targetRoute);
-      } catch (error) {
-        addToast(
-          'error',
-          error instanceof Error ? error.message : 'Could not open this workflow step.',
-        );
-      }
-    } else {
-      setExpandedStepId(step.id);
+    setExpandedStepId(step.id);
+    try {
+      await setActiveStep(step.id);
+      navigate(step.targetRoute);
+    } catch (error) {
+      addToast(
+        'error',
+        error instanceof Error ? error.message : 'Could not open this workflow step.',
+      );
     }
   };
 

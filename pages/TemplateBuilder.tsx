@@ -375,7 +375,26 @@ export const TemplateBuilder = () => {
         ? 'Video Lip Sync'
         : 'Image Lip Sync';
     }
+    const inputKeys = new Set(
+      generation.inputAssets?.map((asset) => asset.key) ?? [],
+    );
+    const hasReplaceInputs =
+      inputKeys.has('scene_image') || inputKeys.has('product_image');
+    const hasReplaceParameters =
+      typeof generation.generationParameters?.extraBlend === 'boolean' ||
+      typeof generation.generationParameters?.productSizePercent === 'number';
+    if (hasReplaceInputs || hasReplaceParameters) return 'Replace Product';
     if (generation.templateId === 'text-to-image') return 'Text to Image';
+    if (
+      !generation.videoUrl &&
+      generation.mediaType !== 'video' &&
+      generation.templateId &&
+      !['modify-session', 'default-welcome'].includes(generation.templateId)
+    ) {
+      // Rows created before generation snapshots existed still keep the real
+      // gallery template id used by Replace Product.
+      return 'Replace Product';
+    }
     return null;
   };
 

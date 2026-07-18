@@ -352,13 +352,20 @@ export async function adminGetVideoInterestStats(
   }
 }
 
+export interface AdminReviewMaterial {
+  id: string;
+  type: 'image' | 'video' | 'audio';
+  url?: string;
+  reusable: boolean;
+}
+
 export interface AdminReviewStep {
   id: string;
   name: string;
   feature: string;
   prompt: string;
   settings: string;
-  materials?: string;
+  materials: AdminReviewMaterial[];
   reusable: boolean;
   resultUrl?: string;
   resultType?: 'image' | 'video';
@@ -435,6 +442,19 @@ async function mapPendingReview(row: RawReviewTemplate): Promise<AdminReviewTemp
       ? step.instruction
       : typeof parameters.prompt === 'string' ? parameters.prompt : '';
     const resultUrl = await signedAssetUrl(resultAsset);
+    const materials = await Promise.all(
+      materialAssets.map(async (asset, materialIndex): Promise<AdminReviewMaterial> => ({
+        id: asset.asset_key || `step-${index + 1}-material-${materialIndex + 1}`,
+        type:
+          asset.asset_type === 'video'
+            ? 'video'
+            : asset.asset_type === 'audio'
+              ? 'audio'
+              : 'image',
+        url: await signedAssetUrl(asset),
+        reusable: asset.is_reusable !== false,
+      })),
+    );
     const output = step.output && typeof step.output === 'object'
       ? step.output as Record<string, unknown>
       : {};
@@ -449,8 +469,8 @@ async function mapPendingReview(row: RawReviewTemplate): Promise<AdminReviewTemp
       feature: capability || 'Unknown capability',
       prompt,
       settings: JSON.stringify(parameters, null, 2),
-      materials: materialAssets.length ? `${materialAssets.length} saved material${materialAssets.length === 1 ? '' : 's'}` : undefined,
-      reusable: materialAssets.length === 0 || materialAssets.every((asset) => asset.is_reusable !== false),
+      materials,
+      reusable: materials.length === 0 || materials.every((asset) => asset.reusable),
       resultUrl,
       resultType: isVideoResult ? 'video' : 'image',
     };
