@@ -111,11 +111,18 @@ export const WorkflowDock = () => {
     dragRef.current = null;
   };
 
-  const handleBeadClick = (step: WorkflowStep) => {
+  const handleBeadClick = async (step: WorkflowStep) => {
     if (expandedStepId === step.id) {
       // Navigate on second tap or if already expanded
-      setActiveStep(step.id);
-      navigate(step.targetRoute);
+      try {
+        await setActiveStep(step.id);
+        navigate(step.targetRoute);
+      } catch (error) {
+        addToast(
+          'error',
+          error instanceof Error ? error.message : 'Could not open this workflow step.',
+        );
+      }
     } else {
       setExpandedStepId(step.id);
     }
@@ -219,6 +226,13 @@ export const WorkflowDock = () => {
           {steps.map((step, index) => {
             const isActive = activeStepId === step.id;
             const isExpanded = expandedStepId === step.id;
+            const statusClass = step.status === 'completed'
+              ? 'bg-emerald-500 ring-4 ring-emerald-200 dark:ring-emerald-900/50'
+              : step.status === 'failed'
+                ? 'bg-red-500 ring-4 ring-red-200 dark:ring-red-900/50'
+                : isActive
+                  ? 'bg-pink-500 ring-4 ring-pink-200 dark:ring-pink-900/50 shadow-lg shadow-pink-500/40 animate-[pulse_3s_ease-in-out_infinite]'
+                  : 'bg-pink-400 hover:bg-pink-500 hover:scale-105';
 
             return (
               <React.Fragment key={step.id}>
@@ -236,14 +250,10 @@ export const WorkflowDock = () => {
 
                   {/* Large Bead */}
                   <button
-                    onClick={() => handleBeadClick(step)}
+                    onClick={() => { void handleBeadClick(step); }}
                     onFocus={() => handleBeadHover(step.id)}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium text-sm transition-all duration-300 relative ${
-                      isActive 
-                        ? 'bg-pink-500 ring-4 ring-pink-200 dark:ring-pink-900/50 shadow-lg shadow-pink-500/40 animate-[pulse_3s_ease-in-out_infinite]' 
-                        : 'bg-pink-400 hover:bg-pink-500 hover:scale-105'
-                    }`}
-                    aria-label={`Step ${step.stepNumber}: ${step.feature}`}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium text-sm transition-all duration-300 relative ${statusClass}`}
+                    aria-label={`Step ${step.stepNumber}: ${step.feature} (${step.status})`}
                   >
                     {step.stepNumber}
                   </button>

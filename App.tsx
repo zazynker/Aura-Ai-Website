@@ -7,6 +7,7 @@ import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
 import { WorkflowDock } from './components/workflow/WorkflowDock';
+import { clearWorkflow, restoreActiveWorkflow } from './components/workflow/workflowManager';
 import { RewardCelebrationModal } from './components/RewardCelebrationModal';
 import { useStore } from './context/StoreContext';
 
@@ -67,7 +68,7 @@ const RequireAuth = ({ children }: React.PropsWithChildren) => {
 const AppContent = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user } = useStore();
+  const { user, authLoading } = useStore();
   const [showReward, setShowReward] = React.useState(false);
 
   React.useEffect(() => {
@@ -76,6 +77,31 @@ const AppContent = () => {
       sessionStorage.setItem('rewardCelebrationShown', 'true');
     }
   }, [user]);
+
+  React.useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      void clearWorkflow(false);
+      return;
+    }
+
+    let disposed = false;
+    const restore = async () => {
+      try {
+        await restoreActiveWorkflow();
+      } catch (error) {
+        if (!disposed) console.error('Could not restore active workflow.', error);
+      }
+    };
+
+    void restore();
+    const handleFocus = () => { void restore(); };
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      disposed = true;
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [authLoading, user?.id]);
 
   React.useEffect(() => {
     if (!user) return;

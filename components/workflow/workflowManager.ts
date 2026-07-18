@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { cancelTemplateRun, type TemplateRunStatus } from '../../utils/templateRunApi';
+import {
+  cancelTemplateRun,
+  fetchActiveTemplateRun,
+  setTemplateRunCurrentStep,
+  type StartedTemplateRun,
+  type TemplateRunStatus,
+  type TemplateRunStepStatus,
+} from '../../utils/templateRunApi';
 
 export interface WorkflowStep {
   id: string;
@@ -11,6 +18,7 @@ export interface WorkflowStep {
   reusableMaterials: boolean;
   prompt: string;
   settings: Record<string, unknown>;
+  status: TemplateRunStepStatus;
   result?: {
     type: 'image' | 'video';
     url: string;
@@ -43,14 +51,59 @@ const notifyWorkflowChanged = () => {
   window.dispatchEvent(new Event('workflow-changed'));
 };
 
+const routeForCapability = (capability: string) =>
+  capability.startsWith('video.') ? '/video' : '/modify';
+
+const buildSessionFromRun = (
+  run: StartedTemplateRun,
+  existingSession?: WorkflowSession | null,
+): WorkflowSession => ({
+  runId: run.id,
+  templateId: run.templateId,
+  templateVersionId: run.templateVersionId,
+  status: run.status,
+  steps: run.steps.map((runStep, index) => {
+    const savedStep = run.workflow.steps.find((step) => step.id === runStep.stepId)
+      || run.workflow.steps[index];
+    const existingStep = existingSession?.runId === run.id
+      ? existingSession.steps.find((step) => step.id === runStep.stepId)
+      : undefined;
+    return {
+      id: runStep.stepId,
+      runStepId: runStep.id,
+      stepNumber: runStep.stepOrder,
+      capability: runStep.capability,
+      feature: existingStep?.feature || savedStep?.title || runStep.capability,
+      targetRoute: existingStep?.targetRoute || routeForCapability(runStep.capability),
+      reusableMaterials: existingStep?.reusableMaterials || false,
+      prompt: existingStep?.prompt || savedStep?.instruction || '',
+      settings: Object.keys(existingStep?.settings || {}).length > 0
+        ? existingStep!.settings
+        : savedStep?.parameters || {},
+      status: runStep.status,
+      result: existingStep?.result,
+    };
+  }),
+});
+
+const persistWorkflow = (
+  session: WorkflowSession,
+  activeStepId: string,
+  resetMinimized: boolean,
+) => {
+  sessionStorage.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(session));
+  sessionStorage.setItem(ACTIVE_STEP_STORAGE_KEY, activeStepId);
+  if (resetMinimized || sessionStorage.getItem(MINIMIZED_STORAGE_KEY) === null) {
+    sessionStorage.setItem(MINIMIZED_STORAGE_KEY, 'false');
+  }
+  notifyWorkflowChanged();
+};
+
 export const startWorkflow = (session: WorkflowSession) => {
   if (!session.runId || session.steps.length === 0) {
     throw new Error('The workflow run has no executable steps.');
   }
-  sessionStorage.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(session));
-  sessionStorage.setItem(ACTIVE_STEP_STORAGE_KEY, session.steps[0].id);
-  sessionStorage.setItem(MINIMIZED_STORAGE_KEY, 'false');
-  notifyWorkflowChanged();
+  persistWorkflow(session, session.steps[0].id, true);
 };
 
 const clearStoredWorkflow = () => {
@@ -98,9 +151,34 @@ export const clearWorkflow = async (cancelRun = true) => {
   clearStoredWorkflow();
 };
 
-export const setActiveStep = (stepId: string) => {
-  sessionStorage.setItem(ACTIVE_STEP_STORAGE_KEY, stepId);
-  notifyWorkflowChanged();
+export const restoreActiveWorkflow = async (): Promise<WorkflowSession | null> => {
+  const existingSession = getWorkflowState().session;
+  const run = await fetchActiveTemplateRun();
+  if (!run || run.status !== 'started') {
+    clearStoredWorkflow();
+    return null;
+  }
+
+  const session = buildSessionFromRun(run, existingSession);
+  const activeStep = run.steps.find((step) => step.stepOrder === run.currentStep)
+    || run.steps.find((step) => step.status === 'active')
+    || run.steps[0];
+  if (!activeStep) {
+    clearStoredWorkflow();
+    return null;
+  }
+  persistWorkflow(session, activeStep.stepId, false);
+  return session;
+};
+
+export const setActiveStep = async (stepId: string): Promise<void> => {
+  const existingSession = getWorkflowState().session;
+  if (!existingSession?.runId) {
+    throw new Error('This workflow is no longer active.');
+  }
+  const run = await setTemplateRunCurrentStep(existingSession.runId, stepId);
+  const session = buildSessionFromRun(run, existingSession);
+  persistWorkflow(session, stepId, false);
 };
 
 export const setWorkflowMinimized = (minimized: boolean) => {
@@ -123,4 +201,3 @@ export const useWorkflowState = () => {
 
   return state;
 };
-

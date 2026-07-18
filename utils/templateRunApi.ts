@@ -83,6 +83,25 @@ export async function fetchTemplateRun(runId: string): Promise<StartedTemplateRu
   return normalizeRun(data);
 }
 
+export async function fetchActiveTemplateRun(): Promise<StartedTemplateRun | null> {
+  const { data, error } = await supabase.rpc('resume_active_template_run');
+  if (error) throw new Error(`Could not restore your active workflow: ${error.message}`);
+  if (!data) return null;
+  return normalizeRun(data);
+}
+
+export async function setTemplateRunCurrentStep(
+  runId: string,
+  stepId: string,
+): Promise<StartedTemplateRun> {
+  const { data, error } = await supabase.rpc('set_template_run_current_step', {
+    p_run_id: runId,
+    p_step_id: stepId,
+  });
+  if (error) throw new Error(`Could not open this workflow step: ${error.message}`);
+  return normalizeRun(data);
+}
+
 export async function cancelTemplateRun(runId: string): Promise<void> {
   const { error } = await supabase.rpc('cancel_template_run', { p_run_id: runId });
   if (error) throw new Error(`Could not cancel this workflow: ${error.message}`);

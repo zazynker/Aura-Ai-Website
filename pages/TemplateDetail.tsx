@@ -159,6 +159,7 @@ export const TemplateDetail = () => {
           ),
           prompt: detailStep?.prompt || savedStep?.instruction || '',
           settings: savedStep?.parameters || {},
+          status: runStep.status,
           result: referenceResult?.url
             ? {
                 type: referenceResult.type,
