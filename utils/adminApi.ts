@@ -434,16 +434,25 @@ async function mapPendingReview(row: RawReviewTemplate): Promise<AdminReviewTemp
     const prompt = typeof step.instruction === 'string'
       ? step.instruction
       : typeof parameters.prompt === 'string' ? parameters.prompt : '';
+    const resultUrl = await signedAssetUrl(resultAsset);
+    const output = step.output && typeof step.output === 'object'
+      ? step.output as Record<string, unknown>
+      : {};
+    const capability = typeof step.capability === 'string' ? step.capability : '';
+    const isVideoResult = resultAsset?.asset_type === 'video'
+      || output.assetType === 'video'
+      || capability.startsWith('video.')
+      || Boolean(resultUrl && /\.(mp4|webm|mov)(?:$|[?#])/i.test(resultUrl));
     return {
       id: typeof step.id === 'string' ? step.id : `step-${index + 1}`,
       name: typeof step.title === 'string' ? step.title : `Step ${index + 1}`,
-      feature: typeof step.capability === 'string' ? step.capability : 'Unknown capability',
+      feature: capability || 'Unknown capability',
       prompt,
       settings: JSON.stringify(parameters, null, 2),
       materials: materialAssets.length ? `${materialAssets.length} saved material${materialAssets.length === 1 ? '' : 's'}` : undefined,
       reusable: materialAssets.length === 0 || materialAssets.every((asset) => asset.is_reusable !== false),
-      resultUrl: await signedAssetUrl(resultAsset),
-      resultType: resultAsset?.asset_type === 'video' ? 'video' : 'image',
+      resultUrl,
+      resultType: isVideoResult ? 'video' : 'image',
     };
   }));
   const email = row.creator_email || 'Creator';

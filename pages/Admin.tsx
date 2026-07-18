@@ -4,7 +4,8 @@ import {
   Shield, Users, TrendingUp, Zap, Search, Crown, 
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
   Settings, BarChart3, RefreshCw, Image, AlertTriangle, Video,
-  Eye, X, CheckCircle, MessageSquare, ChevronDown, ChevronUp, Layers
+  Eye, X, CheckCircle, MessageSquare, ChevronDown, ChevronUp, Layers,
+  PlayCircle, Maximize2
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
@@ -51,6 +52,11 @@ export const Admin = () => {
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectFeedback, setRejectFeedback] = useState('');
   const [reviewActionLoading, setReviewActionLoading] = useState(false);
+  const [reviewMediaPreview, setReviewMediaPreview] = useState<{
+    url: string;
+    type: 'image' | 'video';
+    title: string;
+  } | null>(null);
 
   // Stats state
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -934,41 +940,52 @@ export const Admin = () => {
                   <p className="text-slate-500">There are no templates waiting for review.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="flex flex-wrap items-start gap-4">
                   {pendingTemplates.map(template => (
-                    <div key={template.id} className="glass-panel border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col bg-white dark:bg-slate-800">
-                      <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-900">
+                    <div key={template.id} className="w-full sm:w-[270px] glass-panel border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden flex flex-col bg-white dark:bg-slate-800">
+                      <button
+                        type="button"
+                        className="relative w-full aspect-video bg-slate-100 dark:bg-slate-900 overflow-hidden text-left group"
+                        onClick={() => {
+                          setReviewingTemplate(template);
+                          setExpandedStep(template.steps[0]?.id || null);
+                        }}
+                        aria-label={`Review ${template.name}`}
+                      >
                         {template.coverUrl ? (
-                          <img src={template.coverUrl} className="w-full h-full object-cover" alt={template.name} loading="lazy" />
+                          <img src={template.coverUrl} className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" alt={template.name} loading="lazy" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
-                            <Image className="w-12 h-12 text-slate-300" />
+                            <Image className="w-9 h-9 text-slate-300" />
                           </div>
                         )}
-                        <div className="absolute top-3 left-3 z-10">
+                        <div className="absolute top-2 left-2 z-10">
                           <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">In review</span>
                         </div>
-                      </div>
-                      <div className="p-4 flex-1 flex flex-col">
-                        <h4 className="font-bold text-slate-900 dark:text-white mb-2 line-clamp-1">{template.name}</h4>
-                        <div className="flex items-center gap-2 mb-3">
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/20 transition-colors">
+                          <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 drop-shadow" />
+                        </div>
+                      </button>
+                      <div className="p-3 flex-1 flex flex-col">
+                        <h4 className="font-bold text-sm text-slate-900 dark:text-white mb-2 line-clamp-1">{template.name}</h4>
+                        <div className="flex items-center gap-2 mb-2">
                           {template.authorAvatar ? (
-                            <img src={template.authorAvatar} alt={template.authorName} className="w-6 h-6 rounded-full bg-slate-200" />
+                            <img src={template.authorAvatar} alt={template.authorName} className="w-5 h-5 rounded-full bg-slate-200" />
                           ) : (
-                            <div className="w-6 h-6 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-[10px] font-bold">
+                            <div className="w-5 h-5 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-[9px] font-bold">
                               {template.authorName.slice(0, 1).toUpperCase()}
                             </div>
                           )}
-                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{template.authorName}</span>
+                          <span className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{template.authorName}</span>
                         </div>
-                        <div className="text-xs text-slate-500 mb-4 space-y-1">
-                          <p>Submitted: {new Date(template.submittedAt).toLocaleDateString()}</p>
-                          <p>{template.stepsCount} steps</p>
+                        <div className="text-[11px] text-slate-500 mb-3 flex items-center justify-between gap-2">
+                          <span>{new Date(template.submittedAt).toLocaleDateString()}</span>
+                          <span>{template.stepsCount} steps</span>
                         </div>
                         <div className="mt-auto">
                           <Button 
                             variant="gradient" 
-                            className="w-full"
+                            className="w-full h-9 text-sm"
                             onClick={() => {
                               setReviewingTemplate(template);
                               setExpandedStep(template.steps[0]?.id || null);
@@ -1303,21 +1320,73 @@ export const Admin = () => {
         </div>
       )}
 
+      {/* Review media preview: open images large and play videos without enlarging the review card. */}
+      {reviewMediaPreview && (
+        <div
+          className="fixed inset-0 z-[10000] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setReviewMediaPreview(null)}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 z-10 rounded-full bg-black/40 p-2 text-white/80 hover:text-white"
+            onClick={() => setReviewMediaPreview(null)}
+            aria-label="Close media preview"
+          >
+            <X className="w-7 h-7" />
+          </button>
+          <div
+            className="w-full max-w-5xl max-h-[90vh] flex flex-col items-center gap-3"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {reviewMediaPreview.type === 'video' ? (
+              <video
+                src={reviewMediaPreview.url}
+                controls
+                autoPlay
+                playsInline
+                preload="metadata"
+                className="max-w-full max-h-[82vh] rounded-xl bg-black"
+              />
+            ) : (
+              <img
+                src={reviewMediaPreview.url}
+                alt={reviewMediaPreview.title}
+                className="max-w-full max-h-[82vh] object-contain rounded-xl"
+              />
+            )}
+            <p className="text-sm text-white/80">{reviewMediaPreview.title}</p>
+          </div>
+        </div>
+      )}
+
       {/* Template Review Detail Modal */}
-      <Modal isOpen={!!reviewingTemplate} onClose={() => setReviewingTemplate(null)} title="Review Template" size="lg">
+      <Modal isOpen={!!reviewingTemplate} onClose={() => { setReviewingTemplate(null); setReviewMediaPreview(null); }} title="Review Template" size="lg">
         {reviewingTemplate && (
           <div className="space-y-6">
             <div className="flex flex-col md:flex-row gap-6">
-              <div className="w-full md:w-1/3">
+              <div className="w-full md:w-[240px] md:flex-none">
                 {reviewingTemplate.coverUrl ? (
-                  <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full aspect-[3/4] object-cover rounded-xl shadow-sm border border-slate-200 dark:border-white/10" />
+                  <button
+                    type="button"
+                    className="relative w-full aspect-video overflow-hidden rounded-xl border border-slate-200 dark:border-white/10 group"
+                    onClick={() => setReviewMediaPreview({
+                      url: reviewingTemplate.coverUrl,
+                      type: 'image',
+                      title: `${reviewingTemplate.name} cover`,
+                    })}
+                  >
+                    <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" />
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
+                      <Maximize2 className="w-7 h-7 text-white opacity-0 group-hover:opacity-100 drop-shadow" />
+                    </span>
+                  </button>
                 ) : (
-                  <div className="w-full aspect-[3/4] flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10">
-                    <Image className="w-12 h-12 text-slate-300" />
+                  <div className="w-full aspect-video flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10">
+                    <Image className="w-9 h-9 text-slate-300" />
                   </div>
                 )}
               </div>
-              <div className="w-full md:w-2/3 space-y-4">
+              <div className="w-full md:flex-1 space-y-4">
                 <div>
                   <h3 className="text-xl font-bold text-slate-900 dark:text-white">{reviewingTemplate.name}</h3>
                   <div className="flex items-center gap-2 mt-2">
@@ -1356,21 +1425,37 @@ export const Admin = () => {
                   {expandedStep === step.id && (
                     <div className="p-4 border-t border-slate-200 dark:border-white/10 space-y-4 bg-slate-50 dark:bg-slate-900/50">
                       <div className="flex flex-col md:flex-row gap-4">
-                        <div className="w-full md:w-1/3 space-y-2">
+                        <div className="w-full md:w-[190px] md:flex-none space-y-2">
                           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Result from This Step</span>
                           {step.resultUrl ? (
-                            step.resultType === 'video' ? (
-                              <video src={step.resultUrl} controls preload="metadata" className="w-full rounded-lg shadow-sm border border-slate-200 dark:border-white/10" />
-                            ) : (
-                              <img src={step.resultUrl} alt="Step Result" className="w-full rounded-lg shadow-sm border border-slate-200 dark:border-white/10" />
-                            )
+                            <button
+                              type="button"
+                              className="relative block w-full aspect-video overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10 group"
+                              onClick={() => setReviewMediaPreview({
+                                url: step.resultUrl,
+                                type: step.resultType === 'video' ? 'video' : 'image',
+                                title: `${step.name} result`,
+                              })}
+                            >
+                              {step.resultType === 'video' ? (
+                                <>
+                                  <video src={step.resultUrl} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+                                  <span className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors">
+                                    <PlayCircle className="w-9 h-9 text-white drop-shadow" />
+                                  </span>
+                                </>
+                              ) : (
+                                <img src={step.resultUrl} alt="Step Result" className="w-full h-full object-cover" />
+                              )}
+                              <Maximize2 className="absolute top-2 right-2 w-4 h-4 text-white opacity-80 drop-shadow" />
+                            </button>
                           ) : (
                             <div className="aspect-video flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-400">
                               No saved result preview
                             </div>
                           )}
                         </div>
-                        <div className="w-full md:w-2/3 space-y-4">
+                        <div className="w-full md:flex-1 space-y-4">
                           <div>
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Feature I Used</span>
                             <div className="text-sm font-medium text-slate-900 dark:text-white">{step.feature}</div>
