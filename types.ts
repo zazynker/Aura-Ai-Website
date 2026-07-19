@@ -118,12 +118,21 @@ export interface ReviewedWorkflowTemplate {
   reviewedAt: string;
 }
 
-export interface CreatorRewardCelebration {
+export interface CreatorRewardTemplateSummary {
   templateId: string;
   templateName: string;
-  leadingUserName: string;
-  additionalUsers: number;
   creditsEarned: number;
+  userCount: number;
+}
+
+export interface CreatorRewardCelebration {
+  claimedAt: string;
+  notificationCount: number;
+  userCount: number;
+  templateCount: number;
+  creditsEarned: number;
+  primaryTemplateId: string | null;
+  templates: CreatorRewardTemplateSummary[];
 }
 
 export interface Generation {

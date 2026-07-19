@@ -10,6 +10,20 @@ import { WorkflowDock } from './components/workflow/WorkflowDock';
 import { clearWorkflow, restoreActiveWorkflow } from './components/workflow/workflowManager';
 import { RewardCelebrationModal } from './components/RewardCelebrationModal';
 import { useStore } from './context/StoreContext';
+import { claimCreatorRewardCelebration } from './utils/notificationsApi';
+import type { CreatorRewardCelebration } from './types';
+
+const pendingCelebrationClaims = new Map<string, Promise<CreatorRewardCelebration | null>>();
+
+const claimCelebrationOnce = (userId: string): Promise<CreatorRewardCelebration | null> => {
+  const existing = pendingCelebrationClaims.get(userId);
+  if (existing) return existing;
+  const request = claimCreatorRewardCelebration().finally(() => {
+    pendingCelebrationClaims.delete(userId);
+  });
+  pendingCelebrationClaims.set(userId, request);
+  return request;
+};
 
 // ============ 首屏必须的组件（不懒加载）============
 import { Home } from './pages/Home';
@@ -69,14 +83,24 @@ const AppContent = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, authLoading } = useStore();
-  const [showReward, setShowReward] = React.useState(false);
+  const [rewardCelebration, setRewardCelebration] = React.useState<CreatorRewardCelebration | null>(null);
 
   React.useEffect(() => {
-    if (user && !sessionStorage.getItem('rewardCelebrationShown')) {
-      setShowReward(true);
-      sessionStorage.setItem('rewardCelebrationShown', 'true');
+    if (authLoading || !user) {
+      setRewardCelebration(null);
+      return;
     }
-  }, [user]);
+
+    let active = true;
+    void claimCelebrationOnce(user.id)
+      .then((celebration) => {
+        if (active && celebration) setRewardCelebration(celebration);
+      })
+      .catch((error) => {
+        if (active) console.error('Could not claim creator reward celebration.', error);
+      });
+    return () => { active = false; };
+  }, [authLoading, user?.id]);
 
   React.useEffect(() => {
     if (authLoading) return;
@@ -134,7 +158,10 @@ const AppContent = () => {
       {!isAuthPage && <Navbar />}
       <ToastContainer />
       <WorkflowDock />
-      <RewardCelebrationModal isOpen={showReward} onClose={() => setShowReward(false)} />
+      <RewardCelebrationModal
+        celebration={rewardCelebration}
+        onClose={() => setRewardCelebration(null)}
+      />
       <Analytics
         beforeSend={(event) => {
           const hash = window.location.hash;

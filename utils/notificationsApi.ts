@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import type { CreatorRewardCelebration, CreatorRewardTemplateSummary } from '../types';
 
 export type NotificationType =
   | 'template_approved'
@@ -66,4 +67,46 @@ export async function markNotificationRead(notificationId: string): Promise<void
 export async function markAllNotificationsRead(): Promise<void> {
   const { error } = await supabase.rpc('mark_all_notifications_read');
   if (error) throw new Error(`Could not mark notifications as read: ${error.message}`);
+}
+
+const toNonNegativeInteger = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
+};
+
+const normalizeCelebrationTemplate = (value: unknown): CreatorRewardTemplateSummary | null => {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.templateId !== 'string' || typeof row.templateName !== 'string') return null;
+  return {
+    templateId: row.templateId,
+    templateName: row.templateName,
+    creditsEarned: toNonNegativeInteger(row.creditsEarned),
+    userCount: toNonNegativeInteger(row.userCount),
+  };
+};
+
+export async function claimCreatorRewardCelebration(): Promise<CreatorRewardCelebration | null> {
+  const { data, error } = await supabase.rpc('claim_creator_reward_celebration');
+  if (error) throw new Error(`Could not load creator rewards: ${error.message}`);
+  if (!data || typeof data !== 'object') return null;
+
+  const result = data as Record<string, unknown>;
+  if (result.hasRewards !== true) return null;
+
+  const templates = Array.isArray(result.templates)
+    ? result.templates.map(normalizeCelebrationTemplate).filter((item): item is CreatorRewardTemplateSummary => item !== null)
+    : [];
+  const creditsEarned = toNonNegativeInteger(result.creditsEarned);
+  if (creditsEarned <= 0 || templates.length === 0) return null;
+
+  return {
+    claimedAt: typeof result.claimedAt === 'string' ? result.claimedAt : new Date().toISOString(),
+    notificationCount: toNonNegativeInteger(result.notificationCount),
+    userCount: toNonNegativeInteger(result.userCount),
+    templateCount: toNonNegativeInteger(result.templateCount),
+    creditsEarned,
+    primaryTemplateId: typeof result.primaryTemplateId === 'string' ? result.primaryTemplateId : null,
+    templates,
+  };
 }
