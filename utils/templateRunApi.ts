@@ -146,6 +146,40 @@ export async function setTemplateRunCurrentStep(runId: string, stepId: string): 
   return normalizeRun(data);
 }
 
+export async function beginTemplateRunStep(runId: string, stepId: string): Promise<void> {
+  const { error } = await supabase.rpc('begin_template_run_step', {
+    p_run_id: runId,
+    p_step_id: stepId,
+  });
+  if (error) throw new Error(`Could not start this workflow step: ${error.message}`);
+}
+
+export async function completeTemplateRunStep(
+  runId: string,
+  stepId: string,
+  generationId: string,
+): Promise<void> {
+  const { error } = await supabase.rpc('complete_template_run_step', {
+    p_run_id: runId,
+    p_step_id: stepId,
+    p_generation_id: generationId,
+  });
+  if (error) throw new Error(`Could not complete this workflow step: ${error.message}`);
+}
+
+export async function failTemplateRunStep(
+  runId: string,
+  stepId: string,
+  errorCode: string,
+): Promise<void> {
+  const { error } = await supabase.rpc('fail_template_run_step', {
+    p_run_id: runId,
+    p_step_id: stepId,
+    p_error_code: errorCode,
+  });
+  if (error) throw new Error(`Could not record this workflow step failure: ${error.message}`);
+}
+
 export async function cancelTemplateRun(runId: string): Promise<void> {
   const { error } = await supabase.rpc('cancel_template_run', { p_run_id: runId });
   if (error) throw new Error(`Could not cancel this workflow: ${error.message}`);

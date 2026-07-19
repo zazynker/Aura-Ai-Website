@@ -828,8 +828,10 @@ export const Modify = () => {
       }
       
       // Call the real Gemini API with the selected number of images
+      const capability = MODIFY_CAPABILITY_BY_TOOL[toolName] || 'image.modify';
       const result = await generateImages({
         prompt: fullPrompt,
+        capability,
         imageUrl: baseImageUrl,           // The scene/model image
         productImageUrl: productImageUrl, // The product to insert (for Replace)
         numberOfImages: outputCount,      // Generate multiple images in parallel
@@ -882,7 +884,6 @@ export const Modify = () => {
       console.log('Total credits:', totalCreditsUsed);
       console.log('Credits per image:', creditsPerImage);
 
-      const capability = MODIFY_CAPABILITY_BY_TOOL[toolName] || 'image.modify';
       const inputAssets: GenerationInputAssetSnapshot[] = [];
       if (baseImageUrl) {
         inputAssets.push({
@@ -907,6 +908,9 @@ export const Modify = () => {
         creditsUsed: creditsPerImage,
         prompt: displayPrompt,
         capability,
+        templateRunId: result.templateRunId,
+        templateStepId: result.templateStepId,
+        templateCapability: result.templateCapability,
         inputAssets,
         generationParameters: {
           prompt: displayPrompt,
@@ -1032,6 +1036,7 @@ export const Modify = () => {
       // Call API - for T2I, we pass reference images as the base image if available
       const result = await generateImages({
         prompt: fullPrompt,
+        capability: 'image.text_to_image',
         imageUrl: referenceImageUrls[0], // First reference as base
         productImageUrl: referenceImageUrls[1], // Second reference if available
         numberOfImages: t2iOutputCount,
@@ -1088,6 +1093,9 @@ export const Modify = () => {
         creditsUsed: creditsPerImage,
         prompt: t2iPrompt || 'Text to Image',
         capability: 'image.text_to_image' as const,
+        templateRunId: result.templateRunId,
+        templateStepId: result.templateStepId,
+        templateCapability: result.templateCapability,
         inputAssets,
         generationParameters: {
           prompt: t2iPrompt,

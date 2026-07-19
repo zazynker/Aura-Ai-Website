@@ -114,6 +114,9 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       status: 'pending',
       requestId: existing.requestId,
       creditsUsed: existing.creditsUsed,
+      templateRunId: existing.templateRunId,
+      templateStepId: existing.templateStepId,
+      templateCapability: existing.templateCapability,
       error: 'This motion-control job was already submitted. Click Resume to check the same job.',
     });
   }, [onGenerate]);
@@ -156,6 +159,9 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         error: undefined,
         requestId: result.requestId,
         creditsUsed: result.creditsUsed,
+        templateRunId: result.templateRunId,
+        templateStepId: result.templateStepId,
+        templateCapability: result.templateCapability,
       });
       return;
     }
@@ -166,6 +172,9 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
         status: 'pending',
         error: result.error || 'Motion-control job submitted. Status check failed. Click Resume instead of Generate.',
         requestId: result.requestId || result.pendingJob?.requestId,
+        templateRunId: result.templateRunId || result.pendingJob?.templateRunId,
+        templateStepId: result.templateStepId || result.pendingJob?.templateStepId,
+        templateCapability: result.templateCapability || result.pendingJob?.templateCapability,
       });
       alert(result.error || 'Motion-control job submitted. Status check failed. Please click Resume instead of generating again.');
       return;
@@ -177,6 +186,9 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
       error: result.error || 'Motion-control generation failed.',
       timestamp: 'Failed',
       requestId: result.requestId,
+      templateRunId: result.templateRunId,
+      templateStepId: result.templateStepId,
+      templateCapability: result.templateCapability,
     });
     alert(result.error || 'Motion-control generation failed. Please try again.');
   };
@@ -297,6 +309,9 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
                 timestamp: 'Generating',
                 requestId: job.requestId,
                 creditsUsed: job.creditsUsed,
+                templateRunId: job.templateRunId,
+                templateStepId: job.templateStepId,
+                templateCapability: job.templateCapability,
               });
             },
           });

@@ -21,6 +21,9 @@ export interface VideoResult {
   mode?: VideoMode;
   creditsUsed?: number;
   createdAt?: number;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
 }
 
 const VIDEO_RESULTS_CACHE_KEY = 'lazora-video-results-cache-v1';

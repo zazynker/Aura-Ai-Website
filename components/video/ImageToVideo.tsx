@@ -102,6 +102,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       status: 'pending',
       requestId: existing.requestId,
       creditsUsed: existing.creditsUsed,
+      templateRunId: existing.templateRunId,
+      templateStepId: existing.templateStepId,
+      templateCapability: existing.templateCapability,
       error: 'This video was already submitted. Click Resume to check the same job.',
     });
   }, [onGenerate]);
@@ -144,6 +147,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         error: undefined,
         requestId: result.requestId,
         creditsUsed: result.creditsUsed,
+        templateRunId: result.templateRunId,
+        templateStepId: result.templateStepId,
+        templateCapability: result.templateCapability,
       });
       return;
     }
@@ -154,6 +160,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         status: 'pending',
         error: result.error || 'Video submitted. Status check failed. Click Resume instead of Generate.',
         requestId: result.requestId || result.pendingJob?.requestId,
+        templateRunId: result.templateRunId || result.pendingJob?.templateRunId,
+        templateStepId: result.templateStepId || result.pendingJob?.templateStepId,
+        templateCapability: result.templateCapability || result.pendingJob?.templateCapability,
       });
       alert(result.error || 'Video submitted. Status check failed. Please click Resume instead of generating again.');
       return;
@@ -165,6 +174,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       error: result.error || 'Video generation failed.',
       timestamp: 'Failed',
       requestId: result.requestId,
+      templateRunId: result.templateRunId,
+      templateStepId: result.templateStepId,
+      templateCapability: result.templateCapability,
     });
     alert(result.error || 'Video generation failed. Please try again.');
   };
@@ -279,6 +291,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                 timestamp: 'Generating',
                 requestId: job.requestId,
                 creditsUsed: job.creditsUsed,
+                templateRunId: job.templateRunId,
+                templateStepId: job.templateStepId,
+                templateCapability: job.templateCapability,
               });
             },
           });

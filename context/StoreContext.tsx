@@ -16,6 +16,7 @@ import React, { createContext, useContext, useEffect, useState, ReactNode, useCa
 import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
+import { completeTemplateGeneration, failTemplateGeneration } from '../utils/templateRunGeneration';
 import { Session } from '@supabase/supabase-js';
 
 export const USD_TO_CREDITS = 195;
@@ -93,6 +94,28 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 // Helper: Check if a string is a base64 data URL (these are too large for localStorage)
 const isBase64DataUrl = (str: string): boolean => {
   return str?.startsWith('data:image/') && str.includes('base64');
+};
+
+const getTemplateGenerationContext = (gen: Partial<Generation>) => {
+  if (!gen.templateRunId || !gen.templateStepId || !gen.templateCapability) return null;
+  return {
+    templateRunId: gen.templateRunId,
+    templateStepId: gen.templateStepId,
+    templateCapability: gen.templateCapability,
+  };
+};
+
+const recordTemplatePersistenceFailure = async (
+  gen: Partial<Generation>,
+  error: unknown,
+) => {
+  const templateContext = getTemplateGenerationContext(gen);
+  if (!templateContext) return;
+  try {
+    await failTemplateGeneration(templateContext, error);
+  } catch (lifecycleError) {
+    console.error('Unable to record workflow persistence failure:', lifecycleError);
+  }
 };
 
 interface StoreContextType {
@@ -403,6 +426,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         createdAt: Date.now(),
       };
       setSessionGenerations(prev => [sessionGen, ...prev]);
+      await recordTemplatePersistenceFailure(
+        genWithUser,
+        'Template result could not be persisted as a database generation.',
+      );
       
       // 后端已扣分，刷新本地积分
       const { data: creditsData } = await fetchUserCredits();
@@ -421,6 +448,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     if (error) {
       console.error('Failed to save generation:', error);
+      await recordTemplatePersistenceFailure(genWithUser, error);
       addToast('error', 'Failed to save to history');
       return;
     }
@@ -434,6 +462,16 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
           item.id === savedGen.id ? { ...item, thumbnailUrl } : item
         )));
       });
+
+      const templateContext = getTemplateGenerationContext(genWithUser);
+      if (templateContext) {
+        try {
+          await completeTemplateGeneration(templateContext, savedGen.id);
+        } catch (lifecycleError) {
+          console.error('Generation saved, but workflow step completion failed:', lifecycleError);
+          addToast('error', 'Result saved, but workflow progress could not be updated. Please reopen the workflow.');
+        }
+      }
       
       // 后端已扣分，刷新本地积分
       const { data: creditsData } = await fetchUserCredits();
@@ -507,6 +545,8 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       if (error) {
         console.error('Failed to save generations:', error);
+        const templateSource = allGensToSave.find((item) => getTemplateGenerationContext(item));
+        if (templateSource) await recordTemplatePersistenceFailure(templateSource, error);
         addToast('error', 'Failed to save to history');
       } else if (savedGens.length > 0) {
         console.log('Saved to DB successfully:', savedGens.length);
@@ -519,6 +559,28 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             )));
           });
         });
+
+
+        const templateSource = allGensToSave.find((item) => getTemplateGenerationContext(item));
+        const templateContext = templateSource
+          ? getTemplateGenerationContext(templateSource)
+          : null;
+        if (templateContext) {
+          try {
+            await completeTemplateGeneration(templateContext, savedGens[0].id);
+          } catch (lifecycleError) {
+            console.error('Generations saved, but workflow step completion failed:', lifecycleError);
+            addToast('error', 'Results saved, but workflow progress could not be updated. Please reopen the workflow.');
+          }
+        }
+      }
+    } else {
+      const templateSource = gens.find((item) => getTemplateGenerationContext(item));
+      if (templateSource) {
+        await recordTemplatePersistenceFailure(
+          templateSource,
+          'Generated files could not be uploaded for history persistence.',
+        );
       }
     }
 
@@ -725,4 +787,3 @@ export const useStore = () => {
   if (!context) throw new Error('useStore must be used within StoreProvider');
   return context;
 };
-

@@ -86,6 +86,9 @@ const generationToVideoResult = (generation: Generation): VideoResult | null => 
     status: generation.videoUrl ? 'completed' : 'pending',
     mode,
     createdAt: generation.createdAt,
+    templateRunId: generation.templateRunId,
+    templateStepId: generation.templateStepId,
+    templateCapability: generation.templateCapability,
   };
 };
 
@@ -159,6 +162,9 @@ const pendingJobsToVideoResults = (userId?: string): VideoResult[] =>
     mode: job.mode,
     creditsUsed: job.creditsUsed,
     createdAt: job.createdAt,
+    templateRunId: job.templateRunId,
+    templateStepId: job.templateStepId,
+    templateCapability: job.templateCapability,
     error: 'This job was already submitted. Use Resume to check the same request instead of generating again.',
   }));
 
@@ -279,6 +285,9 @@ export const Video: React.FC = () => {
         duration: parseDurationSeconds(result.duration) || 0,
         aspectRatio: result.aspectRatio,
       },
+      templateRunId: result.templateRunId,
+      templateStepId: result.templateStepId,
+      templateCapability: result.templateCapability,
     });
   };
 
@@ -407,6 +416,9 @@ export const Video: React.FC = () => {
           videoUrl: result.videoUrl,
           timestamp: 'Just now',
           requestId: result.requestId || gen.requestId,
+          templateRunId: result.templateRunId || gen.templateRunId,
+          templateStepId: result.templateStepId || gen.templateStepId,
+          templateCapability: result.templateCapability || gen.templateCapability,
           error: undefined,
         });
         return;
@@ -416,6 +428,9 @@ export const Video: React.FC = () => {
         handleUpdateResult(gen.id, {
           status: 'pending',
           requestId: result.requestId || gen.requestId,
+          templateRunId: result.templateRunId || gen.templateRunId,
+          templateStepId: result.templateStepId || gen.templateStepId,
+          templateCapability: result.templateCapability || gen.templateCapability,
           error: result.error || 'The generation service is still processing this request. Check again later.',
         });
         return;
@@ -425,6 +440,9 @@ export const Video: React.FC = () => {
         status: 'failed',
         timestamp: 'Failed',
         requestId: result.requestId || gen.requestId,
+        templateRunId: result.templateRunId || gen.templateRunId,
+        templateStepId: result.templateStepId || gen.templateStepId,
+        templateCapability: result.templateCapability || gen.templateCapability,
         error: result.error || 'The request failed or was not found. You can clear this card and generate again.',
       });
     } catch (error) {

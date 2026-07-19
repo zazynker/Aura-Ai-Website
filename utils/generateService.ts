@@ -1,9 +1,15 @@
 // utils/generateService.ts
 
 import { supabase } from "./supabase";
+import {
+  beginActiveTemplateGeneration,
+  failTemplateGeneration,
+  type TemplateGenerationContext,
+} from "./templateRunGeneration";
 
 export interface GenerateOptions {
   prompt: string;
+  capability?: string;
   imageUrl?: string; // Base/scene image (e.g., model photo)
   productImageUrl?: string; // Product image to replace/insert
   numberOfImages?: number;
@@ -24,6 +30,9 @@ export interface GenerateResult {
   actualCostUsd?: number;
   requestId?: string;
   recovered?: boolean;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
   tokenBreakdown?: {
     inputTokens: number;
     outputTextTokens: number;
@@ -82,9 +91,29 @@ const normalizeGenerateResponse = (
   tokenBreakdown: data.tokenBreakdown,
 });
 
+const addTemplateContext = <T extends object>(
+  value: T,
+  context: TemplateGenerationContext | null | undefined,
+): T & Partial<TemplateGenerationContext> => ({
+  ...value,
+  ...(context || {}),
+});
+
+const safelyFailTemplateGeneration = async (
+  context: TemplateGenerationContext | null | undefined,
+  error: unknown,
+) => {
+  try {
+    await failTemplateGeneration(context, error);
+  } catch (lifecycleError) {
+    console.error("Unable to record workflow step failure:", lifecycleError);
+  }
+};
+
 async function recoverGeneratedImages(
   accessToken: string,
   requestId: string,
+  context?: TemplateGenerationContext | null,
 ): Promise<GenerateResult | null> {
   for (let attempt = 1; attempt <= IMAGE_RECOVERY_ATTEMPTS; attempt += 1) {
     await imageSleep(IMAGE_RECOVERY_DELAY_MS * attempt);
@@ -99,6 +128,7 @@ async function recoverGeneratedImages(
         body: JSON.stringify({
           requestId,
           recoverOnly: true,
+          ...(context || {}),
         }),
       });
 
@@ -123,7 +153,7 @@ async function recoverGeneratedImages(
             attempt,
           },
         );
-        return normalizeGenerateResponse(data);
+        return addTemplateContext(normalizeGenerateResponse(data), context);
       }
     } catch (recoveryError) {
       console.warn(
@@ -149,6 +179,7 @@ export async function generateImages(
     prompt,
     imageUrl,
     productImageUrl,
+    capability,
     numberOfImages = 1,
     imageSize = "1K",
     aspectRatio,
@@ -172,10 +203,15 @@ export async function generateImages(
   }
 
   const requestId = makeImageRequestId();
+  let templateContext: TemplateGenerationContext | null = null;
   console.log("User ID for generation:", session.user.id);
   console.log("Image request ID:", requestId);
 
   try {
+    if (capability) {
+      templateContext = await beginActiveTemplateGeneration(capability);
+    }
+
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: {
@@ -190,6 +226,7 @@ export async function generateImages(
         imageSize,
         aspectRatio,
         requestId,
+        ...(templateContext || {}),
       }),
     });
 
@@ -203,11 +240,12 @@ export async function generateImages(
         const recovered = await recoverGeneratedImages(
           session.access_token,
           requestId,
+          templateContext,
         );
         if (recovered) return recovered;
       }
 
-      return {
+      const failure = {
         success: false,
         error:
           errorData.error ||
@@ -215,6 +253,8 @@ export async function generateImages(
           `Generation failed (Error ${response.status}). Please try again.`,
         requestId,
       };
+      await safelyFailTemplateGeneration(templateContext, failure.error);
+      return addTemplateContext(failure, templateContext);
     }
 
     let data: GenerateApiResponse;
@@ -228,6 +268,7 @@ export async function generateImages(
       const recovered = await recoverGeneratedImages(
         session.access_token,
         requestId,
+        templateContext,
       );
       if (recovered) return recovered;
       throw parseError;
@@ -247,33 +288,38 @@ export async function generateImages(
       !Array.isArray(data.images) ||
       data.images.length === 0
     ) {
-      return {
+      const failure = {
         success: false,
         error: data.error || "Generation failed",
         tokensUsed: data.tokensUsed || 0,
         requestId: data.requestId || requestId,
       };
+      await safelyFailTemplateGeneration(templateContext, failure.error);
+      return addTemplateContext(failure, templateContext);
     }
 
-    return normalizeGenerateResponse({
+    return addTemplateContext(normalizeGenerateResponse({
       ...data,
       requestId: data.requestId || requestId,
-    });
+    }), templateContext);
   } catch (err) {
     console.error("Generate exception:", err);
 
     const recovered = await recoverGeneratedImages(
       session.access_token,
       requestId,
+      templateContext,
     );
     if (recovered) return recovered;
 
-    return {
+    const failure = {
       success: false,
       error:
         "The connection was interrupted before the result could be confirmed. No new request was submitted. Please try again.",
       requestId,
     };
+    await safelyFailTemplateGeneration(templateContext, failure.error);
+    return addTemplateContext(failure, templateContext);
   }
 }
 
@@ -309,6 +355,9 @@ export interface VideoGenerateResult {
   pendingJob?: PendingVideoJob;
   requestId?: string;
   status?: string;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
 }
 
 interface VideoSubmitResponse {
@@ -360,6 +409,9 @@ export interface PendingVideoJob {
   requestedOutputCount?: number;
   generateAudio?: boolean;
   creditsUsed?: number;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -465,6 +517,27 @@ function isSameResumeCandidate(
   return job.userId === userId && job.mode === mode;
 }
 
+const getVideoTemplateCapability = (
+  options: Pick<VideoGenerateOptions, "mode" | "videoUrl">,
+): string => {
+  if (options.mode === "motion_control") return "video.motion_control";
+  if (options.mode === "lip_sync") {
+    return options.videoUrl ? "video.lip_sync_video" : "video.lip_sync_image";
+  }
+  return "video.image_to_video";
+};
+
+const getPendingJobTemplateContext = (
+  job: PendingVideoJob,
+): TemplateGenerationContext | null => {
+  if (!job.templateRunId || !job.templateStepId || !job.templateCapability) return null;
+  return {
+    templateRunId: job.templateRunId,
+    templateStepId: job.templateStepId,
+    templateCapability: job.templateCapability,
+  };
+};
+
 function getUserFacingServiceError(value: unknown, fallback: string): string {
   const message = typeof value === "string" && value.trim() ? value : fallback;
   return message
@@ -541,6 +614,8 @@ export async function generateVideo(
   console.log("Mode:", mode);
   console.log("Prompt:", prompt?.substring(0, 100));
 
+  let templateContext: TemplateGenerationContext | null = null;
+
   try {
     const auth = await getAccessToken();
     if ("error" in auth) {
@@ -571,6 +646,10 @@ export async function generateVideo(
       };
     }
 
+    templateContext = await beginActiveTemplateGeneration(
+      getVideoTemplateCapability({ mode, videoUrl }),
+    );
+
     const submitResponse = await fetch("/api/generate-video", {
       method: "POST",
       headers: {
@@ -590,6 +669,7 @@ export async function generateVideo(
         generationCount,
         requestedOutputCount,
         generateAudio,
+        ...(templateContext || {}),
       }),
     });
 
@@ -600,22 +680,25 @@ export async function generateVideo(
         `Video generation failed (Error ${submitResponse.status}).`,
       );
 
-      return {
+      await safelyFailTemplateGeneration(templateContext, friendlyMessage);
+      return addTemplateContext({
         success: false,
         error: friendlyMessage,
-      };
+      }, templateContext);
     }
 
     const submitData = (await submitResponse.json()) as VideoSubmitResponse;
 
     if (!submitData.success || !submitData.requestId || !submitData.endpoint) {
-      return {
+      const error = getUserFacingServiceError(
+        submitData.error,
+        "Failed to submit video generation job.",
+      );
+      await safelyFailTemplateGeneration(templateContext, error);
+      return addTemplateContext({
         success: false,
-        error: getUserFacingServiceError(
-          submitData.error,
-          "Failed to submit video generation job.",
-        ),
-      };
+        error,
+      }, templateContext);
     }
 
     if (
@@ -650,6 +733,7 @@ export async function generateVideo(
       requestedOutputCount,
       generateAudio,
       creditsUsed: Number(submitData.creditsUsed) || 0,
+      ...(templateContext || {}),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -671,22 +755,24 @@ export async function generateVideo(
 
     if (err instanceof TypeError && err.message.includes("fetch")) {
       const pending = getPendingVideoJob();
-      return {
+      if (!pending) await safelyFailTemplateGeneration(templateContext, err);
+      return addTemplateContext({
         success: false,
         pending: Boolean(pending),
         pendingJob: pending || undefined,
         error:
           "Network error. If the job was already submitted, use Resume instead of Generate.",
-      };
+      }, pending ? getPendingJobTemplateContext(pending) : templateContext);
     }
 
-    return {
+    await safelyFailTemplateGeneration(templateContext, err);
+    return addTemplateContext({
       success: false,
       error: getUserFacingServiceError(
         err instanceof Error ? err.message : undefined,
         "An unexpected error occurred.",
       ),
-    };
+    }, templateContext);
   }
 }
 
@@ -694,6 +780,7 @@ async function pollVideoJob(
   job: PendingVideoJob,
   accessToken: string,
 ): Promise<VideoGenerateResult> {
+  const templateContext = getPendingJobTemplateContext(job);
   for (let attempt = 0; attempt < VIDEO_MAX_POLL_ATTEMPTS; attempt += 1) {
     // On Resume / restored pending jobs, check immediately once instead of waiting 3 seconds.
     if (attempt > 0) {
@@ -732,14 +819,15 @@ async function pollVideoJob(
 
       if (isFalRequestMissing) {
         clearPendingVideoJob(job.requestId);
-        return {
+        const error = "This pending request was not found. It has been cleared locally. Click Generate again to submit a new request.";
+        await safelyFailTemplateGeneration(templateContext, error);
+        return addTemplateContext({
           success: false,
           pending: false,
           requestId: job.requestId,
           status: "FAILED",
-          error:
-            "This pending request was not found. It has been cleared locally. Click Generate again to submit a new request.",
-        };
+          error,
+        }, templateContext);
       }
 
       const friendlyMessage = getUserFacingServiceError(
@@ -748,13 +836,13 @@ async function pollVideoJob(
       );
 
       savePendingVideoJob(job);
-      return {
+      return addTemplateContext({
         success: false,
         pending: true,
         pendingJob: job,
         requestId: job.requestId,
         error: `${friendlyMessage} The job was already submitted. Do not generate again; click Resume to check this same job.`,
-      };
+      }, templateContext);
     }
 
     const statusData = (await statusResponse.json()) as VideoStatusResponse;
@@ -769,51 +857,53 @@ async function pollVideoJob(
     if (status === "COMPLETED") {
       if (!statusData.videoUrl) {
         savePendingVideoJob(job);
-        return {
+        return addTemplateContext({
           success: false,
           pending: true,
           pendingJob: job,
           requestId: job.requestId,
           error:
             "Video completed but no video URL was returned. Use Resume to check the same job again.",
-        };
+        }, templateContext);
       }
 
       clearPendingVideoJob(job.requestId);
-      return {
+      return addTemplateContext({
         success: true,
         videoUrl: statusData.videoUrl,
         duration: job.duration,
         creditsUsed: job.creditsUsed || 0,
         requestId: job.requestId,
         status: "COMPLETED",
-      };
+      }, templateContext);
     }
 
     if (status === "FAILED" || status === "CANCELLED") {
       clearPendingVideoJob(job.requestId);
-      return {
+      const error = getUserFacingServiceError(
+        statusData.error,
+        "Video generation failed.",
+      );
+      await safelyFailTemplateGeneration(templateContext, error);
+      return addTemplateContext({
         success: false,
         pending: false,
         requestId: job.requestId,
         status,
-        error: getUserFacingServiceError(
-          statusData.error,
-          "Video generation failed.",
-        ),
-      };
+        error,
+      }, templateContext);
     }
 
     savePendingVideoJob(job);
   }
 
   savePendingVideoJob(job);
-  return {
+  return addTemplateContext({
     success: false,
     pending: true,
     pendingJob: job,
     requestId: job.requestId,
     error:
       "Video status checking timed out after about 10 minutes. The job may still be running. Click Check status / Resume instead of Generate.",
-  };
+  }, templateContext);
 }
