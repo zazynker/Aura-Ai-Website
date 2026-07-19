@@ -318,6 +318,31 @@ export async function saveGenerationToDb(
   userPlan: Plan = 'Free'
 ): Promise<{ data: import('../types').Generation | null; error: string | null; deletedOldCount?: number }> {
   try {
+    const isIdempotentVideo =
+      generation.mediaType === 'video' && Boolean(generation.requestId);
+
+    // A completed video may be reported by the foreground poll, automatic resume,
+    // and a remounted page at nearly the same time. Reuse the server request row
+    // before enforcing history limits or attempting another insert.
+    if (isIdempotentVideo) {
+      const { data: existing, error: existingError } = await supabase
+        .from('generations')
+        .select('*')
+        .eq('user_id', generation.userId)
+        .eq('request_id', generation.requestId as string)
+        .eq('media_type', 'video')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        return { data: dbToGeneration(existing as DbGeneration), error: null, deletedOldCount: 0 };
+      }
+      if (existingError) {
+        console.warn('[SaveGeneration] Video idempotency preflight failed; insert constraint remains authoritative:', existingError);
+      }
+    }
+
     // 先清理超限的旧记录
     const { deletedCount, error: limitError } = await enforceGenerationLimit(userPlan, 1);
     if (limitError) {
@@ -351,6 +376,23 @@ export async function saveGenerationToDb(
       .single();
 
     if (error) {
+      // The partial unique index is the cross-tab/concurrent-callback authority.
+      // If another caller won the race, return that row as a successful idempotent save.
+      if (isIdempotentVideo && error.code === '23505') {
+        const { data: existing, error: recoveryError } = await supabase
+          .from('generations')
+          .select('*')
+          .eq('user_id', generation.userId)
+          .eq('request_id', generation.requestId as string)
+          .eq('media_type', 'video')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (existing) {
+          return { data: dbToGeneration(existing as DbGeneration), error: null, deletedOldCount: deletedCount };
+        }
+        console.error('[SaveGeneration] Duplicate video existed but could not be recovered:', recoveryError);
+      }
       console.error('Error saving generation:', error);
       return { data: null, error: error.message };
     }

@@ -455,7 +455,17 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     if (savedGen) {
       // Add to local state immediately (at the beginning)
-      setDbGenerations(prev => [savedGen, ...prev]);
+      setDbGenerations(prev => {
+        const isSameSavedRow = (item: Generation) =>
+          item.id === savedGen.id
+          || Boolean(
+            savedGen.mediaType === 'video'
+            && savedGen.requestId
+            && item.mediaType === 'video'
+            && item.requestId === savedGen.requestId
+          );
+        return [savedGen, ...prev.filter((item) => !isSameSavedRow(item))];
+      });
       void ensureGenerationThumbnail(savedGen).then((thumbnailUrl) => {
         if (!thumbnailUrl) return;
         setDbGenerations((prev) => prev.map((item) => (
