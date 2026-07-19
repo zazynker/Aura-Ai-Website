@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import {
   cancelTemplateRun,
   fetchActiveTemplateRun,
+  fetchTemplateRun,
+  engageTemplateRunStep,
   fetchReusableTemplateAssets,
   setTemplateRunCurrentStep,
   type StartedTemplateRun,
@@ -62,6 +64,7 @@ interface StoredWorkflowState {
   session: WorkflowSession | null;
   steps: WorkflowStep[] | null;
   activeStepId: string | null;
+  engagedStepId: string | null;
   minimized: boolean;
   runId: string | null;
   status: TemplateRunStatus | null;
@@ -69,6 +72,7 @@ interface StoredWorkflowState {
 
 const WORKFLOW_STORAGE_KEY = 'lazora_active_workflow';
 const ACTIVE_STEP_STORAGE_KEY = 'lazora_active_step';
+const ENGAGED_STEP_STORAGE_KEY = 'lazora_engaged_template_step';
 const MINIMIZED_STORAGE_KEY = 'lazora_workflow_minimized';
 const WORKFLOW_HANDOFF_STORAGE_KEY = 'lazora_workflow_handoff';
 
@@ -146,9 +150,15 @@ const persistWorkflow = (
   session: WorkflowSession,
   activeStepId: string,
   resetMinimized: boolean,
+  engagedStepId?: string | null,
 ) => {
   sessionStorage.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(session));
   sessionStorage.setItem(ACTIVE_STEP_STORAGE_KEY, activeStepId);
+  if (engagedStepId === null) {
+    sessionStorage.removeItem(ENGAGED_STEP_STORAGE_KEY);
+  } else if (engagedStepId) {
+    sessionStorage.setItem(ENGAGED_STEP_STORAGE_KEY, engagedStepId);
+  }
   if (resetMinimized || sessionStorage.getItem(MINIMIZED_STORAGE_KEY) === null) {
     sessionStorage.setItem(MINIMIZED_STORAGE_KEY, 'false');
   }
@@ -162,16 +172,19 @@ export const startWorkflow = (session: WorkflowSession) => {
   persistWorkflow(session, session.steps[0].id, true);
 };
 
-export const queueWorkflowHandoff = (
+export const queueWorkflowHandoff = async (
   step: WorkflowStep,
   action: WorkflowHandoffAction,
-): WorkflowHandoff => {
+): Promise<WorkflowHandoff> => {
   const nonce = typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const runId = getWorkflowState().runId || '';
+  if (!runId) throw new Error('This workflow is no longer active.');
+  await engageTemplateRunStep(runId, step.id, action);
   const handoff: WorkflowHandoff = {
     nonce,
-    runId: getWorkflowState().runId || '',
+    runId,
     stepId: step.id,
     capability: step.capability,
     action,
@@ -180,6 +193,10 @@ export const queueWorkflowHandoff = (
     settings: step.settings || {},
   };
   sessionStorage.setItem(WORKFLOW_HANDOFF_STORAGE_KEY, JSON.stringify(handoff));
+  // A template step only becomes attributable after an explicit reuse action:
+  // Use template, the main bead, or a materials/prompt quick bead.
+  sessionStorage.setItem(ENGAGED_STEP_STORAGE_KEY, step.id);
+  notifyWorkflowChanged();
   return handoff;
 };
 
@@ -199,6 +216,7 @@ export const consumeWorkflowHandoff = (): WorkflowHandoff | null => {
 const clearStoredWorkflow = () => {
   sessionStorage.removeItem(WORKFLOW_STORAGE_KEY);
   sessionStorage.removeItem(ACTIVE_STEP_STORAGE_KEY);
+  sessionStorage.removeItem(ENGAGED_STEP_STORAGE_KEY);
   sessionStorage.removeItem(MINIMIZED_STORAGE_KEY);
   sessionStorage.removeItem(WORKFLOW_HANDOFF_STORAGE_KEY);
   notifyWorkflowChanged();
@@ -218,11 +236,13 @@ export const getWorkflowState = (): StoredWorkflowState => {
         } as WorkflowSession
       : null;
     const activeStepId = sessionStorage.getItem(ACTIVE_STEP_STORAGE_KEY) || null;
+    const engagedStepId = sessionStorage.getItem(ENGAGED_STEP_STORAGE_KEY) || null;
     const minimized = sessionStorage.getItem(MINIMIZED_STORAGE_KEY) === 'true';
     return {
       session,
       steps: session?.steps || null,
       activeStepId,
+      engagedStepId,
       minimized,
       runId: session?.runId || null,
       status: session?.status || null,
@@ -232,6 +252,7 @@ export const getWorkflowState = (): StoredWorkflowState => {
       session: null,
       steps: null,
       activeStepId: null,
+      engagedStepId: null,
       minimized: false,
       runId: null,
       status: null,
@@ -266,6 +287,37 @@ export const restoreActiveWorkflow = async (): Promise<WorkflowSession | null> =
   }
   persistWorkflow(session, activeStep.stepId, false);
   return session;
+};
+
+export const refreshWorkflowRun = async (runId: string): Promise<WorkflowSession | null> => {
+  const state = getWorkflowState();
+  // A background video may finish after the user has opened another template run.
+  // Never let that callback replace the workflow currently shown in the dock.
+  if (!state.session || state.session.runId !== runId) return state.session;
+
+  const run = await fetchTemplateRun(runId);
+  if (run.status !== 'started') {
+    clearStoredWorkflow();
+    return null;
+  }
+  const materials = await fetchReusableTemplateAssets(run.templateId, run.templateVersionId);
+  const session = buildSessionFromRun(run, state.session, materials);
+  const activeStep = run.steps.find((step) => step.stepOrder === run.currentStep)
+    || run.steps.find((step) => step.status === 'active')
+    || run.steps[0];
+  if (!activeStep) return null;
+  const engagedStep = state.engagedStepId === activeStep.stepId
+    ? state.engagedStepId
+    : null;
+  persistWorkflow(session, activeStep.stepId, false, engagedStep);
+  return session;
+};
+
+export const clearEngagedWorkflowStep = (runId: string, stepId: string): void => {
+  const state = getWorkflowState();
+  if (state.runId !== runId || state.engagedStepId !== stepId) return;
+  sessionStorage.removeItem(ENGAGED_STEP_STORAGE_KEY);
+  notifyWorkflowChanged();
 };
 
 export const setActiveStep = async (stepId: string): Promise<void> => {

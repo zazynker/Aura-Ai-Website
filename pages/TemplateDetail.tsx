@@ -23,6 +23,7 @@ import {
 import { Button } from '../components/ui/Button';
 import {
   getWorkflowTargetRoute,
+  queueWorkflowHandoff,
   startWorkflow,
 } from '../components/workflow/workflowManager';
 import { useStore } from '../context/StoreContext';
@@ -203,9 +204,13 @@ export const TemplateDetail = () => {
         status: run.status,
         steps: workflowSteps,
       });
+      const firstStep = workflowSteps[0];
+      if (!firstStep) throw new Error('This template has no executable steps.');
+      const handoff = await queueWorkflowHandoff(firstStep, 'all');
       startKeyRef.current = null;
       addToast('success', 'Workflow started. Your progress is now saved.');
-      navigate(workflowSteps[0]?.targetRoute || '/dashboard');
+      const separator = firstStep.targetRoute.includes('?') ? '&' : '?';
+      navigate(`${firstStep.targetRoute}${separator}workflowAction=all&workflowNonce=${encodeURIComponent(handoff.nonce)}`);
     } catch (error) {
       startingRunRef.current = false;
       setStartingRun(false);

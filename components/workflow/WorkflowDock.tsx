@@ -128,7 +128,7 @@ export const WorkflowDock = () => {
     setExpandedStepId(step.id);
     try {
       await setActiveStep(step.id);
-      const handoff = queueWorkflowHandoff(step, 'all');
+      const handoff = await queueWorkflowHandoff(step, 'all');
       const separator = step.targetRoute.includes('?') ? '&' : '?';
       navigate(`${step.targetRoute}${separator}workflowAction=all&workflowNonce=${encodeURIComponent(handoff.nonce)}`);
     } catch (error) {
@@ -149,7 +149,7 @@ export const WorkflowDock = () => {
     if (action === 'materials' && (step.materials || []).length === 0) return;
     try {
       await setActiveStep(step.id);
-      const handoff = queueWorkflowHandoff(step, action);
+      const handoff = await queueWorkflowHandoff(step, action);
       const separator = step.targetRoute.includes('?') ? '&' : '?';
       navigate(`${step.targetRoute}${separator}workflowAction=${action}&workflowNonce=${encodeURIComponent(handoff.nonce)}`);
     } catch (error) {

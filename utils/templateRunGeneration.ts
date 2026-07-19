@@ -5,7 +5,8 @@ import {
 } from './templateRunApi';
 import {
   getWorkflowState,
-  restoreActiveWorkflow,
+  clearEngagedWorkflowStep,
+  refreshWorkflowRun,
 } from '../components/workflow/workflowManager';
 
 export interface TemplateGenerationContext {
@@ -23,9 +24,19 @@ export const getActiveTemplateGenerationContext = (
   capability: string,
 ): TemplateGenerationContext | null => {
   const state = getWorkflowState();
-  if (!state.session || state.status !== 'started' || !state.activeStepId) return null;
+  if (
+    !state.session
+    || state.status !== 'started'
+    || !state.activeStepId
+    || state.engagedStepId !== state.activeStepId
+  ) return null;
   const step = state.session.steps.find((item) => item.id === state.activeStepId);
-  if (!step || step.capability !== capability) return null;
+  if (
+    !step
+    || step.capability !== capability
+    || step.status === 'completed'
+    || step.status === 'skipped'
+  ) return null;
   return {
     templateRunId: state.session.runId,
     templateStepId: step.id,
@@ -48,7 +59,8 @@ export const completeTemplateGeneration = async (
 ): Promise<void> => {
   if (!context?.templateRunId || !context.templateStepId || !generationId) return;
   await completeTemplateRunStep(context.templateRunId, context.templateStepId, generationId);
-  await restoreActiveWorkflow();
+  clearEngagedWorkflowStep(context.templateRunId, context.templateStepId);
+  await refreshWorkflowRun(context.templateRunId);
 };
 
 export const failTemplateGeneration = async (
@@ -61,5 +73,5 @@ export const failTemplateGeneration = async (
     context.templateStepId,
     normalizeErrorCode(error),
   );
-  await restoreActiveWorkflow();
+  await refreshWorkflowRun(context.templateRunId);
 };

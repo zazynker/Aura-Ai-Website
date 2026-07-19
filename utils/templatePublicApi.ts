@@ -88,7 +88,8 @@ export async function fetchPublishedTemplates(
     throw new Error(`Could not load published templates: ${error.message}`);
   }
 
-  return (data || []).map((row) => ({
+  const rows = (data || []) as unknown as Array<Omit<PublicTemplateRow, 'author_name'>>;
+  return rows.map((row) => ({
     ...row,
     author_name: row.creator_id ? 'Lazora creator' : 'Lazora',
   })) as PublicTemplateRow[];

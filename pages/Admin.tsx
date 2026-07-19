@@ -189,7 +189,7 @@ export const Admin = () => {
   ) => {
     if (!reviewingTemplate || reviewActionLoading) return;
     setReviewActionLoading(true);
-    const result = await adminReviewTemplate(reviewingTemplate.id, decision, feedback);
+    const result = await adminReviewTemplate(reviewingTemplate.id, reviewingTemplate.versionId, decision, feedback);
     if (!result.success) {
       addToast('error', result.error || 'The review could not be saved.');
       setReviewActionLoading(false);

@@ -515,12 +515,14 @@ export async function adminGetTemplateReviews(): Promise<{
 
 export async function adminReviewTemplate(
   templateId: string,
+  versionId: string,
   decision: 'approve' | 'request_changes',
   feedback?: string,
 ): Promise<{ success: boolean; error: string | null; alreadyProcessed?: boolean }> {
   try {
     const { data, error } = await supabase.rpc('admin_review_template', {
       p_template_id: templateId,
+      p_version_id: versionId,
       p_decision: decision,
       p_feedback: feedback || null,
     });

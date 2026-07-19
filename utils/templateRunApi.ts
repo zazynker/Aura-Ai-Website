@@ -154,6 +154,19 @@ export async function beginTemplateRunStep(runId: string, stepId: string): Promi
   if (error) throw new Error(`Could not start this workflow step: ${error.message}`);
 }
 
+export async function engageTemplateRunStep(
+  runId: string,
+  stepId: string,
+  action: 'all' | 'materials' | 'prompt',
+): Promise<void> {
+  const { error } = await supabase.rpc('engage_template_run_step', {
+    p_run_id: runId,
+    p_step_id: stepId,
+    p_action: action,
+  });
+  if (error) throw new Error(`Could not activate this template step: ${error.message}`);
+}
+
 export async function completeTemplateRunStep(
   runId: string,
   stepId: string,

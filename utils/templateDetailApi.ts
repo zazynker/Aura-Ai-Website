@@ -81,7 +81,7 @@ export async function fetchTemplateDetail(
 ): Promise<RealTemplateDetail> {
   let query = supabase
     .from('templates')
-    .select('id,slug,name,display_name,description,status,creator_id,use_count,current_version_id,cover_url,thumb_url,cover_type');
+    .select('id,slug,name,display_name,description,status,creator_id,use_count,current_version_id,draft_version_id,submitted_version_id,cover_url,thumb_url,cover_type');
   query = UUID_PATTERN.test(idOrSlug)
     ? query.eq('id', idOrSlug)
     : query.eq('slug', idOrSlug);
@@ -89,7 +89,11 @@ export async function fetchTemplateDetail(
   if (templateError || !template) {
     throw new Error('This template could not be found or you do not have permission to view it.');
   }
-  if (!template.current_version_id) {
+  const { data: authData } = await supabase.auth.getUser();
+  const isOwner = authData.user?.id === template.creator_id;
+  const selectedVersionId = template.current_version_id
+    || (isOwner ? template.submitted_version_id || template.draft_version_id : null);
+  if (!selectedVersionId) {
     throw new Error('This template has no workflow version.');
   }
 
@@ -98,14 +102,14 @@ export async function fetchTemplateDetail(
       supabase
         .from('template_versions')
         .select('id,workflow')
-        .eq('id', template.current_version_id)
+        .eq('id', selectedVersionId)
         .eq('template_id', template.id)
         .single(),
       supabase
         .from('template_assets')
         .select('id,asset_key,asset_type,storage_bucket,storage_path,public_url,is_reusable')
         .eq('template_id', template.id)
-        .eq('version_id', template.current_version_id)
+        .eq('version_id', selectedVersionId)
         .order('sort_order', { ascending: true }),
     ]);
   if (versionError || !version) {

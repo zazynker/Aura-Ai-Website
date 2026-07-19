@@ -248,7 +248,6 @@ async function ensureDraftRows(
     slug: slugify(name, identity.templateId),
     description: input.description.trim() || null,
     template_kind: inferTemplateKind(input.workflow),
-    status: 'draft',
     updated_at: new Date().toISOString(),
   };
 
@@ -256,6 +255,7 @@ async function ensureDraftRows(
     const { error } = await supabase.from('templates').insert({
       id: identity.templateId,
       ...templatePayload,
+      status: 'draft',
       cover_type: 'image',
       cover_url: null,
       preview_url: input.finalResultUrl,
@@ -264,9 +264,16 @@ async function ensureDraftRows(
   } else {
     const { error } = await supabase
       .from('templates')
-      .update(templatePayload)
+      .update({ updated_at: templatePayload.updated_at })
       .eq('id', identity.templateId);
     if (error) throw new Error(`Could not update the draft: ${error.message}`);
+
+    const { error: fallbackError } = await supabase
+      .from('templates')
+      .update({ ...templatePayload, status: 'draft' })
+      .eq('id', identity.templateId)
+      .is('current_version_id', null);
+    if (fallbackError) throw new Error(`Could not update draft metadata: ${fallbackError.message}`);
   }
 
   const { error: versionError } = await supabase.from('template_versions').upsert(
@@ -278,6 +285,11 @@ async function ensureDraftRows(
       workflow: input.workflow,
       change_summary: 'Builder draft save',
       created_by: input.userId,
+      version_status: 'draft',
+      name,
+      display_name: name,
+      description: input.description.trim() || null,
+      image_url: input.finalResultUrl || '',
     },
     { onConflict: 'template_id,version_number' },
   );
@@ -287,7 +299,7 @@ async function ensureDraftRows(
 
   const { error: linkError } = await supabase
     .from('templates')
-    .update({ current_version_id: identity.versionId })
+    .update({ draft_version_id: identity.versionId })
     .eq('id', identity.templateId);
   if (linkError) throw new Error(`Could not link the workflow version: ${linkError.message}`);
 }
@@ -345,6 +357,12 @@ async function cleanReplacedObjects(
   for (const row of previous) {
     if (!row.storage_bucket || !row.storage_path) continue;
     if (current.has(`${row.storage_bucket}:${row.storage_path}`)) continue;
+    const { count, error } = await supabase
+      .from('template_assets')
+      .select('id', { count: 'exact', head: true })
+      .eq('storage_bucket', row.storage_bucket)
+      .eq('storage_path', row.storage_path);
+    if (error || Number(count || 0) > 0) continue;
     if (row.storage_bucket === TEMPLATE_PREVIEWS_BUCKET) previewPaths.push(row.storage_path);
     if (row.storage_bucket === TEMPLATE_ASSETS_BUCKET) assetPaths.push(row.storage_path);
   }
@@ -504,16 +522,25 @@ export async function saveTemplateDraft(
     }
 
     if (cover) {
+      const coverMetadata = {
+        image_url: cover.thumbnail.publicUrl || cover.original.publicUrl || input.finalResultUrl || '',
+        thumb_url: cover.thumbnail.publicUrl,
+        cover_type: cover.coverType,
+        cover_url: cover.original.publicUrl,
+        preview_url: cover.original.publicUrl,
+      };
+      const { error: versionCoverError } = await supabase
+        .from('template_versions')
+        .update(coverMetadata)
+        .eq('id', identity.versionId);
+      if (versionCoverError) {
+        throw new Error(`Could not save version cover metadata: ${versionCoverError.message}`);
+      }
       const { error: coverError } = await supabase
         .from('templates')
-        .update({
-          image_url: cover.thumbnail.publicUrl || cover.original.publicUrl || input.finalResultUrl || '',
-          thumb_url: cover.thumbnail.publicUrl,
-          cover_type: cover.coverType,
-          cover_url: cover.original.publicUrl,
-          preview_url: cover.original.publicUrl,
-        })
-        .eq('id', identity.templateId);
+        .update(coverMetadata)
+        .eq('id', identity.templateId)
+        .is('current_version_id', null);
       if (coverError) throw new Error(`Could not save the cover metadata: ${coverError.message}`);
     }
 
@@ -573,17 +600,24 @@ export async function loadTemplateDraft(
   templateId: string,
   userId: string,
 ): Promise<LoadTemplateDraftResult> {
+  const { data: opened, error: openError } = await supabase.rpc('open_template_edit_draft', {
+    p_template_id: templateId,
+  });
+  if (openError || !opened?.version_id) {
+    throw new Error(`This template could not be opened for editing: ${openError?.message || 'No editable version was returned.'}`);
+  }
+
   const { data: template, error: templateError } = await supabase
     .from('templates')
-    .select('id,name,display_name,description,status,current_version_id,cover_type,cover_url')
+    .select('id,name,display_name,description,status,current_version_id,draft_version_id,cover_type,cover_url')
     .eq('id', templateId)
     .eq('creator_id', userId)
-    .in('status', ['draft', 'rejected'])
     .single();
   if (templateError || !template) {
     throw new Error('This editable template draft could not be found.');
   }
-  if (!template.current_version_id) {
+  const editableVersionId = template.draft_version_id || opened.version_id;
+  if (!editableVersionId) {
     throw new Error('This draft has no workflow version yet.');
   }
 
@@ -591,15 +625,15 @@ export async function loadTemplateDraft(
     await Promise.all([
       supabase
         .from('template_versions')
-        .select('id,version_number,workflow')
-        .eq('id', template.current_version_id)
+        .select('id,version_number,workflow,name,display_name,description,cover_type,cover_url')
+        .eq('id', editableVersionId)
         .eq('template_id', templateId)
         .single(),
       supabase
         .from('template_assets')
         .select('id,asset_key,asset_type,source_kind,generation_id,storage_bucket,storage_path,public_url,mime_type,byte_size,width,height,duration_seconds,is_reusable')
         .eq('template_id', templateId)
-        .eq('version_id', template.current_version_id)
+        .eq('version_id', editableVersionId)
         .order('sort_order', { ascending: true }),
     ]);
   if (versionError || !version) {
@@ -681,7 +715,7 @@ export async function loadTemplateDraft(
   const thumbnail = coverThumbnailRow ? savedObject(coverThumbnailRow) : null;
   const cover = original && thumbnail
     ? {
-        coverType: template.cover_type === 'video' ? 'video' as const : 'image' as const,
+        coverType: version.cover_type === 'video' ? 'video' as const : 'image' as const,
         original,
         thumbnail,
       }
@@ -695,16 +729,16 @@ export async function loadTemplateDraft(
       versionId: version.id,
       versionNumber: version.version_number,
     },
-    title: template.display_name || template.name,
-    description: template.description || '',
+    title: version.display_name || version.name || template.display_name || template.name,
+    description: version.description || template.description || '',
     steps,
     finalResultUrl: finalStep?.resultUrl || null,
     finalResultType: finalStep
       ? VIDEO_FEATURES.has(finalStep.feature) ? 'video' : 'image'
       : null,
     cover,
-    coverUrl: template.cover_url || (coverOriginalRow ? urls.get(coverOriginalRow.id) : null) || null,
-    coverType: template.cover_type === 'video' ? 'video' : 'image',
+    coverUrl: version.cover_url || (coverOriginalRow ? urls.get(coverOriginalRow.id) : null) || template.cover_url || null,
+    coverType: version.cover_type === 'video' ? 'video' : 'image',
     materials: persistedMaterials,
   };
 }

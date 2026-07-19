@@ -998,6 +998,12 @@ useEffect(() => {
                         {template.status === 'Changes requested' && <span className="bg-red-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Changes requested</span>}
                       </div>
 
+                      {template.secondaryStatus && (
+                        <div className="absolute top-3 right-3 z-30 rounded bg-purple-600/90 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-sm">
+                          {template.secondaryStatus}
+                        </div>
+                      )}
+
                       {template.status === 'In review' && (
                         <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center backdrop-blur-[1px] z-20">
                           <span className="text-white text-sm font-medium px-3 py-1.5 bg-black/50 rounded-lg">Waiting for review</span>
@@ -1030,11 +1036,15 @@ useEffect(() => {
                           </>
                         )}
                         {template.status === 'In review' && (
-                          <Button variant="secondary" size="sm" className="w-full" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                          <>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit new version</Button>
+                          </>
                         )}
                         {template.status === 'Published' && (
                           <>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit</Button>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { 
                               e.stopPropagation(); 
                               if (navigator.clipboard) {

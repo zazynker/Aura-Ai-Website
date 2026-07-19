@@ -1430,6 +1430,11 @@ export const TemplateBuilder = () => {
         className="max-w-md"
       >
         <div className="space-y-6">
+            {draftIdentity && draftIdentity.versionNumber > 1 && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                Submitting this update will replace the older submitted version in the review queue. The currently published version, if any, stays live until this version is approved.
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">Template cover</label>
               <p className="text-xs text-slate-500 mb-4">Upload an image or video. This will be displayed on the template marketplace.</p>
