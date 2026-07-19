@@ -86,6 +86,7 @@ const generationToVideoResult = (generation: Generation): VideoResult | null => 
     status: generation.videoUrl ? 'completed' : 'pending',
     mode,
     createdAt: generation.createdAt,
+    requestId: generation.requestId,
     templateRunId: generation.templateRunId,
     templateStepId: generation.templateStepId,
     templateCapability: generation.templateCapability,
@@ -277,6 +278,7 @@ export const Video: React.FC = () => {
       videoMode: result.mode || getVideoMode(result.type),
       prompt: result.prompt,
       creditsUsed: result.creditsUsed ?? 0,
+      requestId: result.requestId,
       capability: getCapabilityFromVideoResult(result),
       inputAssets: getInputAssetsFromVideoResult(result),
       generationParameters: {

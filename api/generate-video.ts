@@ -17,6 +17,9 @@ type RequestBody = {
   generationCount?: number;
   requestedOutputCount?: number;
   generateAudio?: boolean;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
 };
 
 type FalSubmitResult = {
@@ -171,15 +174,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let newCredits = userData.credits;
     let creditsDeducted = 0;
-    if (!userData.is_whitelisted) {
-      const { data: deductResult, error: deductError } = await supabase.rpc('deduct_credits_fifo', {
+    let eligiblePaidCredits = 0;
+    let creditDeductionId: string | undefined;
+    {
+      const { data: deductResult, error: deductError } = await supabase.rpc('deduct_generation_credits', {
         p_user_id: user.id,
         p_amount: requiredCredits,
+        p_request_id: falJob.requestId,
+        p_template_run_id: body.templateRunId || null,
+        p_template_step_id: body.templateStepId || null,
+        p_capability: body.templateCapability || null,
       });
       if (deductError || !deductResult?.success) {
         throw new ApiError(500, 'CREDIT_DEDUCTION_FAILED', 'Video was submitted but credit settlement failed.', { requestId: falJob.requestId });
       }
-      creditsDeducted = requiredCredits;
+      creditsDeducted = Number(deductResult.credits_deducted) || 0;
+      eligiblePaidCredits = Number(deductResult.eligible_paid_credits) || 0;
+      creditDeductionId = typeof deductResult.deduction_id === 'string'
+        ? deductResult.deduction_id
+        : undefined;
       newCredits = Number(deductResult.new_balance ?? deductResult.new_credits ?? newCredits);
     }
 
@@ -187,6 +200,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       mode,
       creditsUsed: requiredCredits,
       creditsDeducted,
+      eligiblePaidCredits,
+      creditDeductionId,
       newCredits,
       endpoint,
       requestId: falJob.requestId,
@@ -205,6 +220,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       mode,
       creditsUsed: requiredCredits,
       creditsDeducted,
+      eligiblePaidCredits,
+      creditDeductionId,
       newCredits,
     });
   } catch (err) {

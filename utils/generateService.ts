@@ -26,6 +26,8 @@ export interface GenerateResult {
   tokensUsed?: number;
   creditsUsed?: number;
   creditsDeducted?: number;
+  eligiblePaidCredits?: number;
+  creditDeductionId?: string;
   newCredits?: number;
   actualCostUsd?: number;
   requestId?: string;
@@ -84,6 +86,8 @@ const normalizeGenerateResponse = (
   tokensUsed: Number(data.tokensUsed) || 0,
   creditsUsed: Number(data.creditsUsed) || 0,
   creditsDeducted: Number(data.creditsDeducted) || 0,
+  eligiblePaidCredits: Number(data.eligiblePaidCredits) || 0,
+  creditDeductionId: data.creditDeductionId,
   newCredits: typeof data.newCredits === "number" ? data.newCredits : undefined,
   actualCostUsd: Number(data.actualCostUsd) || 0,
   requestId: data.requestId,
@@ -351,6 +355,9 @@ export interface VideoGenerateResult {
   duration?: number;
   error?: string;
   creditsUsed?: number;
+  creditsDeducted?: number;
+  eligiblePaidCredits?: number;
+  creditDeductionId?: string;
   pending?: boolean;
   pendingJob?: PendingVideoJob;
   requestId?: string;
@@ -370,6 +377,8 @@ interface VideoSubmitResponse {
   mode?: VideoGenerateOptions["mode"];
   creditsUsed?: number;
   creditsDeducted?: number;
+  eligiblePaidCredits?: number;
+  creditDeductionId?: string;
   newCredits?: number;
   error?: string;
   code?: string;

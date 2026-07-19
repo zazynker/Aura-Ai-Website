@@ -143,6 +143,7 @@ interface DbGeneration {
   capability?: string;
   input_assets?: import('../types').GenerationInputAssetSnapshot[] | null;
   generation_parameters?: import('../workflows/types').JsonObject | null;
+  request_id?: string | null;
 }
 
 // 数据库格式 -> 前端格式
@@ -164,6 +165,7 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   capability: db.capability as import('../workflows/types').WorkflowCapabilityKey | undefined,
   inputAssets: db.input_assets || undefined,
   generationParameters: db.generation_parameters || undefined,
+  requestId: db.request_id || undefined,
 });
 
 /**
@@ -338,6 +340,7 @@ export async function saveGenerationToDb(
       capability: generation.capability || null,
       input_assets: generation.inputAssets || [],
       generation_parameters: generation.generationParameters || {},
+      request_id: generation.requestId || null,
     };
     if (generation.thumbnailUrl) dbData.thumbnail_url = generation.thumbnailUrl;
 
@@ -389,6 +392,7 @@ export async function saveGenerationsToDb(
       capability: gen.capability || null,
       input_assets: gen.inputAssets || [],
       generation_parameters: gen.generationParameters || {},
+      request_id: gen.requestId || null,
       ...(gen.thumbnailUrl ? { thumbnail_url: gen.thumbnailUrl } : {}),
     }));
 
@@ -795,4 +799,3 @@ export async function logVideoInterest(): Promise<{ success: boolean; error: str
     return { success: false, error: 'Failed to log video interest' };
   }
 }
-

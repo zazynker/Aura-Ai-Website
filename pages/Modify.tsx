@@ -911,6 +911,7 @@ export const Modify = () => {
         templateRunId: result.templateRunId,
         templateStepId: result.templateStepId,
         templateCapability: result.templateCapability,
+        requestId: result.requestId,
         inputAssets,
         generationParameters: {
           prompt: displayPrompt,
@@ -1096,6 +1097,7 @@ export const Modify = () => {
         templateRunId: result.templateRunId,
         templateStepId: result.templateStepId,
         templateCapability: result.templateCapability,
+        requestId: result.requestId,
         inputAssets,
         generationParameters: {
           prompt: t2iPrompt,

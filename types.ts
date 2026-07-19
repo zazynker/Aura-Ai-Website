@@ -147,6 +147,7 @@ export interface Generation {
   capability?: WorkflowCapabilityKey;
   inputAssets?: GenerationInputAssetSnapshot[];
   generationParameters?: JsonObject;
+  requestId?: string;
   templateRunId?: string;
   templateStepId?: string;
   templateCapability?: string;

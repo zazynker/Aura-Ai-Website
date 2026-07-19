@@ -48,6 +48,8 @@ type StoredGenerationManifest = {
   actualCostUsd?: number;
   creditsUsed: number;
   creditsDeducted: number;
+  eligiblePaidCredits: number;
+  creditDeductionId?: string;
   newCredits?: number;
   requestId: string;
   recovered: boolean;
@@ -61,6 +63,9 @@ type GenerateRequestBody = {
   aspectRatio?: string;
   requestId?: string;
   recoverOnly?: boolean;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
 };
 const emptyTokenBreakdown = (): TokenBreakdown => ({
   inputTokens: 0,
@@ -690,15 +695,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let newCredits = userData.credits;
     let creditsDeducted = 0;
+    let eligiblePaidCredits = 0;
+    let creditDeductionId: string | undefined;
 
-    // Whitelisted users don't get credits deducted
-    if (!userData.is_whitelisted) {
-      // Call the FIFO deduction RPC function
+    // This server-owned settlement records the exact FIFO lots, including a
+    // zero-charge audit row for whitelisted users. Template attribution is
+    // locked here and cannot be supplied later by a client generation row.
+    {
       const { data: deductResult, error: deductError } = await supabase.rpc(
-        "deduct_credits_fifo",
+        "deduct_generation_credits",
         {
           p_user_id: user.id,
           p_amount: creditsToDeduct,
+          p_request_id: requestId,
+          p_template_run_id: body.templateRunId || null,
+          p_template_step_id: body.templateStepId || null,
+          p_capability: body.templateCapability || null,
         },
       );
 
@@ -727,7 +739,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         }
 
         const insufficientCredits =
-          !deductError && deductResult?.success === false;
+          !deductError && deductResult?.error === "Insufficient credits";
 
         return res.status(insufficientCredits ? 402 : 500).json({
           success: false,
@@ -743,12 +755,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       console.log("Credit deduction result:", deductResult);
-      creditsDeducted = creditsToDeduct;
+      creditsDeducted = Number(deductResult.credits_deducted) || 0;
+      eligiblePaidCredits = Number(deductResult.eligible_paid_credits) || 0;
+      creditDeductionId = typeof deductResult.deduction_id === "string"
+        ? deductResult.deduction_id
+        : undefined;
       newCredits = Number(
         deductResult.new_balance ?? deductResult.new_credits ?? newCredits,
       );
-    } else {
-      console.log("User is whitelisted - skipping credit deduction");
     }
     // ============================================
 
@@ -763,6 +777,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       actualCostUsd,
       creditsUsed: creditsToDeduct,
       creditsDeducted,
+      eligiblePaidCredits,
+      creditDeductionId,
       newCredits: newCredits,
       requestId,
       recovered: false,
