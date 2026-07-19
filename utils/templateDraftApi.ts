@@ -270,7 +270,10 @@ async function ensureDraftRows(
 
     const { error: fallbackError } = await supabase
       .from('templates')
-      .update({ ...templatePayload, status: 'draft' })
+      // Saving an editable version must not withdraw the version that is
+      // already in review. The versioned submit RPC is the only operation
+      // allowed to replace submitted_version_id or change review state.
+      .update(templatePayload)
       .eq('id', identity.templateId)
       .is('current_version_id', null);
     if (fallbackError) throw new Error(`Could not update draft metadata: ${fallbackError.message}`);

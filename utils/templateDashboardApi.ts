@@ -57,6 +57,25 @@ function workflowStepCount(workflow: unknown): number {
   return Array.isArray(steps) ? steps.length : 0;
 }
 
+function getSecondaryStatus(
+  template: TemplateRow,
+): CreatorTemplateCard['secondaryStatus'] {
+  if (template.current_version_id) {
+    if (template.draft_version_id) return 'Draft update';
+    if (template.review_status === 'pending') return 'Update in review';
+    if (template.review_status === 'rejected') return 'Update changes requested';
+    return undefined;
+  }
+
+  // A first publication may still have an older submitted version under
+  // review while the creator edits a newer draft. Keep the primary status as
+  // "In review" and surface the additional draft separately.
+  if (template.submitted_version_id && template.draft_version_id) {
+    return 'Draft update';
+  }
+  return undefined;
+}
+
 export async function fetchCreatorTemplates(
   userId: string,
 ): Promise<CreatorTemplateCard[]> {
@@ -179,15 +198,7 @@ export async function fetchCreatorTemplates(
       uses: Number(template.use_count || 0),
       creditsEarned: creditsByTemplate.get(template.id) || 0,
       feedback: latestFeedbackByTemplate.get(template.id),
-      secondaryStatus: template.current_version_id
-        ? template.review_status === 'pending'
-          ? 'Update in review'
-          : template.review_status === 'rejected'
-            ? 'Update changes requested'
-            : template.draft_version_id
-              ? 'Draft update'
-              : undefined
-        : undefined,
+      secondaryStatus: getSecondaryStatus(template),
     };
   });
 }
