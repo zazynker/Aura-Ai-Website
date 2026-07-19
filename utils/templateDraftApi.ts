@@ -279,25 +279,47 @@ async function ensureDraftRows(
     if (fallbackError) throw new Error(`Could not update draft metadata: ${fallbackError.message}`);
   }
 
-  const { error: versionError } = await supabase.from('template_versions').upsert(
-    {
+  const mutableVersionPayload = {
+    schema_version: input.workflow.schemaVersion,
+    workflow: input.workflow,
+    change_summary: 'Builder draft save',
+    version_status: 'draft',
+    name,
+    display_name: name,
+    description: input.description.trim() || null,
+    image_url: input.finalResultUrl || '',
+    updated_at: new Date().toISOString(),
+  };
+
+  if (!input.identity) {
+    const { error: versionError } = await supabase.from('template_versions').insert({
       id: identity.versionId,
       template_id: identity.templateId,
       version_number: identity.versionNumber,
-      schema_version: input.workflow.schemaVersion,
-      workflow: input.workflow,
-      change_summary: 'Builder draft save',
       created_by: input.userId,
-      version_status: 'draft',
-      name,
-      display_name: name,
-      description: input.description.trim() || null,
-      image_url: input.finalResultUrl || '',
-    },
-    { onConflict: 'template_id,version_number' },
-  );
-  if (versionError) {
-    throw new Error(`Could not save the workflow version: ${versionError.message}`);
+      ...mutableVersionPayload,
+    });
+    if (versionError) {
+      throw new Error(`Could not create the workflow version: ${versionError.message}`);
+    }
+  } else {
+    // open_template_edit_draft already created and linked this immutable-ID
+    // draft. UPDATE it directly: an UPSERT first exercises the INSERT RLS
+    // policy even when the conflict ultimately updates the existing row.
+    const { data: updatedVersion, error: versionError } = await supabase
+      .from('template_versions')
+      .update(mutableVersionPayload)
+      .eq('id', identity.versionId)
+      .eq('template_id', identity.templateId)
+      .eq('created_by', input.userId)
+      .select('id')
+      .maybeSingle();
+    if (versionError) {
+      throw new Error(`Could not save the workflow version: ${versionError.message}`);
+    }
+    if (!updatedVersion) {
+      throw new Error('This workflow version is no longer the editable draft. Refresh Dashboard and open it again.');
+    }
   }
 
   const { error: linkError } = await supabase
