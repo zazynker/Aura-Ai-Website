@@ -186,6 +186,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         p_capability: body.templateCapability || null,
       });
       if (deductError || !deductResult?.success) {
+        console.error('[generate-video] Credit settlement failed after Fal submission:', {
+          userId: user.id,
+          requestId: falJob.requestId,
+          deductError: deductError?.message,
+          deductCode: deductError?.code,
+          deductDetails: deductError?.details,
+          deductResult,
+        });
         throw new ApiError(500, 'CREDIT_DEDUCTION_FAILED', 'Video was submitted but credit settlement failed.', { requestId: falJob.requestId });
       }
       creditsDeducted = Number(deductResult.credits_deducted) || 0;
