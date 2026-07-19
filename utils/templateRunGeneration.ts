@@ -20,6 +20,27 @@ const normalizeErrorCode = (value: unknown): string => {
   return message.trim().slice(0, 240) || 'generation_failed';
 };
 
+const LIP_SYNC_CAPABILITIES = new Set([
+  'video.lip_sync_image',
+  'video.lip_sync_video',
+]);
+
+/**
+ * A template Lip Sync step remains attributable when the user replaces the
+ * reusable character material and that changes only the Lip Sync input mode.
+ * Every other capability boundary stays strict.
+ */
+export const areTemplateCapabilitiesCompatible = (
+  templateCapability: string,
+  generationCapability: string,
+): boolean => (
+  templateCapability === generationCapability
+  || (
+    LIP_SYNC_CAPABILITIES.has(templateCapability)
+    && LIP_SYNC_CAPABILITIES.has(generationCapability)
+  )
+);
+
 export const getActiveTemplateGenerationContext = (
   capability: string,
 ): TemplateGenerationContext | null => {
@@ -33,7 +54,7 @@ export const getActiveTemplateGenerationContext = (
   const step = state.session.steps.find((item) => item.id === state.activeStepId);
   if (
     !step
-    || step.capability !== capability
+    || !areTemplateCapabilitiesCompatible(step.capability, capability)
     || step.status === 'completed'
     || step.status === 'skipped'
   ) return null;
