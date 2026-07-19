@@ -1,52 +1,78 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
 import { User as UserIcon, LogOut, LayoutDashboard, CreditCard, Sparkles, Sun, Moon, Bell, Check, AlertCircle, Sparkles as SparklesOutline } from 'lucide-react';
 import { Button } from './ui/Button';
+import {
+  fetchMyNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  type UserNotification,
+} from '../utils/notificationsApi';
 
-// Mock Notifications Data
-const MOCK_NOTIFICATIONS = [
-  {
-    id: 'n1',
-    type: 'approved',
-    title: 'Template approved',
-    content: 'Your template "Minimal Product Story" is now live.',
-    time: '5m ago',
-    read: false,
-    link: '/templates/t-minimal-product'
-  },
-  {
-    id: 'n2',
-    type: 'changes',
-    title: 'Changes requested',
-    content: 'Your template needs a few changes before it can be published.',
-    time: '2h ago',
-    read: false,
-    link: '/dashboard?tab=templates'
-  },
-  {
-    id: 'n3',
-    type: 'credits',
-    title: 'Credits earned',
-    content: 'You earned 24 credits from people using "Minimal Product Story".',
-    time: '1d ago',
-    read: true,
-    link: '/dashboard?tab=templates'
+const formatRelativeTime = (createdAt: string): string => {
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000));
+  if (elapsedSeconds < 60) return 'Just now';
+  const minutes = Math.floor(elapsedSeconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(createdAt).toLocaleDateString();
+};
+
+const getNotificationLink = (notification: UserNotification): string => {
+  const metadataLink = notification.metadata.link;
+  if (typeof metadataLink === 'string' && metadataLink.startsWith('/')) return metadataLink;
+  if (notification.type === 'template_approved' && notification.templateId) {
+    return `/templates/${notification.templateId}`;
   }
-];
+  return '/dashboard?tab=templates';
+};
 
 export const Navbar = () => {
-  const { user, logout, theme, toggleTheme } = useStore();
+  const { user, logout, theme, toggleTheme, addToast } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [showDropdown, setShowDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
   
   const isHome = location.pathname === '/';
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications.filter(n => !n.readAt).length;
 
   const notifRef = useRef<HTMLDivElement>(null);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!user) {
+      setNotifications([]);
+      setNotificationsError(null);
+      return;
+    }
+    setNotificationsLoading(true);
+    try {
+      setNotifications(await fetchMyNotifications());
+      setNotificationsError(null);
+    } catch (error) {
+      setNotificationsError(error instanceof Error ? error.message : 'Could not load notifications.');
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    void refreshNotifications();
+    if (!user) return;
+    const intervalId = window.setInterval(() => void refreshNotifications(), 60_000);
+    return () => window.clearInterval(intervalId);
+  }, [refreshNotifications, user?.id]);
+
+  useEffect(() => {
+    if (showNotifications) void refreshNotifications();
+  }, [showNotifications, refreshNotifications]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -68,21 +94,40 @@ export const Navbar = () => {
     };
   }, [showNotifications]);
 
-  const handleNotificationClick = (notif: typeof MOCK_NOTIFICATIONS[number]) => {
-    setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+  const handleNotificationClick = async (notif: UserNotification) => {
+    if (!notif.readAt) {
+      const readAt = new Date().toISOString();
+      setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, readAt } : n));
+      try {
+        await markNotificationRead(notif.id);
+      } catch (error) {
+        setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, readAt: null } : n));
+        addToast('error', error instanceof Error ? error.message : 'Could not mark this notification as read.');
+      }
+    }
     setShowNotifications(false);
-    navigate(notif.link);
+    navigate(getNotificationLink(notif));
   };
 
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  const markAllAsRead = async () => {
+    const previous = notifications;
+    const readAt = new Date().toISOString();
+    setNotifications(prev => prev.map(n => n.readAt ? n : { ...n, readAt }));
+    try {
+      await markAllNotificationsRead();
+    } catch (error) {
+      setNotifications(previous);
+      addToast('error', error instanceof Error ? error.message : 'Could not mark notifications as read.');
+    }
   };
 
   const getNotifIcon = (type: string) => {
     switch (type) {
-      case 'approved': return <Check className="w-4 h-4 text-emerald-500" />;
-      case 'changes': return <AlertCircle className="w-4 h-4 text-red-500" />;
-      case 'credits': return <SparklesOutline className="w-4 h-4 text-amber-500" />;
+      case 'template_approved': return <Check className="w-4 h-4 text-emerald-500" />;
+      case 'template_changes_requested': return <AlertCircle className="w-4 h-4 text-red-500" />;
+      case 'creator_credits_earned':
+      case 'platform_creator_bonus':
+        return <SparklesOutline className="w-4 h-4 text-amber-500" />;
       default: return <Bell className="w-4 h-4 text-purple-500" />;
     }
   };
@@ -150,7 +195,18 @@ export const Navbar = () => {
                       )}
                     </div>
                     <div className="max-h-[400px] overflow-y-auto">
-                      {notifications.length === 0 ? (
+                      {notificationsLoading && notifications.length === 0 ? (
+                        <div className="py-12 px-4 text-center text-sm text-slate-500 dark:text-slate-400">
+                          Loading notifications...
+                        </div>
+                      ) : notificationsError && notifications.length === 0 ? (
+                        <div className="py-10 px-4 text-center">
+                          <p className="text-sm text-red-600 dark:text-red-400">{notificationsError}</p>
+                          <button onClick={() => void refreshNotifications()} className="mt-3 text-xs font-medium text-purple-600 dark:text-purple-400">
+                            Try again
+                          </button>
+                        </div>
+                      ) : notifications.length === 0 ? (
                         <div className="py-12 px-4 text-center">
                           <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-3">
                             <Bell className="w-5 h-5 text-slate-400" />
@@ -164,14 +220,14 @@ export const Navbar = () => {
                             <button
                               key={notif.id}
                               onClick={() => handleNotificationClick(notif)}
-                              className={`w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors flex items-start gap-3 relative ${!notif.read ? 'bg-slate-50/50 dark:bg-slate-800/50' : ''}`}
+                              className={`w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors flex items-start gap-3 relative ${!notif.readAt ? 'bg-slate-50/50 dark:bg-slate-800/50' : ''}`}
                             >
-                              {!notif.read && (
+                              {!notif.readAt && (
                                 <span className="absolute left-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-purple-500" />
                               )}
                               <div className={`mt-0.5 p-2 rounded-full flex-shrink-0 ${
-                                notif.type === 'approved' ? 'bg-emerald-100 dark:bg-emerald-500/20' :
-                                notif.type === 'changes' ? 'bg-red-100 dark:bg-red-500/20' :
+                                notif.type === 'template_approved' ? 'bg-emerald-100 dark:bg-emerald-500/20' :
+                                notif.type === 'template_changes_requested' ? 'bg-red-100 dark:bg-red-500/20' :
                                 'bg-amber-100 dark:bg-amber-500/20'
                               }`}>
                                 {getNotifIcon(notif.type)}
@@ -179,9 +235,9 @@ export const Navbar = () => {
                               <div className="flex-1 pr-4">
                                 <h4 className="text-sm font-semibold text-slate-900 dark:text-white">{notif.title}</h4>
                                 <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">
-                                  {notif.content}
+                                  {notif.body}
                                 </p>
-                                <span className="text-[10px] text-slate-400 font-medium block mt-1.5">{notif.time}</span>
+                                <span className="text-[10px] text-slate-400 font-medium block mt-1.5">{formatRelativeTime(notif.createdAt)}</span>
                               </div>
                             </button>
                           ))}
