@@ -9,7 +9,7 @@ import { Generation, Collection, Template } from '../types';
 import { supabase } from '../utils/supabase';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import {
-  deleteCreatorDraft,
+  deleteCreatorTemplate,
   fetchCreatorTemplates,
   type CreatorTemplateCard,
 } from '../utils/templateDashboardApi';
@@ -130,8 +130,8 @@ export const Dashboard = () => {
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [currentFeedback, setCurrentFeedback] = useState('');
   const [currentFeedbackTemplateId, setCurrentFeedbackTemplateId] = useState<string | null>(null);
-  const [deleteDraftId, setDeleteDraftId] = useState<string | null>(null);
-  const [deletingDraft, setDeletingDraft] = useState(false);
+  const [templateToDelete, setTemplateToDelete] = useState<CreatorTemplateCard | null>(null);
+  const [deletingTemplate, setDeletingTemplate] = useState(false);
 
   const loadMyTemplates = useCallback(async () => {
     if (!user) return;
@@ -998,12 +998,6 @@ useEffect(() => {
                         {template.status === 'Changes requested' && <span className="bg-red-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Changes requested</span>}
                       </div>
 
-                      {template.secondaryStatus && (
-                        <div className="absolute top-3 right-3 z-30 rounded bg-purple-600/90 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-white backdrop-blur-sm">
-                          {template.secondaryStatus}
-                        </div>
-                      )}
-
                       {template.status === 'In review' && (
                         <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center backdrop-blur-[1px] z-20">
                           <span className="text-white text-sm font-medium px-3 py-1.5 bg-black/50 rounded-lg">Waiting for review</span>
@@ -1032,19 +1026,15 @@ useEffect(() => {
                         {template.status === 'Draft' && (
                           <>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit</Button>
-                            <Button variant="secondary" size="sm" className="flex-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10" onClick={(e) => { e.stopPropagation(); setDeleteDraftId(template.id); }}>Delete</Button>
+                            <Button variant="secondary" size="sm" className="flex-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10" onClick={(e) => { e.stopPropagation(); setTemplateToDelete(template); }}>Delete</Button>
                           </>
                         )}
                         {template.status === 'In review' && (
-                          <>
-                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
-                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit new version</Button>
-                          </>
+                          <Button variant="secondary" size="sm" className="w-full" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
                         )}
                         {template.status === 'Published' && (
                           <>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
-                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit</Button>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { 
                               e.stopPropagation(); 
                               if (navigator.clipboard) {
@@ -1054,6 +1044,17 @@ useEffect(() => {
                                 addToast('success', 'Link copied (fallback)');
                               }
                             }}>Share</Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="flex-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTemplateToDelete(template);
+                              }}
+                            >
+                              Delete
+                            </Button>
                           </>
                         )}
                         {template.status === 'Changes requested' && (
@@ -1128,29 +1129,76 @@ useEffect(() => {
           </div>
       </Modal>
 
-      {/* Delete Draft Modal */}
-      <Modal isOpen={!!deleteDraftId} onClose={() => setDeleteDraftId(null)} title="Delete this draft?">
+      {/* Delete Template Modal */}
+      <Modal
+        isOpen={!!templateToDelete}
+        onClose={() => {
+          if (!deletingTemplate) setTemplateToDelete(null);
+        }}
+        title={templateToDelete?.status === 'Published' ? 'Delete this published template?' : 'Delete this draft?'}
+      >
         <div className="space-y-6">
-          <p className="text-slate-600 dark:text-slate-400 text-sm">
-            This action cannot be undone.
-          </p>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">
+              {templateToDelete?.name}
+            </p>
+            {templateToDelete?.status === 'Published' ? (
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
+                The template will be removed from the public marketplace and from My Templates immediately. Existing usage, reward, notification, and accounting history will be preserved.
+              </p>
+            ) : (
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
+                This draft and its unused uploaded files will be permanently deleted. This action cannot be undone.
+              </p>
+            )}
+          </div>
           <div className="flex gap-3">
-            <Button variant="secondary" className="flex-1" onClick={() => setDeleteDraftId(null)} disabled={deletingDraft}>Cancel</Button>
-            <Button variant="danger" className="flex-1" disabled={deletingDraft} onClick={async () => {
-              if (!deleteDraftId || !user) return;
-              setDeletingDraft(true);
-              try {
-                await deleteCreatorDraft(deleteDraftId, user.id);
-                setMyTemplates(prev => prev.filter(t => t.id !== deleteDraftId));
-                addToast('success', 'Draft deleted');
-                setDeleteDraftId(null);
-              } catch (error) {
-                addToast('error', error instanceof Error ? error.message : 'Could not delete the draft.');
-              } finally {
-                setDeletingDraft(false);
-              }
-            }}>
-              {deletingDraft ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            <Button
+              variant="secondary"
+              className="flex-1"
+              onClick={() => setTemplateToDelete(null)}
+              disabled={deletingTemplate}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              disabled={deletingTemplate}
+              onClick={async () => {
+                if (!templateToDelete || !user) return;
+                const target = templateToDelete;
+                setDeletingTemplate(true);
+                try {
+                  const result = await deleteCreatorTemplate(
+                    target.id,
+                    user.id,
+                    target.status,
+                  );
+                  setMyTemplates((current) => current.filter((template) => template.id !== target.id));
+                  setFailedTemplateCovers((current) => {
+                    const next = new Set(current);
+                    next.delete(target.id);
+                    return next;
+                  });
+                  addToast(
+                    'success',
+                    result.mode === 'archived'
+                      ? 'Published template removed from the marketplace.'
+                      : 'Draft deleted.',
+                  );
+                  setTemplateToDelete(null);
+                } catch (error) {
+                  addToast(
+                    'error',
+                    error instanceof Error ? error.message : 'Could not delete the template.',
+                  );
+                } finally {
+                  setDeletingTemplate(false);
+                }
+              }}
+            >
+              {deletingTemplate ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Delete
             </Button>
           </div>

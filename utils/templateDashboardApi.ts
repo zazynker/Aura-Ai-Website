@@ -23,7 +23,6 @@ export interface CreatorTemplateCard {
   uses: number;
   creditsEarned: number;
   feedback?: string;
-  secondaryStatus?: 'Draft update' | 'Update in review' | 'Update changes requested';
 }
 
 interface TemplateRow {
@@ -37,9 +36,6 @@ interface TemplateRow {
   cover_type: string;
   status: 'draft' | 'pending_review' | 'published' | 'rejected';
   current_version_id: string | null;
-  draft_version_id: string | null;
-  submitted_version_id: string | null;
-  review_status: string | null;
   updated_at: string;
   use_count: number | string | null;
 }
@@ -57,31 +53,12 @@ function workflowStepCount(workflow: unknown): number {
   return Array.isArray(steps) ? steps.length : 0;
 }
 
-function getSecondaryStatus(
-  template: TemplateRow,
-): CreatorTemplateCard['secondaryStatus'] {
-  if (template.current_version_id) {
-    if (template.draft_version_id) return 'Draft update';
-    if (template.review_status === 'pending') return 'Update in review';
-    if (template.review_status === 'rejected') return 'Update changes requested';
-    return undefined;
-  }
-
-  // A first publication may still have an older submitted version under
-  // review while the creator edits a newer draft. Keep the primary status as
-  // "In review" and surface the additional draft separately.
-  if (template.submitted_version_id && template.draft_version_id) {
-    return 'Draft update';
-  }
-  return undefined;
-}
-
 export async function fetchCreatorTemplates(
   userId: string,
 ): Promise<CreatorTemplateCard[]> {
   const { data: templateData, error: templateError } = await supabase
     .from('templates')
-    .select('id,slug,name,display_name,image_url,thumb_url,cover_url,cover_type,status,current_version_id,draft_version_id,submitted_version_id,review_status,updated_at,use_count')
+    .select('id,slug,name,display_name,image_url,thumb_url,cover_url,cover_type,status,current_version_id,updated_at,use_count')
     .eq('creator_id', userId)
     .in('status', ['draft', 'pending_review', 'published', 'rejected'])
     .like('template_kind', 'workflow_%')
@@ -94,11 +71,8 @@ export async function fetchCreatorTemplates(
   if (templates.length === 0) return [];
 
   const templateIds = templates.map((template) => template.id);
-  const displayVersionId = (template: TemplateRow) => template.current_version_id
-    || template.draft_version_id
-    || template.submitted_version_id;
   const versionIds = templates
-    .map(displayVersionId)
+    .map((template) => template.current_version_id)
     .filter((id): id is string => Boolean(id));
 
   const [versionsResult, logsResult, rewardsResult, coverAssetsResult] = await Promise.all([
@@ -114,13 +88,13 @@ export async function fetchCreatorTemplates(
       .in('template_id', templateIds)
       .order('created_at', { ascending: false }),
     supabase
-      .from('template_step_rewards')
+      .from('template_creator_rewards')
       .select('template_id,reward_credits')
       .eq('creator_id', userId)
       .in('template_id', templateIds),
     supabase
       .from('template_assets')
-      .select('template_id,version_id,asset_key,asset_type,public_url')
+      .select('template_id,asset_key,asset_type,public_url')
       .in('template_id', templateIds)
       .in('asset_key', ['cover-thumbnail', 'cover-original']),
   ]);
@@ -159,13 +133,13 @@ export async function fetchCreatorTemplates(
     }
   }
 
-  const coverAssetsByVersion = new Map<
+  const coverAssetsByTemplate = new Map<
     string,
     { thumbnail?: string; original?: string; originalType?: 'image' | 'video' }
   >();
   if (!coverAssetsResult.error) {
     for (const row of coverAssetsResult.data || []) {
-      const cover = coverAssetsByVersion.get(row.version_id) || {};
+      const cover = coverAssetsByTemplate.get(row.template_id) || {};
       if (row.asset_key === 'cover-thumbnail' && row.public_url) {
         cover.thumbnail = row.public_url;
       }
@@ -173,13 +147,12 @@ export async function fetchCreatorTemplates(
         cover.original = row.public_url;
         cover.originalType = row.asset_type === 'video' ? 'video' : 'image';
       }
-      coverAssetsByVersion.set(row.version_id, cover);
+      coverAssetsByTemplate.set(row.template_id, cover);
     }
   }
 
   return templates.map((template) => {
-    const selectedVersionId = displayVersionId(template);
-    const savedCover = selectedVersionId ? coverAssetsByVersion.get(selectedVersionId) : undefined;
+    const savedCover = coverAssetsByTemplate.get(template.id);
     const thumbnailUrl = savedCover?.thumbnail || template.thumb_url;
     const originalUrl = savedCover?.original || template.cover_url;
     return {
@@ -192,21 +165,26 @@ export async function fetchCreatorTemplates(
         : savedCover?.originalType || (template.cover_type === 'video' ? 'video' : 'image'),
       status: STATUS_LABELS[template.status],
       updatedAt: template.updated_at,
-      stepsCount: selectedVersionId
-        ? workflowStepCount(workflowByVersion.get(selectedVersionId))
+      stepsCount: template.current_version_id
+        ? workflowStepCount(workflowByVersion.get(template.current_version_id))
         : 0,
       uses: Number(template.use_count || 0),
       creditsEarned: creditsByTemplate.get(template.id) || 0,
       feedback: latestFeedbackByTemplate.get(template.id),
-      secondaryStatus: getSecondaryStatus(template),
     };
   });
+}
+
+export type DeleteCreatorTemplateMode = 'deleted' | 'archived';
+
+export interface DeleteCreatorTemplateResult {
+  mode: DeleteCreatorTemplateMode;
 }
 
 export async function deleteCreatorDraft(
   templateId: string,
   userId: string,
-): Promise<void> {
+): Promise<DeleteCreatorTemplateResult> {
   const { data: assets, error: assetError } = await supabase
     .from('template_assets')
     .select('storage_bucket,storage_path')
@@ -245,4 +223,45 @@ export async function deleteCreatorDraft(
     removeTemplateStorageObjects(TEMPLATE_PREVIEWS_BUCKET, previewPaths),
     removeTemplateStorageObjects(TEMPLATE_ASSETS_BUCKET, assetPaths),
   ]);
+
+  return { mode: 'deleted' };
+}
+
+async function archiveCreatorPublishedTemplate(
+  templateId: string,
+): Promise<DeleteCreatorTemplateResult> {
+  const { data, error } = await supabase.rpc('archive_creator_template', {
+    p_template_id: templateId,
+  });
+  if (error) {
+    throw new Error(`Could not remove the published template: ${error.message}`);
+  }
+
+  const result = data as { success?: boolean; error?: string } | null;
+  if (!result?.success) {
+    throw new Error(result?.error || 'The published template could not be removed.');
+  }
+
+  return { mode: 'archived' };
+}
+
+/**
+ * Removes a creator-owned workflow template from My Templates.
+ *
+ * Drafts are permanently deleted together with their unneeded storage files.
+ * Published templates are archived instead of hard-deleted so completed runs,
+ * creator rewards, notifications, and accounting history remain auditable.
+ */
+export async function deleteCreatorTemplate(
+  templateId: string,
+  userId: string,
+  status: CreatorTemplateStatus,
+): Promise<DeleteCreatorTemplateResult> {
+  if (status === 'Draft') {
+    return deleteCreatorDraft(templateId, userId);
+  }
+  if (status === 'Published') {
+    return archiveCreatorPublishedTemplate(templateId);
+  }
+  throw new Error('Only draft or published templates can be deleted here.');
 }
