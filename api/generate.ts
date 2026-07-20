@@ -11,7 +11,7 @@ const TEXT_AND_THINKING_USD_PER_MILLION = 3.0;
 const IMAGE_OUTPUT_USD_PER_MILLION = 60.0;
 const ESTIMATED_OVERHEAD_USD_PER_IMAGE = 0.005;
 
-const FAL_RUN_BASE_URL = "https://fal.run";
+const FAL_QUEUE_BASE_URL = "https://queue.fal.run";
 const FAL_GPT_IMAGE_2_TEXT_ENDPOINT = "openai/gpt-image-2";
 const FAL_GPT_IMAGE_2_EDIT_ENDPOINT = "openai/gpt-image-2/edit";
 const FAL_TEXT_INPUT_USD_PER_MILLION = 5.0;
@@ -32,6 +32,7 @@ const MAX_IMAGES = 4;
 const GENERATED_IMAGES_BUCKET = "generations";
 const GENERATED_IMAGE_FOLDER = "requests";
 const GENERATION_MANIFEST_NAME = "manifest.json";
+const PENDING_GENERATION_MANIFEST_NAME = "pending.json";
 
 // Estimated tokens per image for credit pre-check
 const ESTIMATED_TOKENS_PER_IMAGE: Record<string, number> = {
@@ -69,6 +70,37 @@ type FalImageOutput = {
   images?: FalImageFile[];
   usage?: FalUsage;
 };
+type FalQueueSubmitResult = {
+  requestId: string;
+  statusUrl?: string;
+  responseUrl?: string;
+  cancelUrl?: string;
+};
+type StoredFalPendingGeneration = {
+  version: 1;
+  provider: "fal-gpt-image-2";
+  clientRequestId: string;
+  falRequestId: string;
+  endpoint: string;
+  statusUrl?: string;
+  responseUrl?: string;
+  cancelUrl?: string;
+  submittedAt: string;
+  mode: FalImageMode;
+  quality: FalImageQuality;
+  falImageSize: FalImageSize;
+  requestedImageSize: string;
+  aspectRatio?: string;
+  requestedImages: number;
+  inputImageCount: number;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
+};
+type FalFinalizeResult =
+  | { state: "pending"; status: string }
+  | { state: "success"; payload: StoredGenerationManifest }
+  | { state: "failed"; statusCode: number; code: string; error: string };
 type FalCanonicalPrice = {
   width: number;
   height: number;
@@ -397,44 +429,114 @@ function unwrapFalOutput(payload: Record<string, unknown>): FalImageOutput {
     : payload as FalImageOutput;
 }
 
-async function callFalGptImage2(
+function falEndpointForMode(mode: FalImageMode): string {
+  return mode === "edit"
+    ? FAL_GPT_IMAGE_2_EDIT_ENDPOINT
+    : FAL_GPT_IMAGE_2_TEXT_ENDPOINT;
+}
+
+function getStringField(
+  payload: Record<string, unknown>,
+  snakeCase: string,
+  camelCase: string,
+): string | undefined {
+  const value = payload[snakeCase] ?? payload[camelCase];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function falErrorMessage(payload: Record<string, unknown>, fallback: string): string {
+  const detail = payload.detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (detail && typeof detail === "object") {
+    const nested = detail as Record<string, unknown>;
+    const message = nested.message ?? nested.error;
+    if (typeof message === "string" && message.trim()) return message.trim();
+  }
+  const message = payload.message ?? payload.error;
+  return typeof message === "string" && message.trim() ? message.trim() : fallback;
+}
+
+function normalizeFalQueueStatus(payload: Record<string, unknown>): string {
+  const raw = payload.status ?? payload.state ?? payload.queue_status ?? payload.queueStatus;
+  if (typeof raw !== "string") return "IN_PROGRESS";
+  const normalized = raw.trim().toUpperCase().replace(/[-\s]+/g, "_");
+  if (["SUCCESS", "SUCCEEDED", "COMPLETE", "DONE"].includes(normalized)) return "COMPLETED";
+  if (["RUNNING", "PROCESSING"].includes(normalized)) return "IN_PROGRESS";
+  if (["QUEUED", "PENDING"].includes(normalized)) return "IN_QUEUE";
+  if (normalized === "CANCELED") return "CANCELLED";
+  return normalized;
+}
+
+async function submitFalGptImage2(
   mode: FalImageMode,
   payload: Record<string, unknown>,
   falKey: string,
-): Promise<FalImageOutput> {
-  const endpoint = mode === "edit"
-    ? FAL_GPT_IMAGE_2_EDIT_ENDPOINT
-    : FAL_GPT_IMAGE_2_TEXT_ENDPOINT;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 55_000);
-  try {
-    const response = await fetch(`${FAL_RUN_BASE_URL}/${endpoint}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Key ${falKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-    const responsePayload = await readJsonResponse(response);
-    if (!response.ok) {
-      const message = String(
-        responsePayload.detail ||
-        responsePayload.message ||
-        responsePayload.error ||
-        response.statusText,
-      );
-      throw new Error(`Fal GPT Image 2 failed (${response.status}): ${message}`);
-    }
-    const output = unwrapFalOutput(responsePayload);
-    if (!Array.isArray(output.images) || output.images.length === 0) {
-      throw new Error("Fal GPT Image 2 returned no images.");
-    }
-    return output;
-  } finally {
-    clearTimeout(timer);
+): Promise<FalQueueSubmitResult> {
+  const endpoint = falEndpointForMode(mode);
+  const response = await fetch(`${FAL_QUEUE_BASE_URL}/${endpoint}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Key ${falKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+  const responsePayload = await readJsonResponse(response);
+  if (!response.ok) {
+    throw new Error(
+      `Fal GPT Image 2 queue submission failed (${response.status}): ${falErrorMessage(responsePayload, response.statusText)}`,
+    );
   }
+  const requestId = getStringField(responsePayload, "request_id", "requestId");
+  if (!requestId) throw new Error("Fal queue response did not include request_id.");
+  return {
+    requestId,
+    statusUrl: getStringField(responsePayload, "status_url", "statusUrl"),
+    responseUrl: getStringField(responsePayload, "response_url", "responseUrl"),
+    cancelUrl: getStringField(responsePayload, "cancel_url", "cancelUrl"),
+  };
+}
+
+async function getFalQueueStatus(
+  pending: StoredFalPendingGeneration,
+  falKey: string,
+): Promise<Record<string, unknown>> {
+  const url = pending.statusUrl ||
+    `${FAL_QUEUE_BASE_URL}/${pending.endpoint}/requests/${pending.falRequestId}/status?logs=1`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Key ${falKey}` },
+  });
+  const payload = await readJsonResponse(response);
+  if (!response.ok) {
+    throw new Error(
+      `Fal GPT Image 2 status failed (${response.status}): ${falErrorMessage(payload, response.statusText)}`,
+    );
+  }
+  return payload;
+}
+
+async function getFalQueueResult(
+  pending: StoredFalPendingGeneration,
+  falKey: string,
+): Promise<FalImageOutput> {
+  const url = pending.responseUrl ||
+    `${FAL_QUEUE_BASE_URL}/${pending.endpoint}/requests/${pending.falRequestId}`;
+  const response = await fetch(url, {
+    method: "GET",
+    headers: { Authorization: `Key ${falKey}` },
+  });
+  const payload = await readJsonResponse(response);
+  if (!response.ok) {
+    throw new Error(
+      `Fal GPT Image 2 result failed (${response.status}): ${falErrorMessage(payload, response.statusText)}`,
+    );
+  }
+  const output = unwrapFalOutput(payload);
+  if (!Array.isArray(output.images) || output.images.length === 0) {
+    throw new Error("Fal GPT Image 2 completed without returning any images.");
+  }
+  return output;
 }
 
 async function downloadFalImages(images: FalImageFile[]): Promise<GeneratedImagePayload[]> {
@@ -459,6 +561,161 @@ async function downloadFalImages(images: FalImageFile[]): Promise<GeneratedImage
     return { mimeType, base64: bytes.toString("base64") };
   }));
 }
+async function finalizeFalPendingGeneration(
+  supabase: any,
+  userId: string,
+  pending: StoredFalPendingGeneration,
+  falKey: string,
+): Promise<FalFinalizeResult> {
+  let statusPayload: Record<string, unknown>;
+  try {
+    statusPayload = await getFalQueueStatus(pending, falKey);
+  } catch (error) {
+    console.error("Fal image status check failed:", error);
+    return {
+      state: "failed",
+      statusCode: 502,
+      code: "FAL_STATUS_FAILED",
+      error: error instanceof Error ? error.message : "Could not check Fal image status.",
+    };
+  }
+
+  const status = normalizeFalQueueStatus(statusPayload);
+  const statusError = falErrorMessage(statusPayload, "");
+  console.log("Fal GPT Image 2 queue status:", {
+    clientRequestId: pending.clientRequestId,
+    falRequestId: pending.falRequestId,
+    endpoint: pending.endpoint,
+    status,
+  });
+
+  if (status === "IN_QUEUE" || status === "IN_PROGRESS") {
+    return { state: "pending", status };
+  }
+
+  if (status === "FAILED" || status === "CANCELLED" || statusError) {
+    await deletePendingFalGeneration(supabase, userId, pending.clientRequestId);
+    return {
+      state: "failed",
+      statusCode: 422,
+      code: status === "CANCELLED" ? "FAL_CANCELLED" : "FAL_GENERATION_FAILED",
+      error: statusError || "Fal image generation failed. No Lazora credits were deducted.",
+    };
+  }
+
+  if (status !== "COMPLETED") {
+    return { state: "pending", status: status || "IN_PROGRESS" };
+  }
+
+  try {
+    const falOutput = await getFalQueueResult(pending, falKey);
+    const falImages = (falOutput.images || []).slice(0, pending.requestedImages);
+    const generatedImages = await downloadFalImages(falImages);
+    const imageUrls = await uploadGeneratedImages(
+      supabase,
+      userId,
+      pending.clientRequestId,
+      generatedImages,
+    );
+
+    const tokenBreakdown = falUsageToTokenBreakdown(falOutput.usage);
+    const usageCostUsd = calculateFalUsageCostUsd(falOutput.usage);
+    const fallbackCostUsd = estimateFalCostUsd(
+      pending.mode,
+      pending.quality,
+      pending.falImageSize,
+      pending.requestedImageSize,
+      pending.aspectRatio,
+      imageUrls.length,
+      pending.inputImageCount,
+      falImages,
+    );
+    const actualCostUsd = usageCostUsd ?? fallbackCostUsd;
+    const creditsToDeduct = Math.max(1, Math.ceil(actualCostUsd * USD_TO_CREDITS));
+
+    const { data: deductResult, error: deductError } = await supabase.rpc(
+      "deduct_generation_credits",
+      {
+        p_user_id: userId,
+        p_amount: creditsToDeduct,
+        p_request_id: pending.clientRequestId,
+        p_template_run_id: pending.templateRunId || null,
+        p_template_step_id: pending.templateStepId || null,
+        p_capability: pending.templateCapability || null,
+      },
+    );
+    const deductionSucceeded =
+      !deductError && deductResult && deductResult.success === true;
+    if (!deductionSucceeded) {
+      console.error("Fal image credit deduction failed:", {
+        requestId: pending.clientRequestId,
+        deductError: deductError?.message,
+        deductResult,
+        creditsToDeduct,
+      });
+      await deleteStoredGenerationArtifacts(supabase, userId, pending.clientRequestId);
+      await deletePendingFalGeneration(supabase, userId, pending.clientRequestId);
+      const insufficientCredits =
+        !deductError && deductResult?.error === "Insufficient credits";
+      return {
+        state: "failed",
+        statusCode: insufficientCredits ? 402 : 500,
+        code: insufficientCredits ? "INSUFFICIENT_CREDITS" : "CREDIT_DEDUCTION_FAILED",
+        error: insufficientCredits
+          ? "Your credit balance changed while the image was generating. No image was delivered."
+          : "Unable to charge credits. No image was delivered.",
+      };
+    }
+
+    const responsePayload: StoredGenerationManifest = {
+      success: true,
+      images: imageUrls,
+      text: "",
+      count: imageUrls.length,
+      imageSize: pending.requestedImageSize,
+      tokensUsed: tokenBreakdown.totalTokens,
+      tokenBreakdown,
+      actualCostUsd,
+      creditsUsed: creditsToDeduct,
+      creditsDeducted: Number(deductResult.credits_deducted) || 0,
+      eligiblePaidCredits: Number(deductResult.eligible_paid_credits) || 0,
+      creditDeductionId: typeof deductResult.deduction_id === "string"
+        ? deductResult.deduction_id
+        : undefined,
+      newCredits: Number(deductResult.new_balance ?? deductResult.new_credits ?? 0),
+      requestId: pending.clientRequestId,
+      recovered: true,
+      provider: pending.mode === "edit" ? "fal-gpt-image-2-edit" : "fal-gpt-image-2",
+      quality: pending.quality,
+    };
+
+    await saveGenerationManifest(
+      supabase,
+      userId,
+      pending.clientRequestId,
+      responsePayload,
+    );
+    await deletePendingFalGeneration(supabase, userId, pending.clientRequestId);
+    return { state: "success", payload: responsePayload };
+  } catch (error) {
+    console.error("Fal image finalization failed:", error);
+    const storedManifest = await readGenerationManifest(
+      supabase,
+      userId,
+      pending.clientRequestId,
+    );
+    if (storedManifest) return { state: "success", payload: storedManifest };
+    return {
+      state: "failed",
+      statusCode: 500,
+      code: "FAL_RESULT_FINALIZATION_FAILED",
+      error: error instanceof Error
+        ? error.message
+        : "The image finished generating but could not be finalized.",
+    };
+  }
+}
+
 // ====================================================
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -527,17 +784,68 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
+  const pendingFalGeneration = await readPendingFalGeneration(
+    supabase,
+    user.id,
+    requestId,
+  );
+  if (pendingFalGeneration) {
+    const falKey = process.env.FAL_KEY;
+    if (!falKey) {
+      return res.status(500).json({
+        success: false,
+        code: "CONFIG_ERROR",
+        error: "Fal API key not configured",
+        requestId,
+      });
+    }
+    const finalized = await finalizeFalPendingGeneration(
+      supabase,
+      user.id,
+      pendingFalGeneration,
+      falKey,
+    );
+    if (finalized.state === "success") {
+      return res.status(200).json(finalized.payload);
+    }
+    if (finalized.state === "pending") {
+      return res.status(202).json({
+        success: false,
+        pending: true,
+        status: finalized.status,
+        code: "RESULT_NOT_READY",
+        error: "Your image is still generating.",
+        requestId,
+      });
+    }
+    return res.status(finalized.statusCode).json({
+      success: false,
+      code: finalized.code,
+      error: finalized.error,
+      requestId,
+    });
+  }
+
   const existingImages = await findStoredGeneratedImages(
     supabase,
     user.id,
     requestId,
   );
-  if (existingImages.length > 0 || body.recoverOnly) {
+  if (existingImages.length > 0) {
     return res.status(202).json({
       success: false,
       pending: true,
-      code: "RESULT_NOT_READY",
-      error: "The generation result is still being finalized.",
+      code: "RESULT_FINALIZING",
+      error: "The generated image is being finalized.",
+      requestId,
+    });
+  }
+  if (body.recoverOnly) {
+    return res.status(404).json({
+      success: false,
+      pending: false,
+      code: "REQUEST_NOT_FOUND",
+      error: "No recoverable image request was found.",
       requestId,
     });
   }
@@ -763,131 +1071,59 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         inputImageCount: inputImageUrls.length,
       });
 
-      const falOutput = await callFalGptImage2(mode, falPayload, falKey as string);
-      const falImages = (falOutput.images || []).slice(0, validatedNumberOfImages);
-      const generatedImages = await downloadFalImages(falImages);
-
-      let imageUrls: string[];
-      try {
-        imageUrls = await uploadGeneratedImages(
-          supabase,
-          user.id,
-          requestId,
-          generatedImages,
-        );
-      } catch (uploadError) {
-        console.error("Fal generated image upload failed:", uploadError);
-        return res.status(500).json({
-          success: false,
-          error: "The image was generated but could not be saved. No credits were deducted.",
-          code: "RESULT_UPLOAD_FAILED",
-          requestId,
-        });
-      }
-
-      const tokenBreakdown = falUsageToTokenBreakdown(falOutput.usage);
-      const usageCostUsd = calculateFalUsageCostUsd(falOutput.usage);
-      const fallbackCostUsd = estimateFalCostUsd(
+      const falJob = await submitFalGptImage2(
         mode,
-        normalizedQuality,
-        falImageSize,
-        imageSize,
-        aspectRatio,
-        imageUrls.length,
-        inputImageUrls.length,
-        falImages,
+        falPayload,
+        falKey as string,
       );
-      const actualCostUsd = usageCostUsd ?? fallbackCostUsd;
-      const creditsToDeduct = Math.max(1, Math.ceil(actualCostUsd * USD_TO_CREDITS));
-
-      console.log("Fal GPT Image 2 settlement:", {
-        requestId,
-        usageAvailable: usageCostUsd !== null,
-        actualCostUsd,
-        creditsToDeduct,
-        outputCount: imageUrls.length,
-      });
-
-      let newCredits = userData.credits;
-      let creditsDeducted = 0;
-      let eligiblePaidCredits = 0;
-      let creditDeductionId: string | undefined;
-
-      const { data: deductResult, error: deductError } = await supabase.rpc(
-        "deduct_generation_credits",
-        {
-          p_user_id: user.id,
-          p_amount: creditsToDeduct,
-          p_request_id: requestId,
-          p_template_run_id: body.templateRunId || null,
-          p_template_step_id: body.templateStepId || null,
-          p_capability: body.templateCapability || null,
-        },
-      );
-      const deductionSucceeded =
-        !deductError && deductResult && deductResult.success === true;
-      if (!deductionSucceeded) {
-        console.error("Fal image credit deduction failed:", {
-          requestId,
-          deductError: deductError?.message,
-          deductResult,
-          creditsToDeduct,
-        });
-        await deleteStoredGenerationArtifacts(supabase, user.id, requestId);
-        const insufficientCredits =
-          !deductError && deductResult?.error === "Insufficient credits";
-        return res.status(insufficientCredits ? 402 : 500).json({
-          success: false,
-          code: insufficientCredits ? "INSUFFICIENT_CREDITS" : "CREDIT_DEDUCTION_FAILED",
-          error: insufficientCredits
-            ? "Your credit balance changed before checkout. No image was delivered."
-            : "Unable to charge credits. No image was delivered.",
-          creditsDeducted: 0,
-          requestId,
-        });
-      }
-
-      creditsDeducted = Number(deductResult.credits_deducted) || 0;
-      eligiblePaidCredits = Number(deductResult.eligible_paid_credits) || 0;
-      creditDeductionId = typeof deductResult.deduction_id === "string"
-        ? deductResult.deduction_id
-        : undefined;
-      newCredits = Number(
-        deductResult.new_balance ?? deductResult.new_credits ?? newCredits,
-      );
-
-      const responsePayload: StoredGenerationManifest = {
-        success: true,
-        images: imageUrls,
-        text: "",
-        count: imageUrls.length,
-        imageSize,
-        tokensUsed: tokenBreakdown.totalTokens,
-        tokenBreakdown,
-        actualCostUsd,
-        creditsUsed: creditsToDeduct,
-        creditsDeducted,
-        eligiblePaidCredits,
-        creditDeductionId,
-        newCredits,
-        requestId,
-        recovered: false,
-        provider: mode === "edit" ? "fal-gpt-image-2-edit" : "fal-gpt-image-2",
+      const pendingGeneration: StoredFalPendingGeneration = {
+        version: 1,
+        provider: "fal-gpt-image-2",
+        clientRequestId: requestId,
+        falRequestId: falJob.requestId,
+        endpoint: falEndpointForMode(mode),
+        statusUrl: falJob.statusUrl,
+        responseUrl: falJob.responseUrl,
+        cancelUrl: falJob.cancelUrl,
+        submittedAt: new Date().toISOString(),
+        mode,
         quality: normalizedQuality,
+        falImageSize,
+        requestedImageSize: imageSize,
+        aspectRatio,
+        requestedImages: validatedNumberOfImages,
+        inputImageCount: inputImageUrls.length,
+        templateRunId: body.templateRunId,
+        templateStepId: body.templateStepId,
+        templateCapability: body.templateCapability,
       };
 
       try {
-        await saveGenerationManifest(
+        await savePendingFalGeneration(
           supabase,
           user.id,
           requestId,
-          responsePayload,
+          pendingGeneration,
         );
-      } catch (manifestError) {
-        console.error("Failed to save Fal generation manifest:", manifestError);
+      } catch (pendingSaveError) {
+        console.error("Unable to save Fal pending request:", pendingSaveError);
+        return res.status(500).json({
+          success: false,
+          code: "PENDING_REQUEST_SAVE_FAILED",
+          error: "The Fal request was submitted but Lazora could not save its recovery record. Do not submit another request yet.",
+          requestId,
+          falRequestId: falJob.requestId,
+        });
       }
 
-      return res.status(200).json(responsePayload);
+      return res.status(202).json({
+        success: false,
+        pending: true,
+        status: "IN_QUEUE",
+        code: "GENERATION_QUEUED",
+        error: "Your image request was queued and is still generating.",
+        requestId,
+      });
     }
 
     // Build the request content parts
@@ -1418,7 +1654,7 @@ async function uploadGeneratedImages(
           .upload(path, bytes, {
             contentType: image.mimeType,
             cacheControl: "31536000",
-            upsert: false,
+            upsert: true,
           });
 
         if (error) {
@@ -1489,6 +1725,66 @@ async function deleteStoredGenerationArtifacts(
     fileCount: paths.length,
   });
   return true;
+}
+
+async function savePendingFalGeneration(
+  supabase: any,
+  userId: string,
+  requestId: string,
+  pending: StoredFalPendingGeneration,
+): Promise<void> {
+  const folder = getGeneratedRequestFolder(userId, requestId);
+  const path = `${folder}/${PENDING_GENERATION_MANIFEST_NAME}`;
+  const bytes = Buffer.from(JSON.stringify(pending), "utf8");
+  const { error } = await supabase.storage
+    .from(GENERATED_IMAGES_BUCKET)
+    .upload(path, bytes, {
+      contentType: "application/json",
+      cacheControl: "no-cache",
+      upsert: true,
+    });
+  if (error) throw new Error(`Pending request upload failed: ${error.message}`);
+}
+
+async function readPendingFalGeneration(
+  supabase: any,
+  userId: string,
+  requestId: string,
+): Promise<StoredFalPendingGeneration | null> {
+  const folder = getGeneratedRequestFolder(userId, requestId);
+  const path = `${folder}/${PENDING_GENERATION_MANIFEST_NAME}`;
+  const { data, error } = await supabase.storage
+    .from(GENERATED_IMAGES_BUCKET)
+    .download(path);
+  if (error || !data) return null;
+  try {
+    const parsed = JSON.parse(await data.text()) as StoredFalPendingGeneration;
+    if (
+      parsed?.version === 1 &&
+      parsed.provider === "fal-gpt-image-2" &&
+      parsed.clientRequestId === requestId &&
+      typeof parsed.falRequestId === "string" &&
+      [FAL_GPT_IMAGE_2_TEXT_ENDPOINT, FAL_GPT_IMAGE_2_EDIT_ENDPOINT].includes(parsed.endpoint)
+    ) {
+      return parsed;
+    }
+  } catch (error) {
+    console.warn("Unable to parse Fal pending generation:", error);
+  }
+  return null;
+}
+
+async function deletePendingFalGeneration(
+  supabase: any,
+  userId: string,
+  requestId: string,
+): Promise<void> {
+  const folder = getGeneratedRequestFolder(userId, requestId);
+  const path = `${folder}/${PENDING_GENERATION_MANIFEST_NAME}`;
+  const { error } = await supabase.storage
+    .from(GENERATED_IMAGES_BUCKET)
+    .remove([path]);
+  if (error) console.warn("Unable to remove Fal pending request:", error.message);
 }
 
 async function saveGenerationManifest(

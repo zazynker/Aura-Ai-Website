@@ -35,6 +35,7 @@ export interface GenerateResult {
   quality?: string;
   requestId?: string;
   recovered?: boolean;
+  pending?: boolean;
   templateRunId?: string;
   templateStepId?: string;
   templateCapability?: string;
@@ -66,8 +67,8 @@ const ERROR_MESSAGES: Record<number, string> = {
   504: "The request timed out. Checking whether your image was already saved…",
 };
 
-const IMAGE_RECOVERY_ATTEMPTS = 5;
-const IMAGE_RECOVERY_DELAY_MS = 1500;
+const IMAGE_RECOVERY_ATTEMPTS = 180;
+const IMAGE_RECOVERY_DELAY_MS = 3000;
 
 const imageSleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
@@ -124,8 +125,10 @@ async function recoverGeneratedImages(
   requestId: string,
   context?: TemplateGenerationContext | null,
 ): Promise<GenerateResult | null> {
+  let consecutiveNotFound = 0;
+
   for (let attempt = 1; attempt <= IMAGE_RECOVERY_ATTEMPTS; attempt += 1) {
-    await imageSleep(IMAGE_RECOVERY_DELAY_MS * attempt);
+    if (attempt > 1) await imageSleep(IMAGE_RECOVERY_DELAY_MS);
 
     try {
       const response = await fetch("/api/generate", {
@@ -141,38 +144,85 @@ async function recoverGeneratedImages(
         }),
       });
 
-      if (response.status === 202) {
-        continue;
-      }
-
       const data = (await response
         .json()
         .catch(() => null)) as GenerateApiResponse | null;
+
+      if (response.status === 202 || data?.pending) {
+        consecutiveNotFound = 0;
+        console.log("Image generation is still pending:", {
+          requestId,
+          attempt,
+          status: (data as GenerateApiResponse & { status?: string } | null)?.status,
+        });
+        continue;
+      }
+
+      if (response.status === 404 && data?.code === "REQUEST_NOT_FOUND") {
+        consecutiveNotFound += 1;
+        // The initial submit response may have been interrupted while the server
+        // was still persisting the Fal recovery record. Allow a few short retries.
+        if (consecutiveNotFound < 4) continue;
+        return addTemplateContext({
+          success: false,
+          error: "The image request could not be found. Please submit it again.",
+          requestId,
+        }, context);
+      }
+
       if (
         response.ok &&
         data?.success &&
         Array.isArray(data.images) &&
         data.images.length > 0
       ) {
-        console.log(
-          "Recovered generated image URLs after interrupted response:",
-          {
-            requestId,
-            imageCount: data.images.length,
-            attempt,
-          },
-        );
+        console.log("Recovered completed image generation:", {
+          requestId,
+          imageCount: data.images.length,
+          attempt,
+        });
         return addTemplateContext(normalizeGenerateResponse(data), context);
+      }
+
+      if (!response.ok || data?.error) {
+        const retryable = [500, 502, 503, 504].includes(response.status) ||
+          data?.code === "FAL_STATUS_FAILED" ||
+          data?.code === "FAL_RESULT_FINALIZATION_FAILED";
+        if (retryable && attempt < IMAGE_RECOVERY_ATTEMPTS) {
+          console.warn("Image finalization is temporarily unavailable; retrying the same request:", {
+            requestId,
+            attempt,
+            status: response.status,
+            code: data?.code,
+          });
+          continue;
+        }
+        return addTemplateContext({
+          success: false,
+          error:
+            data?.error ||
+            ERROR_MESSAGES[response.status] ||
+            `Image generation failed (Error ${response.status}).`,
+          requestId,
+        }, context);
       }
     } catch (recoveryError) {
       console.warn(
-        `Image result recovery attempt ${attempt} failed:`,
+        `Image result polling attempt ${attempt} failed:`,
         recoveryError,
       );
+      // A transient browser/network failure should not create a second Fal job.
+      // Keep polling the same requestId until the overall polling window expires.
     }
   }
 
-  return null;
+  return addTemplateContext({
+    success: false,
+    pending: true,
+    error:
+      "The image is still processing and could not be confirmed within 9 minutes. Do not submit it again immediately; check Fal request history or try this page again later.",
+    requestId,
+  }, context);
 }
 
 /**
@@ -243,6 +293,21 @@ export async function generateImages(
         ...(templateContext || {}),
       }),
     });
+
+    if (response.status === 202) {
+      console.log("Image request accepted by the queue:", { requestId });
+      const completed = await recoverGeneratedImages(
+        session.access_token,
+        requestId,
+        templateContext,
+      );
+      if (completed) {
+        if (!completed.success && !completed.pending) {
+          await safelyFailTemplateGeneration(templateContext, completed.error);
+        }
+        return completed;
+      }
+    }
 
     if (!response.ok) {
       const errorData = (await response
@@ -329,7 +394,7 @@ export async function generateImages(
     const failure = {
       success: false,
       error:
-        "The connection was interrupted before the result could be confirmed. No new request was submitted. Please try again.",
+        "The connection was interrupted and Lazora could not confirm the image result. The same request was checked repeatedly, so do not submit a duplicate immediately.",
       requestId,
     };
     await safelyFailTemplateGeneration(templateContext, failure.error);
