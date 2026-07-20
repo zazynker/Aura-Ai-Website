@@ -15,6 +15,7 @@ export interface GenerateOptions {
   numberOfImages?: number;
   imageSize?: "512" | "1K" | "2K" | "4K";
   aspectRatio?: string;
+  quality?: "low" | "medium" | "high";
 }
 
 export interface GenerateResult {
@@ -30,6 +31,8 @@ export interface GenerateResult {
   creditDeductionId?: string;
   newCredits?: number;
   actualCostUsd?: number;
+  provider?: string;
+  quality?: string;
   requestId?: string;
   recovered?: boolean;
   templateRunId?: string;
@@ -90,6 +93,8 @@ const normalizeGenerateResponse = (
   creditDeductionId: data.creditDeductionId,
   newCredits: typeof data.newCredits === "number" ? data.newCredits : undefined,
   actualCostUsd: Number(data.actualCostUsd) || 0,
+  provider: data.provider,
+  quality: data.quality,
   requestId: data.requestId,
   recovered: Boolean(data.recovered),
   tokenBreakdown: data.tokenBreakdown,
@@ -187,6 +192,7 @@ export async function generateImages(
     numberOfImages = 1,
     imageSize = "1K",
     aspectRatio,
+    quality = "medium",
   } = options;
 
   console.log("=== generateImages called ===");
@@ -194,6 +200,8 @@ export async function generateImages(
   console.log("Has base image:", !!imageUrl);
   console.log("Has product image:", !!productImageUrl);
   console.log("Image size:", imageSize);
+  console.log("Capability:", capability || "image.modify");
+  console.log("Quality:", quality);
 
   const {
     data: { session },
@@ -229,6 +237,8 @@ export async function generateImages(
         numberOfImages,
         imageSize,
         aspectRatio,
+        capability,
+        quality,
         requestId,
         ...(templateContext || {}),
       }),

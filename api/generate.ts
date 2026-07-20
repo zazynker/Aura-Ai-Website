@@ -1,6 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { createClient } from "@supabase/supabase-js";
 
+export const config = { maxDuration: 60 };
+
 const GEMINI_API_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent";
 const USD_TO_CREDITS = 195;
@@ -8,6 +10,16 @@ const INPUT_USD_PER_MILLION = 0.5;
 const TEXT_AND_THINKING_USD_PER_MILLION = 3.0;
 const IMAGE_OUTPUT_USD_PER_MILLION = 60.0;
 const ESTIMATED_OVERHEAD_USD_PER_IMAGE = 0.005;
+
+const FAL_RUN_BASE_URL = "https://fal.run";
+const FAL_GPT_IMAGE_2_TEXT_ENDPOINT = "openai/gpt-image-2";
+const FAL_GPT_IMAGE_2_EDIT_ENDPOINT = "openai/gpt-image-2/edit";
+const FAL_TEXT_INPUT_USD_PER_MILLION = 5.0;
+const FAL_TEXT_OUTPUT_USD_PER_MILLION = 10.0;
+const FAL_IMAGE_INPUT_USD_PER_MILLION = 8.0;
+const FAL_IMAGE_OUTPUT_USD_PER_MILLION = 30.0;
+const FAL_MIN_EXTRA_INPUT_IMAGE_USD = 0.006;
+const FAL_MAX_TOTAL_PIXELS = 8_294_400;
 
 // Initialize Supabase client for user verification
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -37,6 +49,33 @@ type TokenBreakdown = {
   totalTokens: number;
 };
 type GeneratedImagePayload = { base64: string; mimeType: string };
+type FalImageQuality = "low" | "medium" | "high";
+type FalImageMode = "text" | "edit";
+type FalImageSize = string | { width: number; height: number };
+type FalImageFile = {
+  url?: unknown;
+  content_type?: unknown;
+  width?: unknown;
+  height?: unknown;
+};
+type FalUsage = {
+  input_tokens?: unknown;
+  output_tokens?: unknown;
+  total_tokens?: unknown;
+  input_tokens_details?: { image_tokens?: unknown; text_tokens?: unknown };
+  output_tokens_details?: { image_tokens?: unknown; text_tokens?: unknown };
+};
+type FalImageOutput = {
+  images?: FalImageFile[];
+  usage?: FalUsage;
+};
+type FalCanonicalPrice = {
+  width: number;
+  height: number;
+  low: number;
+  medium: number;
+  high: number;
+};
 type StoredGenerationManifest = {
   success: true;
   images: string[];
@@ -53,6 +92,8 @@ type StoredGenerationManifest = {
   newCredits?: number;
   requestId: string;
   recovered: boolean;
+  provider?: string;
+  quality?: FalImageQuality;
 };
 type GenerateRequestBody = {
   prompt?: string;
@@ -61,6 +102,8 @@ type GenerateRequestBody = {
   numberOfImages?: number;
   imageSize?: string;
   aspectRatio?: string;
+  capability?: string;
+  quality?: FalImageQuality;
   requestId?: string;
   recoverOnly?: boolean;
   templateRunId?: string;
@@ -124,6 +167,297 @@ function estimateImageCredits(size: string, count: number): number {
   return Math.ceil(
     (imageCost + ESTIMATED_OVERHEAD_USD_PER_IMAGE * count) * USD_TO_CREDITS,
   );
+}
+
+
+const FAL_GPT_IMAGE_2_PRICES: Record<FalImageMode, FalCanonicalPrice[]> = {
+  text: [
+    { width: 1024, height: 768, low: 0.005, medium: 0.037, high: 0.145 },
+    { width: 1024, height: 1024, low: 0.006, medium: 0.053, high: 0.211 },
+    { width: 1024, height: 1536, low: 0.005, medium: 0.042, high: 0.165 },
+    { width: 1920, height: 1080, low: 0.005, medium: 0.040, high: 0.158 },
+    { width: 2560, height: 1440, low: 0.007, medium: 0.056, high: 0.222 },
+    { width: 3840, height: 2160, low: 0.012, medium: 0.101, high: 0.401 },
+  ],
+  edit: [
+    { width: 1024, height: 768, low: 0.011, medium: 0.043, high: 0.151 },
+    { width: 1024, height: 1024, low: 0.015, medium: 0.061, high: 0.219 },
+    { width: 1024, height: 1536, low: 0.018, medium: 0.054, high: 0.178 },
+    { width: 1920, height: 1080, low: 0.017, medium: 0.053, high: 0.158 },
+    { width: 2560, height: 1440, low: 0.019, medium: 0.068, high: 0.234 },
+    { width: 3840, height: 2160, low: 0.024, medium: 0.113, high: 0.413 },
+  ],
+};
+
+function isFalGptImage2Capability(capability: unknown): boolean {
+  return capability === "image.text_to_image" || capability === "image.replace_product";
+}
+
+function normalizeFalQuality(value: unknown): FalImageQuality {
+  return value === "low" || value === "high" ? value : "medium";
+}
+
+function resolveFalMode(body: GenerateRequestBody): FalImageMode {
+  if (body.capability === "image.replace_product") return "edit";
+  return body.imageUrl || body.productImageUrl ? "edit" : "text";
+}
+
+function roundToMultipleOf16(value: number): number {
+  return Math.max(16, Math.round(value / 16) * 16);
+}
+
+function requestedFalDimensions(
+  imageSize: string,
+  aspectRatio = "1:1",
+): { width: number; height: number } {
+  const longEdgeBySize: Record<string, number> = {
+    "512": 512,
+    "1K": 1024,
+    "2K": 2048,
+    "4K": 3840,
+  };
+  const match = aspectRatio.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+  const ratio = match
+    ? Math.max(1 / 3, Math.min(3, Number(match[1]) / Number(match[2])))
+    : 1;
+  const longEdge = longEdgeBySize[imageSize] || 1024;
+  let width = ratio >= 1 ? longEdge : longEdge * ratio;
+  let height = ratio >= 1 ? longEdge / ratio : longEdge;
+
+  if (width * height > FAL_MAX_TOTAL_PIXELS) {
+    const scale = Math.sqrt(FAL_MAX_TOTAL_PIXELS / (width * height));
+    width *= scale;
+    height *= scale;
+  }
+
+  return {
+    width: roundToMultipleOf16(width),
+    height: roundToMultipleOf16(height),
+  };
+}
+
+function toFalImageSize(
+  imageSize: string,
+  aspectRatio: string | undefined,
+  mode: FalImageMode,
+): FalImageSize {
+  if (mode === "edit" && !aspectRatio) return "auto";
+
+  if (imageSize === "1K") {
+    const presets: Record<string, string> = {
+      "1:1": "square_hd",
+      "4:3": "landscape_4_3",
+      "3:4": "portrait_4_3",
+      "16:9": "landscape_16_9",
+      "9:16": "portrait_16_9",
+    };
+    const preset = presets[aspectRatio || "1:1"];
+    if (preset) return preset;
+  }
+  if (imageSize === "512" && (!aspectRatio || aspectRatio === "1:1")) {
+    return "square";
+  }
+
+  return requestedFalDimensions(imageSize, aspectRatio || "1:1");
+}
+
+function dimensionsForFalSize(
+  imageSize: FalImageSize,
+  fallbackSize: string,
+  fallbackRatio: string | undefined,
+): { width: number; height: number } {
+  if (typeof imageSize === "object") return imageSize;
+  const presets: Record<string, { width: number; height: number }> = {
+    square: { width: 512, height: 512 },
+    square_hd: { width: 1024, height: 1024 },
+    portrait_4_3: { width: 768, height: 1024 },
+    portrait_16_9: { width: 576, height: 1024 },
+    landscape_4_3: { width: 1024, height: 768 },
+    landscape_16_9: { width: 1024, height: 576 },
+    auto: { width: 1024, height: 1024 },
+  };
+  return presets[imageSize] || requestedFalDimensions(fallbackSize, fallbackRatio || "1:1");
+}
+
+function closestFalCanonicalPrice(
+  mode: FalImageMode,
+  width: number,
+  height: number,
+): FalCanonicalPrice {
+  const area = Math.max(1, width * height);
+  const ratio = Math.max(0.01, width / Math.max(1, height));
+  return FAL_GPT_IMAGE_2_PRICES[mode].reduce((best, candidate) => {
+    const candidateArea = candidate.width * candidate.height;
+    const candidateRatio = candidate.width / candidate.height;
+    const candidateScore =
+      Math.abs(Math.log(area / candidateArea)) +
+      0.35 * Math.abs(Math.log(ratio / candidateRatio));
+    const bestArea = best.width * best.height;
+    const bestRatio = best.width / best.height;
+    const bestScore =
+      Math.abs(Math.log(area / bestArea)) +
+      0.35 * Math.abs(Math.log(ratio / bestRatio));
+    return candidateScore < bestScore ? candidate : best;
+  });
+}
+
+function estimateFalCostUsd(
+  mode: FalImageMode,
+  quality: FalImageQuality,
+  imageSize: FalImageSize,
+  fallbackSize: string,
+  fallbackRatio: string | undefined,
+  imageCount: number,
+  inputImageCount: number,
+  outputMetadata?: FalImageFile[],
+): number {
+  const fallbackDimensions = dimensionsForFalSize(
+    imageSize,
+    fallbackSize,
+    fallbackRatio,
+  );
+  const count = Math.max(1, Math.floor(imageCount));
+  let outputCost = 0;
+  for (let index = 0; index < count; index += 1) {
+    const metadata = outputMetadata?.[index];
+    const width = Number(metadata?.width) || fallbackDimensions.width;
+    const height = Number(metadata?.height) || fallbackDimensions.height;
+    const canonical = closestFalCanonicalPrice(mode, width, height);
+    const textCanonical = closestFalCanonicalPrice("text", width, height);
+    const extraInputImageCostUsd = mode === "edit"
+      ? Math.max(FAL_MIN_EXTRA_INPUT_IMAGE_USD, canonical[quality] - textCanonical[quality])
+      : 0;
+    outputCost += canonical[quality] +
+      Math.max(0, inputImageCount - 1) * extraInputImageCostUsd;
+  }
+  return outputCost;
+}
+
+function estimateFalCredits(body: GenerateRequestBody, imageCount: number): number {
+  const mode = resolveFalMode(body);
+  const quality = normalizeFalQuality(body.quality);
+  const imageSize = toFalImageSize(body.imageSize || "1K", body.aspectRatio, mode);
+  const inputImageCount = [body.imageUrl, body.productImageUrl].filter(Boolean).length;
+  const costUsd = estimateFalCostUsd(
+    mode,
+    quality,
+    imageSize,
+    body.imageSize || "1K",
+    body.aspectRatio,
+    imageCount,
+    inputImageCount,
+  );
+  return Math.max(1, Math.ceil(costUsd * USD_TO_CREDITS));
+}
+
+function falUsageToTokenBreakdown(usage: FalUsage | undefined): TokenBreakdown {
+  if (!usage) return emptyTokenBreakdown();
+  const outputDetails = usage.output_tokens_details;
+  return {
+    inputTokens: Number(usage.input_tokens) || 0,
+    outputTextTokens: Number(outputDetails?.text_tokens) || 0,
+    outputImageTokens: Number(outputDetails?.image_tokens) || 0,
+    thinkingTokens: 0,
+    totalTokens: Number(usage.total_tokens) || 0,
+  };
+}
+
+function calculateFalUsageCostUsd(usage: FalUsage | undefined): number | null {
+  if (!usage) return null;
+  const inputDetails = usage.input_tokens_details;
+  const outputDetails = usage.output_tokens_details;
+  const inputText = Number(inputDetails?.text_tokens) || 0;
+  const inputImage = Number(inputDetails?.image_tokens) || 0;
+  const outputText = Number(outputDetails?.text_tokens) || 0;
+  const outputImage = Number(outputDetails?.image_tokens) || 0;
+  const detailedTotal = inputText + inputImage + outputText + outputImage;
+  if (detailedTotal <= 0) return null;
+  return (
+    inputText * FAL_TEXT_INPUT_USD_PER_MILLION +
+    inputImage * FAL_IMAGE_INPUT_USD_PER_MILLION +
+    outputText * FAL_TEXT_OUTPUT_USD_PER_MILLION +
+    outputImage * FAL_IMAGE_OUTPUT_USD_PER_MILLION
+  ) / 1_000_000;
+}
+
+async function readJsonResponse(response: Response): Promise<Record<string, unknown>> {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    return { message: text };
+  }
+}
+
+function unwrapFalOutput(payload: Record<string, unknown>): FalImageOutput {
+  const nested = payload.data;
+  return nested && typeof nested === "object"
+    ? nested as FalImageOutput
+    : payload as FalImageOutput;
+}
+
+async function callFalGptImage2(
+  mode: FalImageMode,
+  payload: Record<string, unknown>,
+  falKey: string,
+): Promise<FalImageOutput> {
+  const endpoint = mode === "edit"
+    ? FAL_GPT_IMAGE_2_EDIT_ENDPOINT
+    : FAL_GPT_IMAGE_2_TEXT_ENDPOINT;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 55_000);
+  try {
+    const response = await fetch(`${FAL_RUN_BASE_URL}/${endpoint}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Key ${falKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const responsePayload = await readJsonResponse(response);
+    if (!response.ok) {
+      const message = String(
+        responsePayload.detail ||
+        responsePayload.message ||
+        responsePayload.error ||
+        response.statusText,
+      );
+      throw new Error(`Fal GPT Image 2 failed (${response.status}): ${message}`);
+    }
+    const output = unwrapFalOutput(responsePayload);
+    if (!Array.isArray(output.images) || output.images.length === 0) {
+      throw new Error("Fal GPT Image 2 returned no images.");
+    }
+    return output;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function downloadFalImages(images: FalImageFile[]): Promise<GeneratedImagePayload[]> {
+  return Promise.all(images.map(async (image, index) => {
+    const url = typeof image.url === "string" ? image.url : "";
+    if (!url.startsWith("https://") && !url.startsWith("data:")) {
+      throw new Error(`Fal image ${index + 1} has no usable URL.`);
+    }
+    if (url.startsWith("data:")) {
+      const match = url.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) throw new Error(`Fal image ${index + 1} returned an invalid data URI.`);
+      return { mimeType: match[1], base64: match[2] };
+    }
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Could not download Fal image ${index + 1} (${response.status}).`);
+    }
+    const mimeType = response.headers.get("content-type") ||
+      (typeof image.content_type === "string" ? image.content_type : "image/png");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length === 0) throw new Error(`Fal image ${index + 1} was empty.`);
+    return { mimeType, base64: bytes.toString("base64") };
+  }));
 }
 // ====================================================
 
@@ -245,7 +579,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     body.imageSize && VALID_SIZES.includes(body.imageSize)
       ? body.imageSize
       : "1K";
-  const estimatedCredits = estimateImageCredits(requestedSize, requestedImages);
+  const useFalGptImage2 = isFalGptImage2Capability(body.capability);
+  const estimatedCredits = useFalGptImage2
+    ? estimateFalCredits(body, requestedImages)
+    : estimateImageCredits(requestedSize, requestedImages);
 
   // Fetch user data for credit check and plan verification
   const { data: userData, error: userDataError } = await supabase
@@ -280,11 +617,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   );
   // ============================================
 
-  // Check for API key
+  // Check only the provider key required for this request. FAL_KEY already
+  // powers video generation and remains server-side in Vercel.
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const falKey = process.env.FAL_KEY;
+  if (useFalGptImage2 && !falKey) {
+    console.error("FAL_KEY not configured");
+    return res.status(500).json({ error: "Fal API key not configured" });
+  }
+  if (!useFalGptImage2 && !apiKey) {
     console.error("GEMINI_API_KEY not configured");
-    return res.status(500).json({ error: "API key not configured" });
+    return res.status(500).json({ error: "Gemini API key not configured" });
   }
 
   try {
@@ -295,6 +638,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       numberOfImages = 1,
       imageSize = "1K", // Default to 1K, options: "512", "1K", "2K", "4K"
       aspectRatio, // Optional: "1:1", "3:4", "4:3", "9:16", "16:9", etc.
+      capability,
+      quality = "medium",
     } = body;
 
     // ============================================
@@ -360,6 +705,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log("Number of images requested:", validatedNumberOfImages);
     console.log("Image size:", imageSize);
     console.log("Aspect ratio:", aspectRatio || "default");
+    console.log("Capability:", capability || "image.modify");
+    console.log("Provider:", useFalGptImage2 ? "fal-gpt-image-2" : "gemini");
     console.log("User ID:", user.id);
 
     // ============================================
@@ -381,6 +728,167 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log("4K access granted for", userPlan, "user");
     }
     // ============================================
+
+    if (useFalGptImage2) {
+      const mode = resolveFalMode(body);
+      const normalizedQuality = normalizeFalQuality(quality);
+      const inputImageUrls = [imageUrl, productImageUrl]
+        .filter((value): value is string => typeof value === "string" && value.length > 0);
+      if (mode === "edit" && inputImageUrls.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: "GPT Image 2 Edit requires at least one input image.",
+          code: "MISSING_INPUT_IMAGE",
+          requestId,
+        });
+      }
+
+      const falImageSize = toFalImageSize(imageSize, aspectRatio, mode);
+      const falPayload: Record<string, unknown> = {
+        prompt,
+        image_size: falImageSize,
+        quality: normalizedQuality,
+        num_images: validatedNumberOfImages,
+        output_format: "png",
+        sync_mode: false,
+        ...(mode === "edit" ? { image_urls: inputImageUrls } : {}),
+      };
+
+      console.log("Submitting Fal GPT Image 2 request:", {
+        endpoint: mode === "edit" ? FAL_GPT_IMAGE_2_EDIT_ENDPOINT : FAL_GPT_IMAGE_2_TEXT_ENDPOINT,
+        requestId,
+        imageSize: falImageSize,
+        quality: normalizedQuality,
+        imageCount: validatedNumberOfImages,
+        inputImageCount: inputImageUrls.length,
+      });
+
+      const falOutput = await callFalGptImage2(mode, falPayload, falKey as string);
+      const falImages = (falOutput.images || []).slice(0, validatedNumberOfImages);
+      const generatedImages = await downloadFalImages(falImages);
+
+      let imageUrls: string[];
+      try {
+        imageUrls = await uploadGeneratedImages(
+          supabase,
+          user.id,
+          requestId,
+          generatedImages,
+        );
+      } catch (uploadError) {
+        console.error("Fal generated image upload failed:", uploadError);
+        return res.status(500).json({
+          success: false,
+          error: "The image was generated but could not be saved. No credits were deducted.",
+          code: "RESULT_UPLOAD_FAILED",
+          requestId,
+        });
+      }
+
+      const tokenBreakdown = falUsageToTokenBreakdown(falOutput.usage);
+      const usageCostUsd = calculateFalUsageCostUsd(falOutput.usage);
+      const fallbackCostUsd = estimateFalCostUsd(
+        mode,
+        normalizedQuality,
+        falImageSize,
+        imageSize,
+        aspectRatio,
+        imageUrls.length,
+        inputImageUrls.length,
+        falImages,
+      );
+      const actualCostUsd = usageCostUsd ?? fallbackCostUsd;
+      const creditsToDeduct = Math.max(1, Math.ceil(actualCostUsd * USD_TO_CREDITS));
+
+      console.log("Fal GPT Image 2 settlement:", {
+        requestId,
+        usageAvailable: usageCostUsd !== null,
+        actualCostUsd,
+        creditsToDeduct,
+        outputCount: imageUrls.length,
+      });
+
+      let newCredits = userData.credits;
+      let creditsDeducted = 0;
+      let eligiblePaidCredits = 0;
+      let creditDeductionId: string | undefined;
+
+      const { data: deductResult, error: deductError } = await supabase.rpc(
+        "deduct_generation_credits",
+        {
+          p_user_id: user.id,
+          p_amount: creditsToDeduct,
+          p_request_id: requestId,
+          p_template_run_id: body.templateRunId || null,
+          p_template_step_id: body.templateStepId || null,
+          p_capability: body.templateCapability || null,
+        },
+      );
+      const deductionSucceeded =
+        !deductError && deductResult && deductResult.success === true;
+      if (!deductionSucceeded) {
+        console.error("Fal image credit deduction failed:", {
+          requestId,
+          deductError: deductError?.message,
+          deductResult,
+          creditsToDeduct,
+        });
+        await deleteStoredGenerationArtifacts(supabase, user.id, requestId);
+        const insufficientCredits =
+          !deductError && deductResult?.error === "Insufficient credits";
+        return res.status(insufficientCredits ? 402 : 500).json({
+          success: false,
+          code: insufficientCredits ? "INSUFFICIENT_CREDITS" : "CREDIT_DEDUCTION_FAILED",
+          error: insufficientCredits
+            ? "Your credit balance changed before checkout. No image was delivered."
+            : "Unable to charge credits. No image was delivered.",
+          creditsDeducted: 0,
+          requestId,
+        });
+      }
+
+      creditsDeducted = Number(deductResult.credits_deducted) || 0;
+      eligiblePaidCredits = Number(deductResult.eligible_paid_credits) || 0;
+      creditDeductionId = typeof deductResult.deduction_id === "string"
+        ? deductResult.deduction_id
+        : undefined;
+      newCredits = Number(
+        deductResult.new_balance ?? deductResult.new_credits ?? newCredits,
+      );
+
+      const responsePayload: StoredGenerationManifest = {
+        success: true,
+        images: imageUrls,
+        text: "",
+        count: imageUrls.length,
+        imageSize,
+        tokensUsed: tokenBreakdown.totalTokens,
+        tokenBreakdown,
+        actualCostUsd,
+        creditsUsed: creditsToDeduct,
+        creditsDeducted,
+        eligiblePaidCredits,
+        creditDeductionId,
+        newCredits,
+        requestId,
+        recovered: false,
+        provider: mode === "edit" ? "fal-gpt-image-2-edit" : "fal-gpt-image-2",
+        quality: normalizedQuality,
+      };
+
+      try {
+        await saveGenerationManifest(
+          supabase,
+          user.id,
+          requestId,
+          responsePayload,
+        );
+      } catch (manifestError) {
+        console.error("Failed to save Fal generation manifest:", manifestError);
+      }
+
+      return res.status(200).json(responsePayload);
+    }
 
     // Build the request content parts
     // IMPORTANT: Order matters! Scene/base image FIRST, then product image, then prompt

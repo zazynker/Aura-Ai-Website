@@ -42,6 +42,126 @@ export const estimateCredits = (resolution: Resolution, imageCount: number): num
   return Math.ceil((imageOutputCost + ESTIMATED_OVERHEAD_USD_PER_IMAGE * imageCount) * USD_TO_CREDITS);
 };
 
+export type FalImageQuality = 'low' | 'medium' | 'high';
+export type FalImageMode = 'text' | 'edit';
+
+export type FalImageCreditEstimate = {
+  mode: FalImageMode;
+  resolution: Resolution;
+  aspectRatio?: string;
+  imageCount: number;
+  quality?: FalImageQuality;
+  inputImageCount?: number;
+};
+
+type FalCanonicalPrice = {
+  width: number;
+  height: number;
+  low: number;
+  medium: number;
+  high: number;
+};
+
+// Published GPT Image 2 canonical prices on fal.ai. The edit prices include
+// one input image. When Quick Replace sends a second image, the estimate adds
+// the published edit-vs-text price difference for one more input image.
+const FAL_GPT_IMAGE_2_PRICES: Record<FalImageMode, FalCanonicalPrice[]> = {
+  text: [
+    { width: 1024, height: 768, low: 0.005, medium: 0.037, high: 0.145 },
+    { width: 1024, height: 1024, low: 0.006, medium: 0.053, high: 0.211 },
+    { width: 1024, height: 1536, low: 0.005, medium: 0.042, high: 0.165 },
+    { width: 1920, height: 1080, low: 0.005, medium: 0.040, high: 0.158 },
+    { width: 2560, height: 1440, low: 0.007, medium: 0.056, high: 0.222 },
+    { width: 3840, height: 2160, low: 0.012, medium: 0.101, high: 0.401 },
+  ],
+  edit: [
+    { width: 1024, height: 768, low: 0.011, medium: 0.043, high: 0.151 },
+    { width: 1024, height: 1024, low: 0.015, medium: 0.061, high: 0.219 },
+    { width: 1024, height: 1536, low: 0.018, medium: 0.054, high: 0.178 },
+    { width: 1920, height: 1080, low: 0.017, medium: 0.053, high: 0.158 },
+    { width: 2560, height: 1440, low: 0.019, medium: 0.068, high: 0.234 },
+    { width: 3840, height: 2160, low: 0.024, medium: 0.113, high: 0.413 },
+  ],
+};
+
+const roundToMultipleOf16 = (value: number): number =>
+  Math.max(16, Math.round(value / 16) * 16);
+
+const falRequestedDimensions = (
+  resolution: Resolution,
+  aspectRatio = '1:1',
+): { width: number; height: number } => {
+  const longEdgeByResolution: Record<Resolution, number> = {
+    '512': 512,
+    '1K': 1024,
+    '2K': 2048,
+    '4K': 3840,
+  };
+  const ratioMatch = aspectRatio.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+  const ratio = ratioMatch
+    ? Math.max(1 / 3, Math.min(3, Number(ratioMatch[1]) / Number(ratioMatch[2])))
+    : 1;
+  const longEdge = longEdgeByResolution[resolution];
+  let width = ratio >= 1 ? longEdge : longEdge * ratio;
+  let height = ratio >= 1 ? longEdge / ratio : longEdge;
+
+  const maxPixels = 8_294_400;
+  if (width * height > maxPixels) {
+    const scale = Math.sqrt(maxPixels / (width * height));
+    width *= scale;
+    height *= scale;
+  }
+
+  return {
+    width: roundToMultipleOf16(width),
+    height: roundToMultipleOf16(height),
+  };
+};
+
+const closestFalCanonicalPrice = (
+  mode: FalImageMode,
+  width: number,
+  height: number,
+): FalCanonicalPrice => {
+  const area = Math.max(1, width * height);
+  const ratio = Math.max(0.01, width / Math.max(1, height));
+  return FAL_GPT_IMAGE_2_PRICES[mode].reduce((best, candidate) => {
+    const candidateArea = candidate.width * candidate.height;
+    const candidateRatio = candidate.width / candidate.height;
+    const candidateScore =
+      Math.abs(Math.log(area / candidateArea)) +
+      0.35 * Math.abs(Math.log(ratio / candidateRatio));
+    const bestArea = best.width * best.height;
+    const bestRatio = best.width / best.height;
+    const bestScore =
+      Math.abs(Math.log(area / bestArea)) +
+      0.35 * Math.abs(Math.log(ratio / bestRatio));
+    return candidateScore < bestScore ? candidate : best;
+  });
+};
+
+export const estimateFalImageCredits = ({
+  mode,
+  resolution,
+  aspectRatio = '1:1',
+  imageCount,
+  quality = 'medium',
+  inputImageCount = mode === 'edit' ? 1 : 0,
+}: FalImageCreditEstimate): number => {
+  const count = Math.max(1, Math.floor(imageCount));
+  const dimensions = falRequestedDimensions(resolution, aspectRatio === 'auto' ? '1:1' : aspectRatio);
+  const canonical = closestFalCanonicalPrice(mode, dimensions.width, dimensions.height);
+  const textCanonical = closestFalCanonicalPrice('text', dimensions.width, dimensions.height);
+  const extraInputImageCostUsd = mode === 'edit'
+    ? Math.max(0.006, canonical[quality] - textCanonical[quality])
+    : 0;
+  const estimatedCostUsd = (
+    canonical[quality] +
+    Math.max(0, Math.floor(inputImageCount) - 1) * extraInputImageCostUsd
+  ) * count;
+  return Math.max(1, Math.ceil(estimatedCostUsd * USD_TO_CREDITS));
+};
+
 // Calculate actual credits based on REAL token consumption from API
 // This is the authoritative calculation used after generation completes
 // Divisor of 60 yields ~65% profit margin
@@ -455,17 +575,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
     if (savedGen) {
       // Add to local state immediately (at the beginning)
-      setDbGenerations(prev => {
-        const isSameSavedRow = (item: Generation) =>
-          item.id === savedGen.id
-          || Boolean(
-            savedGen.mediaType === 'video'
-            && savedGen.requestId
-            && item.mediaType === 'video'
-            && item.requestId === savedGen.requestId
-          );
-        return [savedGen, ...prev.filter((item) => !isSameSavedRow(item))];
-      });
+      setDbGenerations(prev => [savedGen, ...prev]);
       void ensureGenerationThumbnail(savedGen).then((thumbnailUrl) => {
         if (!thumbnailUrl) return;
         setDbGenerations((prev) => prev.map((item) => (

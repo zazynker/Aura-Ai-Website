@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download, Video } from 'lucide-react';
-import { useStore, estimateCredits, Resolution } from '../context/StoreContext';
+import { useStore, estimateCredits, estimateFalImageCredits, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -47,6 +47,14 @@ const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => 
         }
     });
     return result;
+};
+
+const allocateCreditsAcrossOutputs = (totalCredits: number, outputCount: number): number[] => {
+  const safeTotal = Math.max(0, Math.floor(totalCredits));
+  const safeCount = Math.max(1, Math.floor(outputCount));
+  const base = Math.floor(safeTotal / safeCount);
+  const remainder = safeTotal % safeCount;
+  return Array.from({ length: safeCount }, (_, index) => base + (index < remainder ? 1 : 0));
 };
 
 export const Modify = () => {
@@ -105,7 +113,6 @@ export const Modify = () => {
 
   // Generation Configuration - DEFAULT TO 4
   const [outputCount, setOutputCount] = useState(1);
-  const [quality, setQuality] = useState<'Standard' | 'High' | 'Ultra'>('Standard');
   
   // Generation Process State
   const [isGenerating, setIsGenerating] = useState(false);
@@ -538,7 +545,7 @@ export const Modify = () => {
     }
   };
 
-  // --- Logic: Generation (Using Real Gemini API) ---
+  // --- Logic: Generation (Fal GPT Image 2 for Text/Replace; Gemini for the other tools) ---
   const saveDescribeToHistory = (text: string) => {
     if (!text.trim()) return;
     const newHistory = [text, ...describeHistory.filter(h => h !== text)].slice(0, 3);
@@ -559,7 +566,16 @@ export const Modify = () => {
     }
     
     // Pre-check: estimate credits needed (actual amount will be based on real token usage)
-    const estimatedCredits = estimateCredits(resolution, outputCount);
+    const estimatedCredits = toolName === 'Replace'
+      ? estimateFalImageCredits({
+          mode: 'edit',
+          resolution: '1K',
+          aspectRatio: 'auto',
+          imageCount: outputCount,
+          quality: 'medium',
+          inputImageCount: 2,
+        })
+      : estimateCredits(resolution, outputCount);
     if (user.credits < estimatedCredits) { 
       handleInsufficientCredits();
       return; 
@@ -827,7 +843,7 @@ export const Modify = () => {
         console.log('Ratio tool - Target ratio:', targetAspectRatio);
       }
       
-      // Call the real Gemini API with the selected number of images
+      // Route by capability: Quick Replace uses Fal GPT Image 2 Edit; other tools stay on Gemini
       const capability = MODIFY_CAPABILITY_BY_TOOL[toolName] || 'image.modify';
       const result = await generateImages({
         prompt: fullPrompt,
@@ -837,6 +853,7 @@ export const Modify = () => {
         numberOfImages: outputCount,      // Generate multiple images in parallel
         imageSize: targetImageSize,       // Resolution setting
         aspectRatio: targetAspectRatio,   // Target aspect ratio
+        quality: capability === 'image.replace_product' ? 'medium' : undefined,
       });
 
       clearInterval(progressInterval);
@@ -877,12 +894,12 @@ export const Modify = () => {
 
       // Calculate credits based on ACTUAL token consumption from API
       const totalCreditsUsed = result.creditsUsed ?? result.creditsDeducted ?? 0;
-      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
+      const creditAllocations = allocateCreditsAcrossOutputs(totalCreditsUsed, newImages.length);
       
       console.log('=== Credit Calculation ===');
       console.log('Token breakdown:', result.tokenBreakdown);
       console.log('Total credits:', totalCreditsUsed);
-      console.log('Credits per image:', creditsPerImage);
+      console.log('Credit allocations:', creditAllocations);
 
       const inputAssets: GenerationInputAssetSnapshot[] = [];
       if (baseImageUrl) {
@@ -900,18 +917,17 @@ export const Modify = () => {
         });
       }
 
-      const newGenerations = newImages.map(imgUrl => ({
+      const newGenerations = newImages.map((imgUrl, imageIndex) => ({
         userId: user?.id || '',
         templateId: currentImageSource.templateId,
         templateName: currentImageSource.templateName,
         imageUrl: imgUrl,
-        creditsUsed: creditsPerImage,
+        creditsUsed: creditAllocations[imageIndex] || 0,
         prompt: displayPrompt,
         capability,
         templateRunId: result.templateRunId,
         templateStepId: result.templateStepId,
         templateCapability: result.templateCapability,
-        requestId: result.requestId,
         inputAssets,
         generationParameters: {
           prompt: displayPrompt,
@@ -920,6 +936,8 @@ export const Modify = () => {
           ratio: targetAspectRatio,
           extraBlend,
           productSizePercent: Number(productSizePercent || 100),
+          provider: capability === 'image.replace_product' ? 'fal-gpt-image-2-edit' : 'gemini',
+          quality: capability === 'image.replace_product' ? 'medium' : undefined,
         },
     }));
 
@@ -951,7 +969,14 @@ export const Modify = () => {
    
     // Pre-check: estimate credits needed
     const t2iResolution = t2iSize as Resolution;
-    const estimatedCredits = estimateCredits(t2iResolution, t2iOutputCount);
+    const estimatedCredits = estimateFalImageCredits({
+      mode: t2iFiles.length > 0 ? 'edit' : 'text',
+      resolution: t2iResolution,
+      aspectRatio: t2iRatio,
+      imageCount: t2iOutputCount,
+      quality: 'medium',
+      inputImageCount: t2iFiles.length,
+    });
     if (user.credits < estimatedCredits) { 
       handleInsufficientCredits();
       return; 
@@ -1043,6 +1068,7 @@ export const Modify = () => {
         numberOfImages: t2iOutputCount,
         imageSize: t2iSize as '1K' | '2K' | '4K',
         aspectRatio: t2iRatio,
+        quality: 'medium',
       });
 
       clearInterval(progressInterval);
@@ -1070,12 +1096,12 @@ export const Modify = () => {
 
       // Calculate credits based on ACTUAL token consumption from API
       const totalCreditsUsed = result.creditsUsed ?? result.creditsDeducted ?? 0;
-      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
+      const creditAllocations = allocateCreditsAcrossOutputs(totalCreditsUsed, newImages.length);
       
       console.log('=== T2I Credit Calculation ===');
       console.log('Token breakdown:', result.tokenBreakdown);
       console.log('Total credits:', totalCreditsUsed);
-      console.log('Credits per image:', creditsPerImage);
+      console.log('Credit allocations:', creditAllocations);
 
       // Create Generation records
       const inputAssets: GenerationInputAssetSnapshot[] = referenceImageUrls.map(
@@ -1086,24 +1112,25 @@ export const Modify = () => {
         }),
       );
 
-      const newGenerations = newImages.map(imgUrl => ({
+      const newGenerations = newImages.map((imgUrl, imageIndex) => ({
         userId: user?.id || '',
         templateId: sourceId,
         templateName: sourceName,
         imageUrl: imgUrl,
-        creditsUsed: creditsPerImage,
+        creditsUsed: creditAllocations[imageIndex] || 0,
         prompt: t2iPrompt || 'Text to Image',
         capability: 'image.text_to_image' as const,
         templateRunId: result.templateRunId,
         templateStepId: result.templateStepId,
         templateCapability: result.templateCapability,
-        requestId: result.requestId,
         inputAssets,
         generationParameters: {
           prompt: t2iPrompt,
           ratio: t2iRatio,
           resolution: t2iSize,
           outputCount: t2iOutputCount,
+          provider: referenceImageUrls.length > 0 ? 'fal-gpt-image-2-edit' : 'fal-gpt-image-2',
+          quality: 'medium',
         },
     }));
 
@@ -1786,7 +1813,7 @@ export const Modify = () => {
                                                 disabled={isGenerating || isUploading || !t2iPrompt.trim()}
                                             >
                                                 {isGenerating || isUploading ? <Loader2 className="w-5 h-5 animate-spin"/> : <ArrowUp className="w-5 h-5" />}
-                                                <span>~{estimateCredits(t2iSize as Resolution, t2iOutputCount)} credits</span>
+                                                <span>~{estimateFalImageCredits({ mode: t2iFiles.length > 0 ? 'edit' : 'text', resolution: t2iSize as Resolution, aspectRatio: t2iRatio, imageCount: t2iOutputCount, quality: 'medium', inputImageCount: t2iFiles.length })} credits</span>
                                             </button>
                                         </div>
                                     </div>
@@ -2140,7 +2167,7 @@ export const Modify = () => {
                                 ) : (
                                     <Sparkles className="w-4 h-4 mr-2" />
                                 )}
-                                {isUploading ? 'Uploading...' : uploadedFile ? `Generate Magic · ~${estimateCredits('1K', outputCount)} credits` : 'Upload product first'}
+                                {isUploading ? 'Uploading...' : uploadedFile ? `Generate Magic · ~${estimateFalImageCredits({ mode: 'edit', resolution: '1K', aspectRatio: 'auto', imageCount: outputCount, quality: 'medium', inputImageCount: 2 })} credits` : 'Upload product first'}
                             </Button>
 
                             {/* More Control CTA - Only show when Advanced options is open */}
