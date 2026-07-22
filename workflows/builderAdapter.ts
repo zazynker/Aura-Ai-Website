@@ -42,6 +42,7 @@ export interface BuilderDraftStep {
   id: string;
   feature: BuilderFeatureType;
   resultUrl: string | null;
+  resultType?: 'image' | 'video';
   materials: BuilderMaterial[];
   prompt: string;
   resultGenerationId?: string;

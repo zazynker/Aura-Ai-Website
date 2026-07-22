@@ -22,6 +22,7 @@ export interface TemplateDraftIdentity extends TemplateStorageIdentity {
 }
 
 export type PersistedMaterialMap = Record<string, UploadedTemplateObject>;
+export type PersistedResultMap = Record<string, UploadedTemplateObject>;
 
 export interface SaveTemplateDraftInput {
   identity?: TemplateDraftIdentity | null;
@@ -33,6 +34,8 @@ export interface SaveTemplateDraftInput {
   finalResultUrl: string | null;
   coverFile: File | null;
   persistedCover: UploadedTemplateCover | null;
+  resultFiles: Record<string, File>;
+  persistedResults: PersistedResultMap;
   materialFiles: Record<string, File>;
   persistedMaterials: PersistedMaterialMap;
 }
@@ -40,6 +43,7 @@ export interface SaveTemplateDraftInput {
 export interface SaveTemplateDraftResult {
   identity: TemplateDraftIdentity;
   cover: UploadedTemplateCover | null;
+  results: PersistedResultMap;
   materials: PersistedMaterialMap;
   materialAssetIds: Record<string, string>;
 }
@@ -61,6 +65,7 @@ export interface LoadTemplateDraftResult {
   cover: UploadedTemplateCover | null;
   coverUrl: string | null;
   coverType: 'image' | 'video' | null;
+  results: PersistedResultMap;
   materials: PersistedMaterialMap;
 }
 
@@ -236,10 +241,13 @@ async function ensureDraftRows(
   input: SaveTemplateDraftInput,
 ): Promise<void> {
   const name = input.title.trim() || 'Untitled workflow template';
+  const durableFinalResultUrl = input.finalResultUrl?.startsWith('blob:')
+    ? ''
+    : input.finalResultUrl || '';
   const templatePayload = {
     name,
     display_name: name,
-    image_url: input.finalResultUrl || '',
+    image_url: durableFinalResultUrl,
     category: 'Workflow',
     tags: [],
     is_pro: false,
@@ -258,7 +266,7 @@ async function ensureDraftRows(
       status: 'draft',
       cover_type: 'image',
       cover_url: null,
-      preview_url: input.finalResultUrl,
+      preview_url: durableFinalResultUrl || null,
     });
     if (error) throw new Error(`Could not create the draft: ${error.message}`);
   } else {
@@ -287,7 +295,7 @@ async function ensureDraftRows(
     name,
     display_name: name,
     description: input.description.trim() || null,
-    image_url: input.finalResultUrl || '',
+    image_url: durableFinalResultUrl,
     updated_at: new Date().toISOString(),
   };
 
@@ -408,6 +416,7 @@ export async function saveTemplateDraft(
   await ensureDraftRows(identity, input);
 
   let cover = input.persistedCover;
+  const resultUploads: PersistedResultMap = { ...input.persistedResults };
   const materialUploads: PersistedMaterialMap = { ...input.persistedMaterials };
   const newlyUploaded: Array<{ bucket: string; path: string }> = [];
   let assetPersistenceStarted = false;
@@ -419,6 +428,20 @@ export async function saveTemplateDraft(
         { bucket: cover.original.bucket, path: cover.original.path },
         { bucket: cover.thumbnail.bucket, path: cover.thumbnail.path },
       );
+    }
+
+    for (const step of input.steps) {
+      const file = input.resultFiles[step.id];
+      if (!file || step.resultGenerationId) continue;
+      const assetType = file.type.startsWith('video/') ? 'video' : 'image';
+      const uploaded = await uploadTemplateMaterial(
+        identity,
+        file,
+        assetType,
+        `${step.id}-result`,
+      );
+      resultUploads[step.id] = uploaded;
+      newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
     }
 
     for (const step of input.steps) {
@@ -469,9 +492,22 @@ export async function saveTemplateDraft(
             identity,
             input.userId,
             `step-${stepIndex + 1}-result`,
-            VIDEO_FEATURES.has(step.feature) ? 'video' : 'image',
+            step.resultType || (VIDEO_FEATURES.has(step.feature) ? 'video' : 'image'),
             step.resultGenerationId,
             step.resultUrl,
+            sortOrder++,
+            false,
+          ),
+        );
+      } else if (step.resultUrl && resultUploads[step.id]) {
+        const uploaded = resultUploads[step.id];
+        rows.push(
+          uploadRow(
+            identity,
+            input.userId,
+            `step-${stepIndex + 1}-result`,
+            step.resultType || (uploaded.mimeType.startsWith('video/') ? 'video' : 'image'),
+            uploaded,
             sortOrder++,
             false,
           ),
@@ -570,7 +606,13 @@ export async function saveTemplateDraft(
     }
 
     await cleanReplacedObjects(previous, rows);
-    return { identity, cover, materials: materialUploads, materialAssetIds };
+    return {
+      identity,
+      cover,
+      results: resultUploads,
+      materials: materialUploads,
+      materialAssetIds,
+    };
   } catch (error) {
     if (assetPersistenceStarted) throw error;
     const previewPaths = newlyUploaded
@@ -676,6 +718,7 @@ export async function loadTemplateDraft(
   }
 
   const persistedMaterials: PersistedMaterialMap = {};
+  const persistedResults: PersistedResultMap = {};
   const steps: BuilderDraftStep[] = workflow.steps.map((workflowStep, stepIndex) => {
     const feature = CAPABILITY_TO_FEATURE[workflowStep.capability];
     if (!feature) {
@@ -684,6 +727,10 @@ export async function loadTemplateDraft(
     const resultAsset = assets.find(
       (asset) => asset.asset_key === `step-${stepIndex + 1}-result`,
     );
+    if (resultAsset?.source_kind === 'upload') {
+      const stored = savedObject(resultAsset);
+      if (stored) persistedResults[workflowStep.id] = stored;
+    }
     const materialAssets = assets.filter((asset) =>
       asset.asset_key.startsWith(`step-${stepIndex + 1}-material-`),
     );
@@ -717,6 +764,9 @@ export async function loadTemplateDraft(
       id: workflowStep.id,
       feature,
       resultUrl: resultAsset ? urls.get(resultAsset.id) || resultAsset.public_url : null,
+      resultType: resultAsset
+        ? resultAsset.asset_type === 'video' ? 'video' : 'image'
+        : undefined,
       resultGenerationId: resultAsset?.generation_id || undefined,
       materials,
       prompt:
@@ -758,12 +808,13 @@ export async function loadTemplateDraft(
     description: version.description || template.description || '',
     steps,
     finalResultUrl: finalStep?.resultUrl || null,
-    finalResultType: finalStep
+    finalResultType: finalStep?.resultType || (finalStep
       ? VIDEO_FEATURES.has(finalStep.feature) ? 'video' : 'image'
-      : null,
+      : null),
     cover,
     coverUrl: version.cover_url || (coverOriginalRow ? urls.get(coverOriginalRow.id) : null) || template.cover_url || null,
     coverType: version.cover_type === 'video' ? 'video' : 'image',
+    results: persistedResults,
     materials: persistedMaterials,
   };
 }

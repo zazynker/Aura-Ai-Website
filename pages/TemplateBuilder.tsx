@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw } from 'lucide-react';
+import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { useStore } from '../context/StoreContext';
@@ -18,6 +18,7 @@ import {
   saveTemplateDraft,
   submitTemplateForReview,
   type PersistedMaterialMap,
+  type PersistedResultMap,
   type TemplateDraftIdentity,
 } from '../utils/templateDraftApi';
 import type { UploadedTemplateCover } from '../utils/templateStorage';
@@ -151,7 +152,7 @@ const getPublishGateIssue = (
     return {
       code: 'result',
       stepId: steps[incompleteStepIndex].id,
-      message: `Choose the Dashboard result for Step ${incompleteStepIndex + 1}.`,
+      message: `Choose a Dashboard result or upload an image/video for Step ${incompleteStepIndex + 1}.`,
     };
   }
 
@@ -232,6 +233,8 @@ export const TemplateBuilder = () => {
   const [builderError, setBuilderError] = useState<string | null>(null);
   const [draftIdentity, setDraftIdentity] = useState<TemplateDraftIdentity | null>(null);
   const [persistedCover, setPersistedCover] = useState<UploadedTemplateCover | null>(null);
+  const [resultFiles, setResultFiles] = useState<Record<string, File>>({});
+  const [persistedResults, setPersistedResults] = useState<PersistedResultMap>({});
   const [materialFiles, setMaterialFiles] = useState<Record<string, File>>({});
   const [persistedMaterials, setPersistedMaterials] = useState<PersistedMaterialMap>({});
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
@@ -239,6 +242,7 @@ export const TemplateBuilder = () => {
   const [draftLoadState, setDraftLoadState] = useState<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const resultFileInputRef = useRef<HTMLInputElement>(null);
   const publishFileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const loadedDraftIdRef = useRef<string | null>(null);
@@ -266,6 +270,8 @@ export const TemplateBuilder = () => {
         setPublishCover(draft.coverUrl);
         setPublishCoverType(draft.coverType);
         setPublishCoverFile(null);
+        setPersistedResults(draft.results);
+        setResultFiles({});
         setPersistedMaterials(draft.materials);
         setMaterialFiles({});
         setSaveState('saved');
@@ -289,7 +295,9 @@ export const TemplateBuilder = () => {
         activeResultGeneration.videoUrl &&
           activeResultGeneration.videoUrl === activeStep.resultUrl,
       )
-    : isVideoFeature(activeStep.feature);
+    : activeStep.resultType === 'video' || (
+        !activeStep.resultType && isVideoFeature(activeStep.feature)
+      );
   const selectableGenerations = generations.filter(
     (generation) =>
       isPersistedGenerationId(generation.id) &&
@@ -404,6 +412,18 @@ export const TemplateBuilder = () => {
   const removeStep = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (steps.length === 1) return;
+    const removedStep = steps.find((step) => step.id === id);
+    if (removedStep?.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(removedStep.resultUrl);
+    setResultFiles((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
     const newSteps = steps.filter(s => s.id !== id);
     setSteps(newSteps);
     setSaveState('idle');
@@ -422,6 +442,38 @@ export const TemplateBuilder = () => {
     });
     setSaveState('idle');
     updateMaterial(materialId, { url: URL.createObjectURL(file) });
+  };
+
+  const handleStepResultUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      addToast('error', 'Please choose an image or video file.');
+      return;
+    }
+
+    if (activeStep.resultUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(activeStep.resultUrl);
+    }
+    const resultUrl = URL.createObjectURL(file);
+    const resultType = file.type.startsWith('video/') ? 'video' as const : 'image' as const;
+    setResultFiles((current) => ({ ...current, [activeStep.id]: file }));
+    setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    updateActiveStep({
+      resultUrl,
+      resultType,
+      resultGenerationId: undefined,
+    });
+
+    if (activeStep.id === steps[steps.length - 1]?.id) {
+      setFinalResult(resultUrl);
+      setFinalResultType(resultType);
+    }
   };
 
   const inferFeatureFromGeneration = (
@@ -554,6 +606,7 @@ export const TemplateBuilder = () => {
     const nextStep: WorkflowStep = {
       ...activeStep,
       resultUrl,
+      resultType: generation.videoUrl && resultUrl === generation.videoUrl ? 'video' : 'image',
       resultGenerationId: generation.id,
       feature: nextFeature,
       prompt:
@@ -575,6 +628,17 @@ export const TemplateBuilder = () => {
     setPersistedMaterials((current) => Object.fromEntries(
       Object.entries(current).filter(([id]) => !replacedMaterialIds.has(id)),
     ));
+    setResultFiles((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    if (activeStep.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(activeStep.resultUrl);
     updateActiveStep(nextStep);
 
     if (activeStep.id === steps[steps.length - 1]?.id) {
@@ -604,7 +668,18 @@ export const TemplateBuilder = () => {
 
   const clearActiveStepResult = () => {
     const removedResult = activeStep.resultUrl;
-    updateActiveStep({ resultUrl: null, resultGenerationId: undefined });
+    if (removedResult?.startsWith('blob:')) URL.revokeObjectURL(removedResult);
+    setResultFiles((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    updateActiveStep({ resultUrl: null, resultType: undefined, resultGenerationId: undefined });
     if (activeStep.id === steps[steps.length - 1]?.id && finalResult === removedResult) {
       setFinalResult(null);
       setFinalResultType(null);
@@ -660,11 +735,14 @@ export const TemplateBuilder = () => {
         finalResultUrl: finalResult,
         coverFile: publishCoverFile,
         persistedCover,
+        resultFiles,
+        persistedResults,
         materialFiles,
         persistedMaterials,
       });
       setDraftIdentity(saved.identity);
       setPersistedCover(saved.cover);
+      setPersistedResults(saved.results);
       setPersistedMaterials(saved.materials);
       setSteps((currentSteps) =>
         currentSteps.map((step) => ({
@@ -677,6 +755,7 @@ export const TemplateBuilder = () => {
         })),
       );
       setPublishCoverFile(null);
+      setResultFiles({});
       setMaterialFiles({});
       setSaveState('saved');
       if (showSuccessToast) addToast('success', 'Draft saved to your account.');
@@ -720,6 +799,7 @@ export const TemplateBuilder = () => {
   const handleBuildAnother = () => {
     if (publishCover?.startsWith('blob:')) URL.revokeObjectURL(publishCover);
     steps.forEach((step) => {
+      if (step.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(step.resultUrl);
       step.materials.forEach((material) => {
         if (material.url?.startsWith('blob:')) URL.revokeObjectURL(material.url);
       });
@@ -742,6 +822,8 @@ export const TemplateBuilder = () => {
     setBuilderError(null);
     setDraftIdentity(null);
     setPersistedCover(null);
+    setResultFiles({});
+    setPersistedResults({});
     setMaterialFiles({});
     setPersistedMaterials({});
     setSaveState('idle');
@@ -997,15 +1079,20 @@ export const TemplateBuilder = () => {
                 <span>
                   Result from This Step
                   <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
-                    (Choose from Dashboard — the fields below fill automatically)
+                    (Choose from Dashboard or upload a local image/video)
                   </span>
                 </span>
               </h3>
-              <div 
-                onClick={activeStep.resultUrl ? undefined : openDashboardResults}
+              <input
+                ref={resultFileInputRef}
+                type="file"
+                accept="image/*,video/*"
+                onChange={handleStepResultUpload}
+                className="hidden"
+                aria-label="Upload a result image or video from this device"
+              />
+              <div
                 className={`relative w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group ${
-                  activeStep.resultUrl ? '' : 'cursor-pointer'
-                } ${
                   builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id
                     ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
                     : 'border-slate-200 dark:border-slate-700'
@@ -1026,12 +1113,30 @@ export const TemplateBuilder = () => {
                 ) : (
                   <>
                     <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
-                      <History className="w-6 h-6" />
+                      <Upload className="w-6 h-6" />
                     </div>
-                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Choose from Dashboard</p>
+                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Add a result image or video</p>
                     <p className="px-4 text-center text-xs text-slate-400">
-                      This does not upload a local file. Select one of your saved generation results.
+                      Use a saved generation or choose a file from this device.
                     </p>
+                    <div className="flex flex-wrap items-center justify-center gap-2 px-4">
+                      <button
+                        type="button"
+                        onClick={openDashboardResults}
+                        className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:border-purple-300 hover:text-purple-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        Choose from Dashboard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => resultFileInputRef.current?.click()}
+                        className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-xs font-medium text-white shadow-sm hover:bg-purple-700"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                        Upload from device
+                      </button>
+                    </div>
                   </>
                 )}
                 {activeStep.resultUrl && (
@@ -1046,7 +1151,19 @@ export const TemplateBuilder = () => {
                       aria-label="Replace this step result"
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
-                      Replace
+                      Dashboard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        resultFileInputRef.current?.click();
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg bg-purple-600/90 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-purple-600"
+                      aria-label="Upload a local replacement for this step result"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      Upload
                     </button>
                     <button
                       type="button"
@@ -1064,7 +1181,7 @@ export const TemplateBuilder = () => {
               </div>
               {builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id && (
                 <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
-                  Required: choose this step's saved result from Dashboard.
+                  Required: choose a Dashboard result or upload an image/video.
                 </p>
               )}
             </section>
