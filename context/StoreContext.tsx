@@ -17,6 +17,7 @@ import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySes
 import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
 import { completeTemplateGeneration, failTemplateGeneration } from '../utils/templateRunGeneration';
+import { fetchMyProfile } from '../utils/profileApi';
 import { Session } from '@supabase/supabase-js';
 
 export const USD_TO_CREDITS = 195;
@@ -363,7 +364,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const supaUser = session.user;
     
     // 先从数据库获取用户积分信息
-    const { data: creditsData } = await fetchUserCredits();
+    const [{ data: creditsData }, publicProfile] = await Promise.all([
+      fetchUserCredits(),
+      fetchMyProfile(),
+    ]);
     
     // 验证 plan 是否为有效值
     const validPlans = ['Free', 'Pro'] as const;
@@ -375,12 +379,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const newUser: User = {
       id: supaUser.id,
       email: supaUser.email || '',
-      name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
+      name: publicProfile?.username || supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
       plan: plan,
       credits: creditsData?.credits ?? 120,
       maxCredits: creditsData?.maxCredits ?? 120,
-      avatar: supaUser.user_metadata?.avatar_url ||
+      avatar: publicProfile?.avatarUrl || supaUser.user_metadata?.avatar_url ||
         `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
+      avatarUrl: publicProfile?.avatarUrl || supaUser.user_metadata?.avatar_url || undefined,
       isAdmin: creditsData?.isAdmin ?? false,
       isWhitelisted: creditsData?.isWhitelisted ?? false,
       welcomeGiftEligible: creditsData?.welcomeGiftEligible ?? false,

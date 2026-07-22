@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { fetchPublicProfiles } from './profileApi';
 
 export interface PublicTemplateRow {
   id: string;
@@ -69,7 +70,14 @@ export async function fetchPublishedTemplates(
   );
 
   if (!rpcError) {
-    return (rpcData || []) as PublicTemplateRow[];
+    const rows = (rpcData || []) as PublicTemplateRow[];
+    const profiles = await fetchPublicProfiles(
+      rows.map((row) => row.creator_id).filter((id): id is string => Boolean(id)),
+    );
+    return rows.map((row) => ({
+      ...row,
+      author_name: (row.creator_id && profiles.get(row.creator_id)?.username) || row.author_name,
+    }));
   }
 
   console.warn(
@@ -89,8 +97,12 @@ export async function fetchPublishedTemplates(
   }
 
   const rows = (data || []) as unknown as Array<Omit<PublicTemplateRow, 'author_name'>>;
+  const profiles = await fetchPublicProfiles(
+    rows.map((row) => row.creator_id).filter((id): id is string => Boolean(id)),
+  );
   return rows.map((row) => ({
     ...row,
-    author_name: row.creator_id ? 'Lazora creator' : 'Lazora',
+    author_name: (row.creator_id && profiles.get(row.creator_id)?.username)
+      || (row.creator_id ? 'Lazora creator' : 'Lazora'),
   })) as PublicTemplateRow[];
 }

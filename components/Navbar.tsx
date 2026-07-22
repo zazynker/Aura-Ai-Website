@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
-import { User as UserIcon, LogOut, LayoutDashboard, CreditCard, Sparkles, Sun, Moon, Bell, Check, AlertCircle, Sparkles as SparklesOutline } from 'lucide-react';
+import { User as UserIcon, LogOut, LayoutDashboard, CreditCard, Sparkles, Sun, Moon, Bell, Check, AlertCircle, Sparkles as SparklesOutline, Pencil } from 'lucide-react';
 import { Button } from './ui/Button';
+import { ProfileSettingsModal } from './ProfileSettingsModal';
 import {
   fetchMyNotifications,
   markAllNotificationsRead,
@@ -37,6 +38,7 @@ export const Navbar = () => {
   const location = useLocation();
   const [showDropdown, setShowDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
@@ -271,10 +273,27 @@ export const Navbar = () => {
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setShowDropdown(false)} />
                     <div className="absolute right-0 mt-2 w-56 py-2 bg-white dark:bg-slate-900/90 backdrop-blur-2xl border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl z-20 animate-in slide-in-from-top-2 ring-1 ring-black/5 dark:ring-white/5">
-                      <div className="px-4 py-3 border-b border-slate-100 dark:border-white/10 mb-2">
-                        <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{user.name}</p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{user.email}</p>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowDropdown(false);
+                          setShowProfileSettings(true);
+                        }}
+                        className="mb-2 flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
+                      >
+                        <span className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-white/10">
+                          {user.avatarUrl || user.avatar ? (
+                            <img src={user.avatarUrl || user.avatar} alt={user.name} className="h-full w-full object-cover" />
+                          ) : (
+                            <UserIcon className="m-2.5 h-5 w-5 text-slate-500" />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-slate-900 dark:text-white">{user.name}</span>
+                          <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{user.email}</span>
+                        </span>
+                        <Pencil className="h-4 w-4 shrink-0 text-slate-400" />
+                      </button>
                       <Link to="/dashboard" onClick={() => setShowDropdown(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
                         <LayoutDashboard className="w-4 h-4" /> Dashboard
                       </Link> 
@@ -297,6 +316,10 @@ export const Navbar = () => {
           )}
         </div>
       </div>
+      <ProfileSettingsModal
+        isOpen={showProfileSettings}
+        onClose={() => setShowProfileSettings(false)}
+      />
     </nav>
   );
 };

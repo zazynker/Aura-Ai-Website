@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { fetchPublicProfiles } from './profileApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
 // ============================================
@@ -407,6 +408,7 @@ type RawReviewAsset = {
 type RawReviewTemplate = {
   id: string;
   version_id: string;
+  creator_id?: string | null;
   name?: string | null;
   cover_url?: string | null;
   thumb_url?: string | null;
@@ -430,7 +432,10 @@ async function signedAssetUrl(asset?: RawReviewAsset): Promise<string | undefine
   return data.signedUrl;
 }
 
-async function mapPendingReview(row: RawReviewTemplate): Promise<AdminReviewTemplate> {
+async function mapPendingReview(
+  row: RawReviewTemplate,
+  creatorUsername?: string,
+): Promise<AdminReviewTemplate> {
   const workflowSteps = Array.isArray(row.workflow?.steps)
     ? row.workflow.steps as Array<Record<string, unknown>>
     : [];
@@ -501,7 +506,7 @@ async function mapPendingReview(row: RawReviewTemplate): Promise<AdminReviewTemp
       : coverPosterUrl || originalCoverUrl,
     coverType,
     coverPosterUrl: coverType === 'video' ? coverPosterUrl : undefined,
-    authorName: email.includes('@') ? email.split('@')[0] : email,
+    authorName: creatorUsername || (email.includes('@') ? email.split('@')[0] : email),
     authorAvatar: '',
     submittedAt: row.submitted_at || new Date().toISOString(),
     stepsCount: steps.length,
@@ -519,11 +524,23 @@ export async function adminGetTemplateReviews(): Promise<{
     const { data, error } = await supabase.rpc('admin_list_template_reviews', { p_limit: 50 });
     if (error) return { data: null, error: error.message };
     if (!data?.success) return { data: null, error: data?.error || 'Could not load reviews.' };
-    const pending = await Promise.all(((data.pending || []) as RawReviewTemplate[]).map(mapPendingReview));
-    const recent = ((data.recent || []) as Array<Record<string, unknown>>).map((row): AdminReviewedTemplate => ({
+    const pendingRows = (data.pending || []) as RawReviewTemplate[];
+    const recentRows = (data.recent || []) as Array<Record<string, unknown>>;
+    const profiles = await fetchPublicProfiles(
+      [
+        ...pendingRows.map((row) => row.creator_id),
+        ...recentRows.map((row) => typeof row.creator_id === 'string' ? row.creator_id : null),
+      ].filter((id): id is string => Boolean(id)),
+    );
+    const pending = await Promise.all(pendingRows.map((row) => mapPendingReview(
+      row,
+      row.creator_id ? profiles.get(row.creator_id)?.username : undefined,
+    )));
+    const recent = recentRows.map((row): AdminReviewedTemplate => ({
       id: String(row.id || ''),
       name: String(row.name || 'Untitled workflow template'),
-      authorName: String(row.creator_email || 'Creator').split('@')[0],
+      authorName: (typeof row.creator_id === 'string' && profiles.get(row.creator_id)?.username)
+        || String(row.creator_email || 'Creator').split('@')[0],
       status: row.action === 'approved' ? 'Published' : 'Changes requested',
       reviewedAt: String(row.reviewed_at || new Date().toISOString()),
     }));
