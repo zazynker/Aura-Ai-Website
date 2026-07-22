@@ -229,6 +229,7 @@ export const TemplateBuilder = () => {
   const [activeStepId, setActiveStepId] = useState<string>('step-1');
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [isDraggingResult, setIsDraggingResult] = useState(false);
   const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const [builderError, setBuilderError] = useState<string | null>(null);
   const [draftIdentity, setDraftIdentity] = useState<TemplateDraftIdentity | null>(null);
@@ -243,6 +244,7 @@ export const TemplateBuilder = () => {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultFileInputRef = useRef<HTMLInputElement>(null);
+  const resultDragDepthRef = useRef(0);
   const publishFileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const loadedDraftIdRef = useRef<string | null>(null);
@@ -444,10 +446,7 @@ export const TemplateBuilder = () => {
     updateMaterial(materialId, { url: URL.createObjectURL(file) });
   };
 
-  const handleStepResultUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
+  const applyStepResultFile = (file: File) => {
     if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
       addToast('error', 'Please choose an image or video file.');
       return;
@@ -474,6 +473,41 @@ export const TemplateBuilder = () => {
       setFinalResult(resultUrl);
       setFinalResultType(resultType);
     }
+  };
+
+  const handleStepResultUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) applyStepResultFile(file);
+  };
+
+  const handleResultDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resultDragDepthRef.current += 1;
+    setIsDraggingResult(true);
+  };
+
+  const handleResultDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleResultDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resultDragDepthRef.current = Math.max(0, resultDragDepthRef.current - 1);
+    if (resultDragDepthRef.current === 0) setIsDraggingResult(false);
+  };
+
+  const handleResultDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resultDragDepthRef.current = 0;
+    setIsDraggingResult(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) applyStepResultFile(file);
   };
 
   const inferFeatureFromGeneration = (
@@ -1092,8 +1126,14 @@ export const TemplateBuilder = () => {
                 aria-label="Upload a result image or video from this device"
               />
               <div
+                onDragEnter={handleResultDragEnter}
+                onDragOver={handleResultDragOver}
+                onDragLeave={handleResultDragLeave}
+                onDrop={handleResultDrop}
                 className={`relative w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group ${
-                  builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id
+                  isDraggingResult
+                    ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-100 dark:border-purple-400 dark:bg-purple-950/30 dark:ring-purple-900/40'
+                    : builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id
                     ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
                     : 'border-slate-200 dark:border-slate-700'
                 }`}
@@ -1117,7 +1157,7 @@ export const TemplateBuilder = () => {
                     </div>
                     <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Add a result image or video</p>
                     <p className="px-4 text-center text-xs text-slate-400">
-                      Use a saved generation or choose a file from this device.
+                      Drag and drop a file here, use a saved generation, or choose one from this device.
                     </p>
                     <div className="flex flex-wrap items-center justify-center gap-2 px-4">
                       <button
