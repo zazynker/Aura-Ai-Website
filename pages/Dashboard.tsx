@@ -973,12 +973,12 @@ useEffect(() => {
                       ) : template.coverType === 'video' ? (
                         <video 
                           src={template.coverUrl} 
+                          poster={template.coverPosterUrl}
                           className="w-full h-full object-cover"
+                          autoPlay
                           muted
                           loop
                           playsInline
-                          onMouseEnter={(e) => { e.currentTarget.play().catch(()=>{}); }}
-                          onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }}
                           onError={() => setFailedTemplateCovers((current) => new Set(current).add(template.id))}
                         />
                       ) : (

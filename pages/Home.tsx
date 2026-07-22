@@ -86,20 +86,6 @@ const TemplateCardItem: React.FC<{
   user,
   saveBrowsingState
 }) => {
-  const [isHovered, setIsHovered] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    if (t.videoUrl && videoRef.current) {
-      if (isHovered) {
-        videoRef.current.play().catch(e => console.log('Autoplay prevented', e));
-      } else {
-        videoRef.current.pause();
-        videoRef.current.currentTime = 0;
-      }
-    }
-  }, [isHovered, t.videoUrl]);
-
   const handleUseWorkflow = (e: React.MouseEvent) => {
     e.stopPropagation();
     const detailPath = '/templates/' + (t.slug || t.id);
@@ -122,8 +108,6 @@ const TemplateCardItem: React.FC<{
 
   return (
     <div
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}
       onClick={(e) => {
         if (!t.isWorkflow) {
           onClick();
@@ -136,12 +120,13 @@ const TemplateCardItem: React.FC<{
       <div className="relative">
         {t.videoUrl ? (
           <video
-            ref={videoRef}
             src={t.videoUrl}
             poster={t.thumbUrl || t.imageUrl}
+            autoPlay
             loop
             muted
             playsInline
+            preload="metadata"
             className="w-full object-cover transform transition-transform duration-700 group-hover:scale-105"
             style={{ aspectRatio: (t.width && t.height) ? t.width / t.height : 'auto' }}
           />
@@ -268,7 +253,11 @@ export const Home = () => {
         const rows = await fetchPublishedTemplates(1000);
         const mapped: Template[] = rows.map((row) => {
           const isWorkflow = row.template_kind.startsWith('workflow_');
-          const isVideoCover = isWorkflow && row.cover_type === 'video';
+          const originalCoverUrl = row.cover_url || row.preview_url || '';
+          const isVideoCover = isWorkflow && (
+            row.cover_type === 'video'
+            || /\.(mp4|webm|mov|m4v)(?:$|[?#])/i.test(originalCoverUrl)
+          );
           const poster = row.thumb_url || row.image_url || '';
           const cover = isVideoCover
             ? poster
@@ -280,7 +269,7 @@ export const Home = () => {
             imageUrl: cover,
             thumbUrl: row.thumb_url || undefined,
             videoUrl: isVideoCover
-              ? row.cover_url || row.preview_url || undefined
+              ? originalCoverUrl || undefined
               : undefined,
             category: row.category || (isWorkflow ? 'Workflow' : 'Other'),
             tags: row.tags || [],

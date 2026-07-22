@@ -17,6 +17,7 @@ export interface CreatorTemplateCard {
   name: string;
   coverUrl: string;
   coverType: 'image' | 'video';
+  coverPosterUrl?: string;
   status: CreatorTemplateStatus;
   updatedAt: string;
   stepsCount: number;
@@ -36,6 +37,8 @@ interface TemplateRow {
   cover_type: string;
   status: 'draft' | 'pending_review' | 'published' | 'rejected';
   current_version_id: string | null;
+  draft_version_id: string | null;
+  submitted_version_id: string | null;
   updated_at: string;
   use_count: number | string | null;
 }
@@ -53,12 +56,22 @@ function workflowStepCount(workflow: unknown): number {
   return Array.isArray(steps) ? steps.length : 0;
 }
 
+function displayVersionId(template: TemplateRow): string | null {
+  if (template.status === 'published') {
+    return template.current_version_id || template.draft_version_id;
+  }
+  if (template.status === 'pending_review') {
+    return template.submitted_version_id || template.draft_version_id || template.current_version_id;
+  }
+  return template.draft_version_id || template.submitted_version_id || template.current_version_id;
+}
+
 export async function fetchCreatorTemplates(
   userId: string,
 ): Promise<CreatorTemplateCard[]> {
   const { data: templateData, error: templateError } = await supabase
     .from('templates')
-    .select('id,slug,name,display_name,image_url,thumb_url,cover_url,cover_type,status,current_version_id,updated_at,use_count')
+    .select('id,slug,name,display_name,image_url,thumb_url,cover_url,cover_type,status,current_version_id,draft_version_id,submitted_version_id,updated_at,use_count')
     .eq('creator_id', userId)
     .in('status', ['draft', 'pending_review', 'published', 'rejected'])
     .like('template_kind', 'workflow_%')
@@ -72,7 +85,7 @@ export async function fetchCreatorTemplates(
 
   const templateIds = templates.map((template) => template.id);
   const versionIds = templates
-    .map((template) => template.current_version_id)
+    .map(displayVersionId)
     .filter((id): id is string => Boolean(id));
 
   const [versionsResult, logsResult, rewardsResult, coverAssetsResult] = await Promise.all([
@@ -92,11 +105,13 @@ export async function fetchCreatorTemplates(
       .select('template_id,reward_credits')
       .eq('creator_id', userId)
       .in('template_id', templateIds),
-    supabase
-      .from('template_assets')
-      .select('template_id,asset_key,asset_type,public_url')
-      .in('template_id', templateIds)
-      .in('asset_key', ['cover-thumbnail', 'cover-original']),
+    versionIds.length
+      ? supabase
+          .from('template_assets')
+          .select('template_id,version_id,asset_key,asset_type,public_url')
+          .in('version_id', versionIds)
+          .in('asset_key', ['cover-thumbnail', 'cover-original'])
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (versionsResult.error) {
@@ -133,13 +148,13 @@ export async function fetchCreatorTemplates(
     }
   }
 
-  const coverAssetsByTemplate = new Map<
+  const coverAssetsByVersion = new Map<
     string,
     { thumbnail?: string; original?: string; originalType?: 'image' | 'video' }
   >();
   if (!coverAssetsResult.error) {
     for (const row of coverAssetsResult.data || []) {
-      const cover = coverAssetsByTemplate.get(row.template_id) || {};
+      const cover = coverAssetsByVersion.get(row.version_id) || {};
       if (row.asset_key === 'cover-thumbnail' && row.public_url) {
         cover.thumbnail = row.public_url;
       }
@@ -147,26 +162,29 @@ export async function fetchCreatorTemplates(
         cover.original = row.public_url;
         cover.originalType = row.asset_type === 'video' ? 'video' : 'image';
       }
-      coverAssetsByTemplate.set(row.template_id, cover);
+      coverAssetsByVersion.set(row.version_id, cover);
     }
   }
 
   return templates.map((template) => {
-    const savedCover = coverAssetsByTemplate.get(template.id);
+    const versionId = displayVersionId(template);
+    const savedCover = versionId ? coverAssetsByVersion.get(versionId) : undefined;
     const thumbnailUrl = savedCover?.thumbnail || template.thumb_url;
     const originalUrl = savedCover?.original || template.cover_url;
+    const coverType = savedCover?.originalType || (template.cover_type === 'video' ? 'video' : 'image');
     return {
       id: template.id,
       slug: template.slug,
       name: template.display_name || template.name,
-      coverUrl: thumbnailUrl || originalUrl || '',
-      coverType: thumbnailUrl
-        ? 'image'
-        : savedCover?.originalType || (template.cover_type === 'video' ? 'video' : 'image'),
+      coverUrl: coverType === 'video'
+        ? originalUrl || thumbnailUrl || ''
+        : thumbnailUrl || originalUrl || '',
+      coverType,
+      coverPosterUrl: coverType === 'video' ? thumbnailUrl || undefined : undefined,
       status: STATUS_LABELS[template.status],
       updatedAt: template.updated_at,
-      stepsCount: template.current_version_id
-        ? workflowStepCount(workflowByVersion.get(template.current_version_id))
+      stepsCount: versionId
+        ? workflowStepCount(workflowByVersion.get(versionId))
         : 0,
       uses: Number(template.use_count || 0),
       creditsEarned: creditsByTemplate.get(template.id) || 0,

@@ -376,6 +376,8 @@ export interface AdminReviewTemplate {
   versionId: string;
   name: string;
   coverUrl: string;
+  coverType: 'image' | 'video';
+  coverPosterUrl?: string;
   authorName: string;
   authorAvatar: string;
   submittedAt: string;
@@ -409,6 +411,7 @@ type RawReviewTemplate = {
   cover_url?: string | null;
   thumb_url?: string | null;
   image_url?: string | null;
+  cover_type?: string | null;
   creator_email?: string | null;
   submitted_at?: string | null;
   description?: string | null;
@@ -432,6 +435,19 @@ async function mapPendingReview(row: RawReviewTemplate): Promise<AdminReviewTemp
     ? row.workflow.steps as Array<Record<string, unknown>>
     : [];
   const assets = Array.isArray(row.assets) ? row.assets : [];
+  const coverOriginalAsset = assets.find((asset) => asset.asset_key === 'cover-original');
+  const coverThumbnailAsset = assets.find((asset) => asset.asset_key === 'cover-thumbnail');
+  const [savedCoverUrl, savedPosterUrl] = await Promise.all([
+    signedAssetUrl(coverOriginalAsset),
+    signedAssetUrl(coverThumbnailAsset),
+  ]);
+  const originalCoverUrl = savedCoverUrl || row.cover_url || row.image_url || '';
+  const coverPosterUrl = savedPosterUrl || row.thumb_url || row.image_url || undefined;
+  const coverType = coverOriginalAsset?.asset_type === 'video'
+    || row.cover_type === 'video'
+    || /\.(mp4|webm|mov|m4v)(?:$|[?#])/i.test(originalCoverUrl)
+    ? 'video' as const
+    : 'image' as const;
   const steps = await Promise.all(workflowSteps.map(async (step, index): Promise<AdminReviewStep> => {
     const parameters = step.parameters && typeof step.parameters === 'object'
       ? step.parameters as Record<string, unknown>
@@ -480,7 +496,11 @@ async function mapPendingReview(row: RawReviewTemplate): Promise<AdminReviewTemp
     id: row.id,
     versionId: row.version_id,
     name: row.name || 'Untitled workflow template',
-    coverUrl: row.thumb_url || row.cover_url || row.image_url || '',
+    coverUrl: coverType === 'video'
+      ? originalCoverUrl || coverPosterUrl || ''
+      : coverPosterUrl || originalCoverUrl,
+    coverType,
+    coverPosterUrl: coverType === 'video' ? coverPosterUrl : undefined,
     authorName: email.includes('@') ? email.split('@')[0] : email,
     authorAvatar: '',
     submittedAt: row.submitted_at || new Date().toISOString(),

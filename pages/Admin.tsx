@@ -952,7 +952,18 @@ export const Admin = () => {
                         }}
                         aria-label={`Review ${template.name}`}
                       >
-                        {template.coverUrl ? (
+                        {template.coverUrl && template.coverType === 'video' ? (
+                          <video
+                            src={template.coverUrl}
+                            poster={template.coverPosterUrl}
+                            className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]"
+                            autoPlay
+                            muted
+                            loop
+                            playsInline
+                            preload="metadata"
+                          />
+                        ) : template.coverUrl ? (
                           <img src={template.coverUrl} className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" alt={template.name} loading="lazy" />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center">
@@ -1384,11 +1395,24 @@ export const Admin = () => {
                     className="relative w-full aspect-video overflow-hidden rounded-xl border border-slate-200 dark:border-white/10 group"
                     onClick={() => setReviewMediaPreview({
                       url: reviewingTemplate.coverUrl,
-                      type: 'image',
+                      type: reviewingTemplate.coverType,
                       title: `${reviewingTemplate.name} cover`,
                     })}
                   >
-                    <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" />
+                    {reviewingTemplate.coverType === 'video' ? (
+                      <video
+                        src={reviewingTemplate.coverUrl}
+                        poster={reviewingTemplate.coverPosterUrl}
+                        className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]"
+                        autoPlay
+                        muted
+                        loop
+                        playsInline
+                        preload="metadata"
+                      />
+                    ) : (
+                      <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" />
+                    )}
                     <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
                       <Maximize2 className="w-7 h-7 text-white opacity-0 group-hover:opacity-100 drop-shadow" />
                     </span>
