@@ -49,3 +49,5 @@ coverage/
 .cache/
 .parcel-cache/
 .vite/
+.vercel/
+.env.local
