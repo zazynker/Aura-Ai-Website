@@ -284,6 +284,16 @@ export const TemplateBuilder = () => {
     );
   }, [steps, isFinalResultManual]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!showPublishModal || publishCoverType !== 'video' || !video) return;
+    const duration = Number.isFinite(video.duration) ? video.duration : coverVideoDuration;
+    if (!duration) return;
+    const segmentStart = Math.min(coverVideoStartTime, Math.max(0, duration - 2));
+    video.currentTime = segmentStart;
+    void video.play().catch(() => undefined);
+  }, [coverVideoDuration, coverVideoStartTime, publishCover, publishCoverType, showPublishModal]);
+
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -1656,9 +1666,46 @@ export const TemplateBuilder = () => {
                         className="w-full h-full object-cover" 
                         autoPlay 
                         muted 
-                        loop 
                         onLoadedMetadata={(e) => {
-                          setCoverVideoDuration(e.currentTarget.duration);
+                          const duration = e.currentTarget.duration;
+                          const segmentStart = Math.min(
+                            coverVideoStartTime,
+                            Math.max(0, duration - 2),
+                          );
+                          setCoverVideoDuration(duration);
+                          if (segmentStart !== coverVideoStartTime) {
+                            setCoverVideoStartTime(segmentStart);
+                          }
+                          e.currentTarget.currentTime = segmentStart;
+                          void e.currentTarget.play().catch(() => undefined);
+                        }}
+                        onTimeUpdate={(e) => {
+                          const video = e.currentTarget;
+                          const duration = Number.isFinite(video.duration)
+                            ? video.duration
+                            : coverVideoDuration;
+                          if (!duration) return;
+                          const segmentStart = Math.min(
+                            coverVideoStartTime,
+                            Math.max(0, duration - 2),
+                          );
+                          const segmentEnd = Math.min(segmentStart + 2, duration);
+                          if (
+                            video.currentTime < segmentStart - 0.05 ||
+                            video.currentTime >= segmentEnd - 0.02
+                          ) {
+                            video.currentTime = segmentStart;
+                            void video.play().catch(() => undefined);
+                          }
+                        }}
+                        onEnded={(e) => {
+                          const video = e.currentTarget;
+                          const segmentStart = Math.min(
+                            coverVideoStartTime,
+                            Math.max(0, video.duration - 2),
+                          );
+                          video.currentTime = segmentStart;
+                          void video.play().catch(() => undefined);
                         }}
                       />
                     ) : (
@@ -1689,6 +1736,7 @@ export const TemplateBuilder = () => {
                             setCoverVideoStartTime(targetTime);
                             if (videoRef.current) {
                               videoRef.current.currentTime = targetTime;
+                              void videoRef.current.play().catch(() => undefined);
                             }
                           };
                           updateTime(e.clientX);
