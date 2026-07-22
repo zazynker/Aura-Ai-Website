@@ -409,6 +409,8 @@ type RawReviewTemplate = {
   id: string;
   version_id: string;
   creator_id?: string | null;
+  creator_username?: string | null;
+  creator_avatar_url?: string | null;
   name?: string | null;
   cover_url?: string | null;
   thumb_url?: string | null;
@@ -434,7 +436,7 @@ async function signedAssetUrl(asset?: RawReviewAsset): Promise<string | undefine
 
 async function mapPendingReview(
   row: RawReviewTemplate,
-  creatorUsername?: string,
+  creatorProfile?: { username: string; avatarUrl: string | null },
 ): Promise<AdminReviewTemplate> {
   const workflowSteps = Array.isArray(row.workflow?.steps)
     ? row.workflow.steps as Array<Record<string, unknown>>
@@ -506,8 +508,10 @@ async function mapPendingReview(
       : coverPosterUrl || originalCoverUrl,
     coverType,
     coverPosterUrl: coverType === 'video' ? coverPosterUrl : undefined,
-    authorName: creatorUsername || (email.includes('@') ? email.split('@')[0] : email),
-    authorAvatar: '',
+    authorName: row.creator_username
+      || creatorProfile?.username
+      || (email.includes('@') ? email.split('@')[0] : email),
+    authorAvatar: row.creator_avatar_url || creatorProfile?.avatarUrl || '',
     submittedAt: row.submitted_at || new Date().toISOString(),
     stepsCount: steps.length,
     description: row.description || 'No description provided.',
@@ -534,12 +538,13 @@ export async function adminGetTemplateReviews(): Promise<{
     );
     const pending = await Promise.all(pendingRows.map((row) => mapPendingReview(
       row,
-      row.creator_id ? profiles.get(row.creator_id)?.username : undefined,
+      row.creator_id ? profiles.get(row.creator_id) : undefined,
     )));
     const recent = recentRows.map((row): AdminReviewedTemplate => ({
       id: String(row.id || ''),
       name: String(row.name || 'Untitled workflow template'),
-      authorName: (typeof row.creator_id === 'string' && profiles.get(row.creator_id)?.username)
+      authorName: (typeof row.creator_username === 'string' && row.creator_username)
+        || (typeof row.creator_id === 'string' && profiles.get(row.creator_id)?.username)
         || String(row.creator_email || 'Creator').split('@')[0],
       status: row.action === 'approved' ? 'Published' : 'Changes requested',
       reviewedAt: String(row.reviewed_at || new Date().toISOString()),

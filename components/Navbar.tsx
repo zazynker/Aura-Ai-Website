@@ -135,8 +135,9 @@ export const Navbar = () => {
   };
 
   return (
-    <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isHome ? 'bg-white/80 dark:bg-slate-900/80' : 'bg-white dark:bg-slate-900'} backdrop-blur-md border-b border-slate-200 dark:border-white/5`}>
-      <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+    <>
+      <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isHome ? 'bg-white/80 dark:bg-slate-900/80' : 'bg-white dark:bg-slate-900'} backdrop-blur-md border-b border-slate-200 dark:border-white/5`}>
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
         {/* Left - Logo */}
         <Link to="/" className="flex items-center gap-2 group">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center group-hover:scale-105 transition-transform shadow-lg shadow-purple-500/20">
@@ -314,12 +315,13 @@ export const Navbar = () => {
               <Button variant="gradient" size="sm" onClick={() => navigate('/signup')}>Sign Up</Button>
             </div>
           )}
+          </div>
         </div>
-      </div>
+      </nav>
       <ProfileSettingsModal
         isOpen={showProfileSettings}
         onClose={() => setShowProfileSettings(false)}
       />
-    </nav>
+    </>
   );
 };
