@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw, Upload } from 'lucide-react';
+import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw, Upload, Maximize2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { useStore } from '../context/StoreContext';
@@ -63,6 +63,25 @@ const getImageToVideoDuration = (value?: string): number => {
   const parsed = Number.parseInt(value?.replace(/[^0-9]/g, '') || '3', 10);
   return Math.min(15, Math.max(3, Number.isFinite(parsed) ? parsed : 3));
 };
+
+const getGenerationDuration = (value: unknown, fallback?: number): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.min(15, Math.max(3, Math.round(value)));
+  }
+  if (typeof value === 'string') {
+    const parts = value.split(':').map((part) => Number.parseFloat(part));
+    const parsed = parts.length > 1 && parts.every(Number.isFinite)
+      ? parts.reduce((total, part) => total * 60 + part, 0)
+      : Number.parseFloat(value.replace(/[^0-9.]/g, ''));
+    if (Number.isFinite(parsed)) {
+      return Math.min(15, Math.max(3, Math.round(parsed)));
+    }
+  }
+  return Math.min(15, Math.max(3, Math.round(fallback || 3)));
+};
+
+const getGenerationResolution = (value: unknown): '720p' | '1080p' =>
+  value === '1080p' ? '1080p' : '720p';
 
 const getMissingRequiredMaterialTypes = (
   step: WorkflowStep,
@@ -156,6 +175,8 @@ export const TemplateBuilder = () => {
   // Left column - Final Result
   const [finalResult, setFinalResult] = useState<string | null>(null);
   const [finalResultType, setFinalResultType] = useState<'image' | 'video' | null>(null);
+  const [isFinalResultManual, setIsFinalResultManual] = useState(false);
+  const [showFinalResultPreview, setShowFinalResultPreview] = useState(false);
   
   const [templateTitle, setTemplateTitle] = useState('');
   const [templateDescription, setTemplateDescription] = useState('');
@@ -211,6 +232,8 @@ export const TemplateBuilder = () => {
         setActiveStepId(draft.steps[0]?.id || 'step-1');
         setFinalResult(draft.finalResultUrl);
         setFinalResultType(draft.finalResultType);
+        setIsFinalResultManual(false);
+        setShowFinalResultPreview(false);
         setPersistedCover(draft.cover);
         setPublishCover(draft.coverUrl);
         setPublishCoverType(draft.coverType);
@@ -249,6 +272,18 @@ export const TemplateBuilder = () => {
       Boolean(generation.imageUrl || generation.videoUrl),
   );
 
+  useEffect(() => {
+    if (isFinalResultManual) return;
+    const latestStep = steps[steps.length - 1];
+    const latestResult = latestStep?.resultUrl || null;
+    setFinalResult(latestResult);
+    setFinalResultType(
+      latestResult
+        ? latestStep.resultType || (isVideoFeature(latestStep.feature) ? 'video' : 'image')
+        : null,
+    );
+  }, [steps, isFinalResultManual]);
+
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
 
   const handleDragStart = (e: React.DragEvent, id: string) => {
@@ -281,10 +316,20 @@ export const TemplateBuilder = () => {
 
   const handleFinalResultUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (file) {
+      if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+        addToast('error', 'Please choose an image or video file.');
+        return;
+      }
+      if (isFinalResultManual && finalResult?.startsWith('blob:')) {
+        URL.revokeObjectURL(finalResult);
+      }
       const url = URL.createObjectURL(file);
       setFinalResult(url);
       setFinalResultType(file.type.startsWith('video/') ? 'video' : 'image');
+      setIsFinalResultManual(true);
+      setShowFinalResultPreview(false);
       setSaveState('idle');
     }
   };
@@ -424,7 +469,7 @@ export const TemplateBuilder = () => {
       resultGenerationId: undefined,
     });
 
-    if (activeStep.id === steps[steps.length - 1]?.id) {
+    if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id) {
       setFinalResult(resultUrl);
       setFinalResultType(resultType);
     }
@@ -577,15 +622,8 @@ export const TemplateBuilder = () => {
     );
     const nextVideoParams = nextFeature === 'Image to Video'
       ? {
-          duration: `${
-            typeof parameterDuration === 'number'
-              ? parameterDuration
-              : generation.videoDuration || 3
-          }s`,
-          resolution:
-            typeof parameterResolution === 'string'
-              ? parameterResolution
-              : '720p',
+          duration: `${getGenerationDuration(parameterDuration, generation.videoDuration)}s`,
+          resolution: getGenerationResolution(parameterResolution),
           generateAudio:
             typeof parameterGenerateAudio === 'boolean'
               ? parameterGenerateAudio
@@ -630,7 +668,7 @@ export const TemplateBuilder = () => {
     if (activeStep.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(activeStep.resultUrl);
     updateActiveStep(nextStep);
 
-    if (activeStep.id === steps[steps.length - 1]?.id) {
+    if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id) {
       setFinalResult(resultUrl);
       setFinalResultType(
         generation.videoUrl && resultUrl === generation.videoUrl
@@ -669,7 +707,7 @@ export const TemplateBuilder = () => {
       return next;
     });
     updateActiveStep({ resultUrl: null, resultType: undefined, resultGenerationId: undefined });
-    if (activeStep.id === steps[steps.length - 1]?.id && finalResult === removedResult) {
+    if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id && finalResult === removedResult) {
       setFinalResult(null);
       setFinalResultType(null);
     }
@@ -774,6 +812,7 @@ export const TemplateBuilder = () => {
 
   const handleBuildAnother = () => {
     if (publishCover?.startsWith('blob:')) URL.revokeObjectURL(publishCover);
+    if (isFinalResultManual && finalResult?.startsWith('blob:')) URL.revokeObjectURL(finalResult);
     steps.forEach((step) => {
       if (step.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(step.resultUrl);
       step.materials.forEach((material) => {
@@ -783,6 +822,8 @@ export const TemplateBuilder = () => {
 
     setFinalResult(null);
     setFinalResultType(null);
+    setIsFinalResultManual(false);
+    setShowFinalResultPreview(false);
     setTemplateTitle('');
     setTemplateDescription('');
     setPublishCover(null);
@@ -934,10 +975,7 @@ export const TemplateBuilder = () => {
             <div className="mb-4">
               <input type="file" ref={fileInputRef} onChange={handleFinalResultUpload} accept="image/*,video/*" className="hidden" />
               {finalResult ? (
-                <div 
-                  className="aspect-[3/4] w-full bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700"
-                  onClick={() => fileInputRef.current?.click()}
-                >
+                <div className="aspect-[3/4] w-full bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group border border-slate-200 dark:border-slate-700">
                   {finalResultType === 'video' ? (
                     <video 
                       src={finalResult} 
@@ -949,8 +987,25 @@ export const TemplateBuilder = () => {
                   ) : (
                     <img src={finalResult} alt="Final Result" className="w-full h-full object-cover" />
                   )}
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">Change final result</span>
+                  <div className="absolute inset-0 flex items-center justify-center gap-3 bg-black/55 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowFinalResultPreview(true)}
+                      className="flex min-w-24 flex-col items-center gap-2 rounded-xl border border-white/25 bg-black/30 px-4 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/80"
+                    >
+                      <Maximize2 className="h-5 w-5" />
+                      <span className="text-xs font-semibold">
+                        {finalResultType === 'video' ? 'Play' : 'Enlarge'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex min-w-24 flex-col items-center gap-2 rounded-xl border border-white/25 bg-black/30 px-4 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/80"
+                    >
+                      <RefreshCw className="h-5 w-5" />
+                      <span className="text-xs font-semibold">Change</span>
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -1370,7 +1425,10 @@ export const TemplateBuilder = () => {
                           step="1"
                           value={getImageToVideoDuration(activeStep.videoParams?.duration)}
                           onChange={(event) => updateImageToVideoSettings({ duration: `${event.target.value}s` })}
-                          className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-slate-200 dark:bg-slate-700 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md"
+                          style={{
+                            background: `linear-gradient(to right, #22c55e 0%, #22c55e ${((getImageToVideoDuration(activeStep.videoParams?.duration) - 3) / 12) * 100}%, #cbd5e1 ${((getImageToVideoDuration(activeStep.videoParams?.duration) - 3) / 12) * 100}%, #cbd5e1 100%)`,
+                          }}
+                          className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-green-500 [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-green-500"
                         />
                         <span className="text-xs font-medium text-slate-400">15s</span>
                       </div>
@@ -1386,7 +1444,7 @@ export const TemplateBuilder = () => {
                               onClick={() => updateImageToVideoSettings({ resolution })}
                               className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all ${
                                 (activeStep.videoParams?.resolution || '720p') === resolution
-                                  ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200 dark:bg-slate-700 dark:text-slate-100 dark:ring-slate-600'
+                                  ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
                                   : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
                               }`}
                             >
@@ -1395,7 +1453,11 @@ export const TemplateBuilder = () => {
                           ))}
                         </div>
                       </div>
-                      <label className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/60">
+                      <label className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2.5 transition-colors ${
+                        (activeStep.videoParams?.generateAudio ?? true)
+                          ? 'border-green-400 bg-green-50/80 dark:border-green-400/70 dark:bg-green-500/10'
+                          : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/60'
+                      }`}>
                         <div>
                           <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Generate Audio</div>
                           <div className="mt-0.5 text-[10px] text-slate-400">Include synchronized sound</div>
@@ -1404,7 +1466,7 @@ export const TemplateBuilder = () => {
                           type="checkbox"
                           checked={activeStep.videoParams?.generateAudio ?? true}
                           onChange={(event) => updateImageToVideoSettings({ generateAudio: event.target.checked })}
-                          className="h-4 w-4 cursor-pointer accent-purple-600"
+                          className="h-4 w-4 cursor-pointer accent-green-500"
                         />
                       </label>
                     </div>
@@ -1415,6 +1477,33 @@ export const TemplateBuilder = () => {
           </div>
         </div>
       </div>
+
+      {/* Final Result Preview Modal */}
+      <Modal
+        isOpen={showFinalResultPreview && Boolean(finalResult)}
+        onClose={() => setShowFinalResultPreview(false)}
+        title="Final Result Preview"
+        className="max-w-5xl"
+      >
+        <div className="flex min-h-64 items-center justify-center rounded-xl bg-slate-100 p-3 dark:bg-slate-950 sm:p-5">
+          {finalResult && finalResultType === 'video' ? (
+            <video
+              src={finalResult}
+              className="max-h-[76vh] max-w-full rounded-lg"
+              controls
+              autoPlay
+              playsInline
+              preload="metadata"
+            />
+          ) : finalResult ? (
+            <img
+              src={finalResult}
+              alt="Final result preview"
+              className="max-h-[76vh] max-w-full rounded-lg object-contain"
+            />
+          ) : null}
+        </div>
+      </Modal>
 
       {/* Material Preview Modal */}
       <Modal
