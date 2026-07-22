@@ -1123,7 +1123,7 @@ export const TemplateBuilder = () => {
                       <button
                         type="button"
                         onClick={openDashboardResults}
-                        className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:border-purple-300 hover:text-purple-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                        className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-xs font-medium text-white shadow-sm hover:bg-purple-700"
                       >
                         <History className="h-3.5 w-3.5" />
                         Choose from Dashboard
@@ -1131,7 +1131,7 @@ export const TemplateBuilder = () => {
                       <button
                         type="button"
                         onClick={() => resultFileInputRef.current?.click()}
-                        className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-xs font-medium text-white shadow-sm hover:bg-purple-700"
+                        className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:border-purple-300 hover:text-purple-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
                       >
                         <Upload className="h-3.5 w-3.5" />
                         Upload from device
@@ -1147,7 +1147,7 @@ export const TemplateBuilder = () => {
                         event.stopPropagation();
                         openDashboardResults();
                       }}
-                      className="flex items-center gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black"
+                      className="flex items-center gap-1.5 rounded-lg bg-purple-600/90 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-purple-600"
                       aria-label="Replace this step result"
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
@@ -1159,7 +1159,7 @@ export const TemplateBuilder = () => {
                         event.stopPropagation();
                         resultFileInputRef.current?.click();
                       }}
-                      className="flex items-center gap-1.5 rounded-lg bg-purple-600/90 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-purple-600"
+                      className="flex items-center gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black"
                       aria-label="Upload a local replacement for this step result"
                     >
                       <Upload className="h-3.5 w-3.5" />
