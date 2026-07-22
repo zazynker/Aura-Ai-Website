@@ -223,6 +223,72 @@ export async function adminGetTemplateStats(
   }
 }
 
+export interface AdminTemplateBoostResult {
+  eventId: string;
+  previousUseCount: number;
+  newUseCount: number;
+  rewardCredits?: number;
+  previousBalance?: number;
+  newBalance?: number;
+  virtualUsername?: string;
+}
+
+const normalizeTemplateBoostResult = (
+  value: Record<string, unknown>,
+): AdminTemplateBoostResult => ({
+  eventId: String(value.eventId || ''),
+  previousUseCount: Number(value.previousUseCount || 0),
+  newUseCount: Number(value.newUseCount || 0),
+  rewardCredits: value.rewardCredits === undefined ? undefined : Number(value.rewardCredits),
+  previousBalance: value.previousBalance === undefined ? undefined : Number(value.previousBalance),
+  newBalance: value.newBalance === undefined ? undefined : Number(value.newBalance),
+  virtualUsername: typeof value.virtualUsername === 'string' ? value.virtualUsername : undefined,
+});
+
+export async function adminSetTemplateUseCount(
+  templateId: string,
+  useCount: number,
+  internalNote?: string,
+): Promise<{ data: AdminTemplateBoostResult | null; error: string | null }> {
+  try {
+    const { data, error } = await supabase.rpc('admin_set_template_use_count', {
+      p_template_id: templateId,
+      p_use_count: useCount,
+      p_internal_note: internalNote?.trim() || null,
+    });
+    if (error) return { data: null, error: error.message };
+    if (!data?.success) return { data: null, error: data?.error || 'Could not update template uses.' };
+    return { data: normalizeTemplateBoostResult(data as Record<string, unknown>), error: null };
+  } catch (error) {
+    console.error('Unexpected template use-count update error:', error);
+    return { data: null, error: 'Could not update template uses.' };
+  }
+}
+
+export async function adminIssueTemplateEncouragement(input: {
+  templateId: string;
+  virtualUsername: string;
+  rewardCredits: number;
+  usageDelta: number;
+  internalNote?: string;
+}): Promise<{ data: AdminTemplateBoostResult | null; error: string | null }> {
+  try {
+    const { data, error } = await supabase.rpc('admin_issue_template_encouragement', {
+      p_template_id: input.templateId,
+      p_virtual_username: input.virtualUsername.trim(),
+      p_reward_credits: input.rewardCredits,
+      p_usage_delta: input.usageDelta,
+      p_internal_note: input.internalNote?.trim() || null,
+    });
+    if (error) return { data: null, error: error.message };
+    if (!data?.success) return { data: null, error: data?.error || 'Could not send encouragement.' };
+    return { data: normalizeTemplateBoostResult(data as Record<string, unknown>), error: null };
+  } catch (error) {
+    console.error('Unexpected template encouragement error:', error);
+    return { data: null, error: 'Could not send encouragement.' };
+  }
+}
+
 /**
  * 获取低使用率/未使用的模板（管理员专用）
  */

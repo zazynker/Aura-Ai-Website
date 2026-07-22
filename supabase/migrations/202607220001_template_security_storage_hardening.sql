@@ -1,3 +1,4 @@
+-- Unique migration version; this SQL was originally applied manually on 2026-07-22.
 begin;
 
 -- Every workflow-template accounting table is private by default. Service-role

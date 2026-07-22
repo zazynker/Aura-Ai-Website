@@ -123,6 +123,7 @@ export interface CreatorRewardTemplateSummary {
   templateName: string;
   creditsEarned: number;
   userCount: number;
+  usernames: string[];
 }
 
 export interface CreatorRewardCelebration {
@@ -132,6 +133,7 @@ export interface CreatorRewardCelebration {
   templateCount: number;
   creditsEarned: number;
   primaryTemplateId: string | null;
+  usernames: string[];
   templates: CreatorRewardTemplateSummary[];
 }
 

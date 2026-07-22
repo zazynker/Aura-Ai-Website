@@ -74,6 +74,16 @@ const toNonNegativeInteger = (value: unknown): number => {
   return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : 0;
 };
 
+const normalizeUsernames = (value: unknown): string[] => (
+  Array.isArray(value)
+    ? value
+        .filter((item): item is string => typeof item === 'string')
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 20)
+    : []
+);
+
 const normalizeCelebrationTemplate = (value: unknown): CreatorRewardTemplateSummary | null => {
   if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;
@@ -83,11 +93,12 @@ const normalizeCelebrationTemplate = (value: unknown): CreatorRewardTemplateSumm
     templateName: row.templateName,
     creditsEarned: toNonNegativeInteger(row.creditsEarned),
     userCount: toNonNegativeInteger(row.userCount),
+    usernames: normalizeUsernames(row.usernames),
   };
 };
 
 export async function claimCreatorRewardCelebration(): Promise<CreatorRewardCelebration | null> {
-  const { data, error } = await supabase.rpc('claim_creator_reward_celebration');
+  const { data, error } = await supabase.rpc('claim_creator_reward_celebration_v2');
   if (error) throw new Error(`Could not load creator rewards: ${error.message}`);
   if (!data || typeof data !== 'object') return null;
 
@@ -107,6 +118,7 @@ export async function claimCreatorRewardCelebration(): Promise<CreatorRewardCele
     templateCount: toNonNegativeInteger(result.templateCount),
     creditsEarned,
     primaryTemplateId: typeof result.primaryTemplateId === 'string' ? result.primaryTemplateId : null,
+    usernames: normalizeUsernames(result.usernames),
     templates,
   };
 }

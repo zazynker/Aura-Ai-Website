@@ -16,6 +16,16 @@ const describeTemplates = (celebration: CreatorRewardCelebration): string => {
   return remaining > 0 ? `${names.join(', ')} and ${remaining} more` : names.join(' and ');
 };
 
+const describePeople = (celebration: CreatorRewardCelebration): string => {
+  const names = celebration.usernames.slice(0, 2);
+  if (names.length === 0) {
+    return celebration.userCount === 1 ? 'Someone' : `${celebration.userCount} people`;
+  }
+  if (celebration.userCount <= 1) return names[0];
+  const remaining = Math.max(celebration.userCount - names.length, 0);
+  return remaining > 0 ? `${names.join(', ')} and ${remaining} more people` : names.join(' and ');
+};
+
 export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ celebration, onClose }) => {
   const navigate = useNavigate();
   const [showParticles, setShowParticles] = useState(false);
@@ -50,7 +60,7 @@ export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ 
 
   if (!celebration) return null;
 
-  const personLabel = celebration.userCount === 1 ? '1 person' : `${celebration.userCount} people`;
+  const personLabel = describePeople(celebration);
   const templateDescription = describeTemplates(celebration);
   const activityDescription = celebration.templateCount === 1
     ? `${personLabel} used your ${templateDescription} template.`

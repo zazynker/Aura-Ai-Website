@@ -1,3 +1,4 @@
+-- Unique migration version; this SQL was originally applied manually on 2026-07-22.
 -- Keep Admin template review cards in sync with the creator's public profile.
 -- The previous RPC returned only creator_email, which forced the UI to show an
 -- email prefix and made it impossible to render a profile avatar.

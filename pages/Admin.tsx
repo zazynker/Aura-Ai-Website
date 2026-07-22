@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
   Settings, BarChart3, RefreshCw, Image, AlertTriangle, Video,
   Eye, X, CheckCircle, MessageSquare, ChevronDown, ChevronUp, Layers,
-  PlayCircle, Maximize2, Music
+  PlayCircle, Maximize2, Music, Gift, Sparkles
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
@@ -22,6 +22,8 @@ import {
   adminGetUserGenerations,
   adminGetTemplateReviews,
   adminReviewTemplate,
+  adminSetTemplateUseCount,
+  adminIssueTemplateEncouragement,
   AdminGeneration,
   AdminReviewTemplate,
   AdminReviewedTemplate,
@@ -29,6 +31,11 @@ import {
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
 type TabType = 'overview' | 'users' | 'templates' | 'unused' | 'video' | 'review';
+
+const VIRTUAL_USERNAME_SUGGESTIONS = [
+  'Bananapiepie', 'MochiStudio', 'PeachyNova', 'CocoCanvas',
+  'LunaCreates', 'MintyMango', 'PixelPanda', 'SunnyBunny',
+];
 
 export const Admin = () => {
   const navigate = useNavigate();
@@ -72,6 +79,15 @@ export const Admin = () => {
   // Template stats state
   const [templateStats, setTemplateStats] = useState<TemplateStats[]>([]);
   const [templateStatsLoading, setTemplateStatsLoading] = useState(false);
+
+  // Admin-only creator encouragement controls
+  const [boostingTemplate, setBoostingTemplate] = useState<TemplateStats | null>(null);
+  const [boostDisplayedUses, setBoostDisplayedUses] = useState('0');
+  const [boostVirtualUsername, setBoostVirtualUsername] = useState('Bananapiepie');
+  const [boostUsageDelta, setBoostUsageDelta] = useState('1');
+  const [boostRewardCredits, setBoostRewardCredits] = useState('10');
+  const [boostInternalNote, setBoostInternalNote] = useState('');
+  const [boostSaving, setBoostSaving] = useState(false);
 
   // Unused templates state
   const [unusedTemplates, setUnusedTemplates] = useState<UnusedTemplate[]>([]);
@@ -341,6 +357,90 @@ export const Admin = () => {
       addToast('error', error || 'Failed to update plan');
     }
     setIsUpdating(false);
+  };
+
+  const openTemplateBoostModal = (template: TemplateStats) => {
+    setBoostingTemplate(template);
+    setBoostDisplayedUses(String(template.usage_count));
+    setBoostVirtualUsername(VIRTUAL_USERNAME_SUGGESTIONS[0]);
+    setBoostUsageDelta('1');
+    setBoostRewardCredits('10');
+    setBoostInternalNote('');
+  };
+
+  const closeTemplateBoostModal = () => {
+    if (boostSaving) return;
+    setBoostingTemplate(null);
+  };
+
+  const applyTemplateUseCount = async () => {
+    if (!boostingTemplate || boostSaving) return;
+    const useCount = Number(boostDisplayedUses);
+    if (!Number.isSafeInteger(useCount) || useCount < 0) {
+      addToast('error', 'Displayed uses must be a non-negative whole number.');
+      return;
+    }
+    setBoostSaving(true);
+    const { data, error } = await adminSetTemplateUseCount(
+      boostingTemplate.template_id,
+      useCount,
+      boostInternalNote,
+    );
+    if (error || !data) {
+      addToast('error', error || 'Could not update displayed uses.');
+    } else {
+      setTemplateStats((items) => items.map((item) => item.template_id === boostingTemplate.template_id
+        ? { ...item, usage_count: data.newUseCount }
+        : item));
+      setBoostingTemplate((current) => current ? { ...current, usage_count: data.newUseCount } : current);
+      setBoostDisplayedUses(String(data.newUseCount));
+      addToast('success', `Displayed uses updated: ${data.previousUseCount} → ${data.newUseCount}`);
+    }
+    setBoostSaving(false);
+  };
+
+  const sendTemplateEncouragement = async () => {
+    if (!boostingTemplate || boostSaving) return;
+    const rewardCredits = Number(boostRewardCredits);
+    const usageDelta = Number(boostUsageDelta);
+    if (!/^[A-Za-z0-9_.]{2,30}$/.test(boostVirtualUsername.trim())) {
+      addToast('error', 'Virtual username must be 2-30 letters, numbers, underscores, or dots.');
+      return;
+    }
+    if (!Number.isSafeInteger(rewardCredits) || rewardCredits < 1 || rewardCredits > 10000) {
+      addToast('error', 'Reward credits must be a whole number between 1 and 10,000.');
+      return;
+    }
+    if (!Number.isSafeInteger(usageDelta) || usageDelta < 1 || usageDelta > 1000) {
+      addToast('error', 'Usage increment must be a whole number between 1 and 1,000.');
+      return;
+    }
+
+    setBoostSaving(true);
+    const { data, error } = await adminIssueTemplateEncouragement({
+      templateId: boostingTemplate.template_id,
+      virtualUsername: boostVirtualUsername,
+      rewardCredits,
+      usageDelta,
+      internalNote: boostInternalNote,
+    });
+    if (error || !data) {
+      addToast('error', error || 'Could not send creator encouragement.');
+    } else {
+      setTemplateStats((items) => items.map((item) => item.template_id === boostingTemplate.template_id
+        ? {
+            ...item,
+            usage_count: data.newUseCount,
+            total_credits: item.total_credits + rewardCredits,
+          }
+        : item));
+      addToast(
+        'success',
+        `${data.virtualUsername || boostVirtualUsername} used the template · ${rewardCredits} credits awarded`,
+      );
+      setBoostingTemplate(null);
+    }
+    setBoostSaving(false);
   };
 
   // Loading state
@@ -665,11 +765,20 @@ export const Admin = () => {
                       </div>
                     </div>
                     {/* Info */}
-                    <div className="p-2">
+                    <div className="p-2 space-y-2">
                       <h3 className="text-xs font-medium text-slate-900 dark:text-white truncate">
                         {t.template_name || t.template_id}
                       </h3>
-                      <p className="text-[10px] text-orange-500 font-mono">{t.total_credits.toLocaleString()} credits</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[10px] text-orange-500 font-mono">{t.total_credits.toLocaleString()} credits</p>
+                        <button
+                          type="button"
+                          onClick={() => openTemplateBoostModal(t)}
+                          className="inline-flex items-center gap-1 rounded-md bg-gradient-to-r from-amber-500 to-pink-500 px-2 py-1 text-[10px] font-bold text-white shadow-sm hover:from-amber-600 hover:to-pink-600"
+                        >
+                          <Sparkles className="w-3 h-3" /> Golden finger
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1050,6 +1159,122 @@ export const Admin = () => {
             </div>
           </div>
         )}
+
+      {/* Admin-only template golden finger */}
+      <Modal
+        isOpen={!!boostingTemplate}
+        onClose={closeTemplateBoostModal}
+        title={`Golden finger: ${boostingTemplate?.template_name || 'Template'}`}
+      >
+        {boostingTemplate && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+              Creator-facing rewards use the same popup and notification as a real template use. The internal source is visible only in the admin audit trail.
+            </div>
+
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-purple-500" />
+                <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Displayed usage count</h4>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={boostDisplayedUses}
+                  onChange={(event) => setBoostDisplayedUses(event.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-purple-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => void applyTemplateUseCount()}
+                  disabled={boostSaving}
+                >
+                  {boostSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save count'}
+                </Button>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-t border-slate-200 pt-5 dark:border-white/10">
+              <div className="flex items-center gap-2">
+                <Gift className="h-4 w-4 text-pink-500" />
+                <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Simulate a successful use</h4>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Displayed username</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    maxLength={30}
+                    value={boostVirtualUsername}
+                    onChange={(event) => setBoostVirtualUsername(event.target.value)}
+                    placeholder="Bananapiepie"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-pink-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      const options = VIRTUAL_USERNAME_SUGGESTIONS.filter((name) => name !== boostVirtualUsername);
+                      setBoostVirtualUsername(options[Math.floor(Math.random() * options.length)] || VIRTUAL_USERNAME_SUGGESTIONS[0]);
+                    }}
+                  >
+                    Random
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Add to uses</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    step="1"
+                    value={boostUsageDelta}
+                    onChange={(event) => setBoostUsageDelta(event.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-pink-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Reward credits</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10000"
+                    step="1"
+                    value={boostRewardCredits}
+                    onChange={(event) => setBoostRewardCredits(event.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-pink-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Internal audit note (optional)</label>
+                <textarea
+                  maxLength={500}
+                  value={boostInternalNote}
+                  onChange={(event) => setBoostInternalNote(event.target.value)}
+                  placeholder="Only administrators can see this note."
+                  className="h-20 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-pink-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+
+              <Button
+                className="w-full bg-gradient-to-r from-amber-500 to-pink-500 text-white hover:from-amber-600 hover:to-pink-600"
+                onClick={() => void sendTemplateEncouragement()}
+                disabled={boostSaving || !boostVirtualUsername.trim() || !boostRewardCredits || !boostUsageDelta}
+              >
+                {boostSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Sparkles className="mr-2 h-4 w-4" /> Send encouragement</>}
+              </Button>
+            </section>
+          </div>
+        )}
+      </Modal>
 
       {/* Edit User Modal */}
       <Modal 

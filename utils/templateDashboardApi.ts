@@ -101,7 +101,7 @@ export async function fetchCreatorTemplates(
       .in('template_id', templateIds)
       .order('created_at', { ascending: false }),
     supabase
-      .from('template_creator_rewards')
+      .from('template_step_rewards')
       .select('template_id,reward_credits')
       .eq('creator_id', userId)
       .in('template_id', templateIds),

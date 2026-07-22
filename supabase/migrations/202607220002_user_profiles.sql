@@ -1,3 +1,4 @@
+-- Unique migration version; this SQL was originally applied manually on 2026-07-22.
 -- Public creator profiles, case-insensitive username uniqueness, and a
 -- database-enforced rolling limit of three username changes per year.
 
