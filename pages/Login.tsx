@@ -184,7 +184,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
                     <Sparkles className="w-6 h-6 text-white" />
                 </div>
                 <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">{isSignup ? 'Create Account' : 'Welcome Back'}</h2>
-                <p className="text-slate-600 dark:text-slate-400 text-sm">Join the future of product photography</p>
+                <p className="text-slate-600 dark:text-slate-400 text-sm">Create AI Images & Videos. Share How They’re Made.</p>
             </div>
 
             {/* Google Login Button - 放在表单前面，更醒目 */}
@@ -302,3 +302,4 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
     </div>
   );
 };
+
