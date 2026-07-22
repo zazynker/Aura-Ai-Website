@@ -83,6 +83,19 @@ const getGenerationDuration = (value: unknown, fallback?: number): number => {
 const getGenerationResolution = (value: unknown): '720p' | '1080p' =>
   value === '1080p' ? '1080p' : '720p';
 
+const IMAGE_RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2'] as const;
+const IMAGE_RESOLUTIONS = ['1K', '2K', '4K'] as const;
+
+const getGenerationImageRatio = (value: unknown): string =>
+  typeof value === 'string' && IMAGE_RATIOS.includes(value as typeof IMAGE_RATIOS[number])
+    ? value
+    : '1:1';
+
+const getGenerationImageResolution = (value: unknown): string =>
+  typeof value === 'string' && IMAGE_RESOLUTIONS.includes(value as typeof IMAGE_RESOLUTIONS[number])
+    ? value
+    : '1K';
+
 const getMissingRequiredMaterialTypes = (
   step: WorkflowStep,
   stepIndex: number,
@@ -159,6 +172,7 @@ const createInitialStep = (): WorkflowStep => ({
     { id: 'mat-1', type: 'Image', url: null, allowDownload: true },
   ],
   prompt: '',
+  imageParams: { ratio: '1:1', resolution: '1K' },
 });
 
 export const TemplateBuilder = () => {
@@ -364,7 +378,8 @@ export const TemplateBuilder = () => {
       feature: 'Text to Image',
       resultUrl: null,
       materials: [{ id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }],
-      prompt: ''
+      prompt: '',
+      imageParams: { ratio: '1:1', resolution: '1K' },
     };
     setSteps([...steps, newStep]);
     setActiveStepId(newStep.id);
@@ -385,6 +400,18 @@ export const TemplateBuilder = () => {
         duration: activeStep.videoParams?.duration || '3s',
         resolution: activeStep.videoParams?.resolution || '720p',
         generateAudio: activeStep.videoParams?.generateAudio ?? true,
+        ...updates,
+      },
+    });
+  };
+
+  const updateTextToImageSettings = (
+    updates: Partial<NonNullable<WorkflowStep['imageParams']>>,
+  ) => {
+    updateActiveStep({
+      imageParams: {
+        ratio: activeStep.imageParams?.ratio || '1:1',
+        resolution: activeStep.imageParams?.resolution || '1K',
         ...updates,
       },
     });
@@ -620,6 +647,7 @@ export const TemplateBuilder = () => {
     const parameterDuration = generation.generationParameters?.duration;
     const parameterResolution = generation.generationParameters?.resolution;
     const parameterGenerateAudio = generation.generationParameters?.generateAudio;
+    const parameterRatio = generation.generationParameters?.ratio;
 
     const nextFeature: FeatureType = feature ?? (
       generation.videoUrl || generation.mediaType === 'video'
@@ -640,6 +668,12 @@ export const TemplateBuilder = () => {
               : true,
         }
       : undefined;
+    const nextImageParams = nextFeature === 'Text to Image'
+      ? {
+          ratio: getGenerationImageRatio(parameterRatio),
+          resolution: getGenerationImageResolution(parameterResolution),
+        }
+      : undefined;
     const nextStep: WorkflowStep = {
       ...activeStep,
       resultUrl,
@@ -653,6 +687,7 @@ export const TemplateBuilder = () => {
       materials: nextMaterials,
       inputBindings: undefined,
       videoParams: nextVideoParams,
+      imageParams: nextImageParams,
     };
 
     // A Dashboard result is one immutable generation snapshot. Remove every
@@ -1253,6 +1288,11 @@ export const TemplateBuilder = () => {
                           ? activeStep.videoParams
                           : { duration: '3s', resolution: '720p', generateAudio: true }
                         : undefined,
+                      imageParams: feature === 'Text to Image'
+                        ? activeStep.feature === 'Text to Image' && activeStep.imageParams
+                          ? activeStep.imageParams
+                          : { ratio: '1:1', resolution: '1K' }
+                        : undefined,
                     })}
                     className={`p-4 rounded-xl border text-left transition-all ${
                       activeStep.feature === feature 
@@ -1479,6 +1519,49 @@ export const TemplateBuilder = () => {
                           className="h-4 w-4 cursor-pointer accent-green-500"
                         />
                       </label>
+                    </div>
+                  </div>
+                )}
+
+                {activeStep.feature === 'Text to Image' && (
+                  <div className="grid gap-5 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/30 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Aspect ratio</label>
+                      <div className="grid grid-cols-4 gap-2">
+                        {IMAGE_RATIOS.map((ratio) => (
+                          <button
+                            key={ratio}
+                            type="button"
+                            onClick={() => updateTextToImageSettings({ ratio })}
+                            className={`rounded-lg px-2 py-2 text-xs font-medium transition-all ${
+                              (activeStep.imageParams?.ratio || '1:1') === ratio
+                                ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
+                                : 'border border-slate-200 bg-white text-slate-500 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400 dark:hover:text-slate-200'
+                            }`}
+                          >
+                            {ratio}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Resolution</label>
+                      <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800/60">
+                        {IMAGE_RESOLUTIONS.map((resolution) => (
+                          <button
+                            key={resolution}
+                            type="button"
+                            onClick={() => updateTextToImageSettings({ resolution })}
+                            className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                              (activeStep.imageParams?.resolution || '1K') === resolution
+                                ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
+                                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                            }`}
+                          >
+                            {resolution}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}

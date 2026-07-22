@@ -70,6 +70,55 @@ const LazyImage = ({
   );
 };
 
+const LazyWorkflowVideo = ({
+  videoUrl,
+  posterUrl,
+  width,
+  height,
+}: {
+  videoUrl: string;
+  posterUrl: string;
+  width?: number;
+  height?: number;
+}) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [shouldLoad, setShouldLoad] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (!('IntersectionObserver' in window)) {
+      setShouldLoad(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        setShouldLoad(true);
+        observer.disconnect();
+      },
+      { rootMargin: '300px 0px' },
+    );
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <video
+      ref={videoRef}
+      src={shouldLoad ? videoUrl : undefined}
+      poster={posterUrl}
+      autoPlay={shouldLoad}
+      loop
+      muted
+      playsInline
+      preload="none"
+      className="w-full object-cover transform transition-transform duration-700 group-hover:scale-105"
+      style={{ aspectRatio: (width && height) ? width / height : 'auto' }}
+    />
+  );
+};
+
 
 const TemplateCardItem: React.FC<{ 
   t: Template; 
@@ -119,16 +168,11 @@ const TemplateCardItem: React.FC<{
     >
       <div className="relative">
         {t.videoUrl ? (
-          <video
-            src={t.videoUrl}
-            poster={t.thumbUrl || t.imageUrl}
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="metadata"
-            className="w-full object-cover transform transition-transform duration-700 group-hover:scale-105"
-            style={{ aspectRatio: (t.width && t.height) ? t.width / t.height : 'auto' }}
+          <LazyWorkflowVideo
+            videoUrl={t.videoUrl}
+            posterUrl={t.thumbUrl || t.imageUrl}
+            width={t.width}
+            height={t.height}
           />
         ) : (
           <LazyImage
@@ -350,15 +394,18 @@ export const Home = () => {
   }, []);
 
   // Filter Logic
+  const normalizedSearch = search.trim().toLowerCase();
   const filteredTemplates = templates.filter(t => {
-    const matchesSearch = t.name.toLowerCase().includes(search.toLowerCase()) || t.tags.some(tag => tag.toLowerCase().includes(search.toLowerCase())) || (t.authorName && t.authorName.toLowerCase().includes(search.toLowerCase()));
+    const matchesSearch = t.name.toLowerCase().includes(normalizedSearch) || t.tags.some(tag => tag.toLowerCase().includes(normalizedSearch)) || (t.authorName && t.authorName.toLowerCase().includes(normalizedSearch));
     const matchesCategory = activeCategory === 'All' || t.category.includes(activeCategory);
     const matchesScene = activeScene === 'All' || t.scene === activeScene;
     const matchesModel = activeModel === 'All' || t.model === activeModel;
     const matchesMood = activeMood === 'All' || (t.mood && t.mood.includes(activeMood));
     const matchesHoliday = activeHoliday === 'All' || t.holiday === activeHoliday;
-    return matchesSearch && matchesCategory && matchesScene && matchesModel && matchesMood && matchesHoliday;
-  });
+    if (normalizedSearch) return matchesSearch;
+    if (t.isWorkflow) return true;
+    return matchesCategory && matchesScene && matchesModel && matchesMood && matchesHoliday;
+  }).sort((left, right) => Number(Boolean(right.isWorkflow)) - Number(Boolean(left.isWorkflow)));
   
   // Count active filters
   const activeFilterCount = [activeScene, activeModel, activeMood, activeHoliday].filter(f => f !== 'All').length;

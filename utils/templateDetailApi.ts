@@ -69,7 +69,7 @@ async function createReadableUrls(assets: AssetRow[]): Promise<Map<string, strin
       if (!asset.storage_bucket || !asset.storage_path) return;
       const { data, error } = await supabase.storage
         .from(asset.storage_bucket)
-        .createSignedUrl(asset.storage_path, 60 * 60);
+        .createSignedUrl(asset.storage_path, 5 * 60);
       if (!error && data?.signedUrl) urls.set(asset.id, data.signedUrl);
     }),
   );

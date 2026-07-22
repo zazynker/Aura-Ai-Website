@@ -54,6 +54,7 @@ export const TemplateDetail = () => {
   const [modalContent, setModalContent] = useState<{ type: string; url: string } | null>(null);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
   const [startingRun, setStartingRun] = useState(false);
+  const [finalVideoLoaded, setFinalVideoLoaded] = useState(false);
   const startingRunRef = useRef(false);
   const startKeyRef = useRef<string | null>(null);
 
@@ -314,6 +315,10 @@ export const TemplateDetail = () => {
               onClick={(e) => {
                 if (!template.finalResult.url) return;
                 if (template.finalResult.type === 'video') {
+                  if (!finalVideoLoaded) {
+                    setFinalVideoLoaded(true);
+                    return;
+                  }
                   const videoEl = e.currentTarget.querySelector('video');
                   if (videoEl) {
                     // Reset to beginning, unmute (if it was muted for preview)
@@ -342,13 +347,14 @@ export const TemplateDetail = () => {
               ) : template.finalResult.type === 'video' ? (
                 <>
                   <video 
-                    src={template.finalResult.url}
+                    src={finalVideoLoaded ? template.finalResult.url : undefined}
                     poster={template.finalResult.thumbnail}
                     className="w-full h-full object-cover"
-                    autoPlay 
+                    autoPlay={finalVideoLoaded}
                     muted 
                     loop 
                     playsInline
+                    preload="none"
                     onFullscreenChange={(e) => {
                       const videoEl = e.target as HTMLVideoElement;
                       if (!document.fullscreenElement && !(document as any).webkitIsFullScreen) {

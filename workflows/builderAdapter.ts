@@ -51,6 +51,10 @@ export interface BuilderDraftStep {
     resolution: string;
     generateAudio?: boolean;
   };
+  imageParams?: {
+    ratio: string;
+    resolution: string;
+  };
   inputBindings?: BuilderInputSelection[];
 }
 
@@ -107,6 +111,12 @@ function buildParameters(
     )));
     parameters.resolution = step.videoParams?.resolution || '720p';
     parameters.generateAudio = step.videoParams?.generateAudio ?? true;
+    parameters.outputCount = 1;
+  }
+
+  if (capabilityKey === 'image.text_to_image') {
+    parameters.ratio = step.imageParams?.ratio || '1:1';
+    parameters.resolution = step.imageParams?.resolution || '1K';
     parameters.outputCount = 1;
   }
 

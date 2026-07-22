@@ -199,7 +199,7 @@ export async function uploadUserImage(
     // 6. 获取签名URL（私有bucket需要签名URL）
     const { data: signedUrlData, error: signedUrlError } = await supabase.storage
       .from('user-uploads')
-      .createSignedUrl(filePath, 60 * 60 * 24 * 7); // 7天有效期
+      .createSignedUrl(filePath, 60 * 60); // Private upload: short-lived URL only.
 
     if (signedUrlError || !signedUrlData?.signedUrl) {
       console.error('Signed URL error:', signedUrlError);

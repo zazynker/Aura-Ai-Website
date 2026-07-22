@@ -121,7 +121,7 @@ export async function fetchReusableTemplateAssets(
     if (!url && row.storage_bucket && row.storage_path) {
       const { data: signed, error: signError } = await supabase.storage
         .from(row.storage_bucket)
-        .createSignedUrl(row.storage_path, 60 * 60);
+        .createSignedUrl(row.storage_path, 5 * 60);
       if (!signError) url = signed?.signedUrl || '';
     }
     if (!url) return null;

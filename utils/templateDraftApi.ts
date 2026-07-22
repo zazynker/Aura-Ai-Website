@@ -656,7 +656,7 @@ async function readableAssetUrls(
       if (!asset.storage_bucket || !asset.storage_path) return;
       const { data, error } = await supabase.storage
         .from(asset.storage_bucket)
-        .createSignedUrl(asset.storage_path, 60 * 60);
+        .createSignedUrl(asset.storage_path, 5 * 60);
       if (!error && data?.signedUrl) urls.set(asset.id, data.signedUrl);
     }),
   );
@@ -778,6 +778,12 @@ export async function loadTemplateDraft(
             duration: `${Number(parameters.duration || 3)}s`,
             resolution: String(parameters.resolution || '720p'),
             generateAudio: parameters.generateAudio !== false,
+          }
+        : undefined,
+      imageParams: feature === 'Text to Image'
+        ? {
+            ratio: String(parameters.ratio || '1:1'),
+            resolution: String(parameters.resolution || '1K'),
           }
         : undefined,
       inputBindings: workflowStep.inputs.map((input) => ({ ...input })),
