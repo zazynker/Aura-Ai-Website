@@ -15,6 +15,7 @@ export interface VideoResult {
   sourceImage?: string;
   sourceVideo?: string;
   audioUrl?: string;
+  generateAudio?: boolean;
   status?: VideoCardStatus;
   error?: string;
   requestId?: string;

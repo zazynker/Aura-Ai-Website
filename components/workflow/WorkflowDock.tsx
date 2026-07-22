@@ -257,7 +257,7 @@ export const WorkflowDock = () => {
                 >
                   {/* Tooltip for large bead */}
                   <div className="absolute top-full mt-2 left-1/2 -translate-x-1/2 px-2 py-1 bg-slate-800 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                    Step {step.stepNumber} &middot; {step.feature}
+                    Step {step.stepNumber} &middot; Apply all
                   </div>
 
                   {/* Large Bead */}
@@ -265,7 +265,7 @@ export const WorkflowDock = () => {
                     onClick={() => { void handleBeadClick(step); }}
                     onFocus={() => handleBeadHover(step.id)}
                     className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-medium text-sm transition-all duration-300 relative ${statusClass}`}
-                    aria-label={`Step ${step.stepNumber}: ${step.feature} (${step.status})`}
+                    aria-label={`Step ${step.stepNumber}: apply ${step.feature} materials, prompt, and settings (${step.status})`}
                   >
                     {step.stepNumber}
                   </button>
@@ -306,16 +306,16 @@ export const WorkflowDock = () => {
                       </div>
                     </button>
 
-                    {/* Green Bead (Prompt) */}
+                    {/* Green Bead (Apply complete step) */}
                     <button
                       className="w-8 h-8 rounded-full bg-emerald-500 hover:bg-emerald-400 hover:scale-110 text-white flex items-center justify-center shadow-md transition-all group/btn cursor-pointer"
-                      onClick={() => { void openWorkflowAction(step, 'prompt'); }}
-                      aria-label="Reuse template's prompt"
+                      onClick={() => { void openWorkflowAction(step, 'all'); }}
+                      aria-label="Apply template materials, prompt, and settings"
                       tabIndex={isExpanded ? 0 : -1}
                     >
                       <WandSparkles className="w-4 h-4" />
                       <div className="absolute left-1/2 -translate-x-1/2 -top-8 px-2 py-1 bg-slate-800 text-white text-xs rounded whitespace-nowrap opacity-0 group-hover/btn:opacity-100 pointer-events-none transition-opacity">
-                        Reuse template's prompt
+                        Apply materials, prompt & settings
                       </div>
                     </button>
 

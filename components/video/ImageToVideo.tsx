@@ -105,6 +105,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       templateRunId: existing.templateRunId,
       templateStepId: existing.templateStepId,
       templateCapability: existing.templateCapability,
+      generateAudio: existing.generateAudio !== false,
       error: 'This video was already submitted. Click Resume to check the same job.',
     });
   }, [onGenerate]);
@@ -247,6 +248,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         timestamp: index === 0 ? 'Uploading' : 'Queued',
         bgColor: 'bg-slate-900/50',
         sourceImage: selectedImage,
+        generateAudio,
         status: 'pending',
       });
     });

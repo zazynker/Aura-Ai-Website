@@ -90,6 +90,10 @@ const generationToVideoResult = (generation: Generation): VideoResult | null => 
     templateRunId: generation.templateRunId,
     templateStepId: generation.templateStepId,
     templateCapability: generation.templateCapability,
+    generateAudio:
+      typeof generation.generationParameters?.generateAudio === 'boolean'
+        ? generation.generationParameters.generateAudio
+        : undefined,
   };
 };
 
@@ -158,6 +162,7 @@ const pendingJobsToVideoResults = (userId?: string): VideoResult[] =>
     sourceImage: job.startImageUrl,
     sourceVideo: job.inputVideoUrl,
     audioUrl: job.audioUrl,
+    generateAudio: job.generateAudio,
     status: 'pending',
     requestId: job.requestId,
     mode: job.mode,
@@ -286,6 +291,9 @@ export const Video: React.FC = () => {
         resolution: result.resolution,
         duration: parseDurationSeconds(result.duration) || 0,
         aspectRatio: result.aspectRatio,
+        ...(result.mode === 'image_to_video' || getVideoMode(result.type) === 'image_to_video'
+          ? { generateAudio: result.generateAudio !== false }
+          : {}),
       },
       templateRunId: result.templateRunId,
       templateStepId: result.templateStepId,

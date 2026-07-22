@@ -26,12 +26,6 @@ import { getWorkflowCapability } from '../workflows/registry';
 
 type WorkflowGeneration = Generation;
 
-type PublishGateIssue = {
-  code: 'result' | 'material' | 'title' | 'workflow';
-  message: string;
-  stepId?: string;
-};
-
 const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
   Object.entries(BUILDER_FEATURE_TO_CAPABILITY).map(([feature, capability]) => [
     capability,
@@ -64,6 +58,11 @@ const isVideoFeature = (feature: FeatureType): boolean =>
 
 const looksLikeVideoUrl = (url?: string | null): boolean =>
   Boolean(url && /\.(mp4|webm|mov|m4v)(?:[?#]|$)/i.test(url));
+
+const getImageToVideoDuration = (value?: string): number => {
+  const parsed = Number.parseInt(value?.replace(/[^0-9]/g, '') || '3', 10);
+  return Math.min(15, Math.max(3, Number.isFinite(parsed) ? parsed : 3));
+};
 
 const getMissingRequiredMaterialTypes = (
   step: WorkflowStep,
@@ -142,62 +141,6 @@ const createInitialStep = (): WorkflowStep => ({
   ],
   prompt: '',
 });
-
-const getPublishGateIssue = (
-  templateTitle: string,
-  steps: WorkflowStep[],
-): PublishGateIssue | null => {
-  const incompleteStepIndex = steps.findIndex((step) => !step.resultUrl);
-  if (incompleteStepIndex >= 0) {
-    return {
-      code: 'result',
-      stepId: steps[incompleteStepIndex].id,
-      message: `Choose a Dashboard result or upload an image/video for Step ${incompleteStepIndex + 1}.`,
-    };
-  }
-
-  const missingMaterialIndex = steps.findIndex(
-    (step, index) => getMissingRequiredMaterialTypes(step, index, steps).length > 0,
-  );
-  if (missingMaterialIndex >= 0) {
-    const missingTypes = getMissingRequiredMaterialTypes(
-      steps[missingMaterialIndex],
-      missingMaterialIndex,
-      steps,
-    );
-    const counts = missingTypes.reduce<Record<string, number>>((result, type) => {
-      result[type] = (result[type] || 0) + 1;
-      return result;
-    }, {});
-    const missingLabel = Object.entries(counts)
-      .map(([type, count]) => `${count} ${type}${count > 1 ? 's' : ''}`)
-      .join(' and ');
-    return {
-      code: 'material',
-      stepId: steps[missingMaterialIndex].id,
-      message: `Step ${missingMaterialIndex + 1} still needs ${missingLabel}. Upload it or use a compatible previous step result.`,
-    };
-  }
-
-  if (!templateTitle.trim()) {
-    return {
-      code: 'title',
-      message: 'Add a template title before submitting for review.',
-    };
-  }
-
-  const { validation } = convertAndValidateBuilderWorkflow(steps);
-  if (!validation.valid) {
-    return {
-      code: 'workflow',
-      message:
-        validation.issues[0]?.message ||
-        'Check every workflow step before submitting.',
-    };
-  }
-
-  return null;
-};
 
 export const TemplateBuilder = () => {
   const location = useLocation();
@@ -305,7 +248,6 @@ export const TemplateBuilder = () => {
       isPersistedGenerationId(generation.id) &&
       Boolean(generation.imageUrl || generation.videoUrl),
   );
-  const publishGateIssue = getPublishGateIssue(templateTitle, steps);
 
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
 
@@ -378,6 +320,19 @@ export const TemplateBuilder = () => {
     setBuilderError(null);
     setSaveState('idle');
     setSteps(steps.map(s => s.id === activeStepId ? { ...s, ...updates } : s));
+  };
+
+  const updateImageToVideoSettings = (
+    updates: Partial<NonNullable<WorkflowStep['videoParams']>>,
+  ) => {
+    updateActiveStep({
+      videoParams: {
+        duration: activeStep.videoParams?.duration || '3s',
+        resolution: activeStep.videoParams?.resolution || '720p',
+        generateAudio: activeStep.videoParams?.generateAudio ?? true,
+        ...updates,
+      },
+    });
   };
 
   const addMaterial = () => {
@@ -625,7 +580,7 @@ export const TemplateBuilder = () => {
           duration: `${
             typeof parameterDuration === 'number'
               ? parameterDuration
-              : generation.videoDuration || 5
+              : generation.videoDuration || 3
           }s`,
           resolution:
             typeof parameterResolution === 'string'
@@ -720,18 +675,8 @@ export const TemplateBuilder = () => {
     }
   };
 
-  const showPublishGateIssue = (issue: PublishGateIssue) => {
-    if (issue.stepId) setActiveStepId(issue.stepId);
-    setBuilderError(issue.message);
-    setShowPublishModal(false);
-    addToast('error', issue.message);
-  };
-
   const handleOpenPublish = () => {
     if (reviewState === 'submitted') return;
-    const issue = getPublishGateIssue(templateTitle, steps);
-    if (issue) return showPublishGateIssue(issue);
-
     setBuilderError(null);
     setShowPublishModal(true);
   };
@@ -804,9 +749,6 @@ export const TemplateBuilder = () => {
   };
 
   const handleConfirmPublish = async () => {
-    const issue = getPublishGateIssue(templateTitle, steps);
-    if (issue) return showPublishGateIssue(issue);
-
     setReviewState('submitting');
     const savedIdentity = await handleSaveDraft(false);
     if (!savedIdentity) {
@@ -1133,8 +1075,6 @@ export const TemplateBuilder = () => {
                 className={`relative w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group ${
                   isDraggingResult
                     ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-100 dark:border-purple-400 dark:bg-purple-950/30 dark:ring-purple-900/40'
-                    : builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id
-                    ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
                     : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
@@ -1219,11 +1159,6 @@ export const TemplateBuilder = () => {
                   </div>
                 )}
               </div>
-              {builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id && (
-                <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
-                  Required: choose a Dashboard result or upload an image/video.
-                </p>
-              )}
             </section>
 
             {/* Section 2: Feature */}
@@ -1248,6 +1183,11 @@ export const TemplateBuilder = () => {
                       feature,
                       materials: ensureRequiredMaterialCards(feature, activeStep.materials),
                       inputBindings: undefined,
+                      videoParams: feature === 'Image to Video'
+                        ? activeStep.feature === 'Image to Video' && activeStep.videoParams
+                          ? activeStep.videoParams
+                          : { duration: '3s', resolution: '720p', generateAudio: true }
+                        : undefined,
                     })}
                     className={`p-4 rounded-xl border text-left transition-all ${
                       activeStep.feature === feature 
@@ -1278,11 +1218,7 @@ export const TemplateBuilder = () => {
                 {activeStep.materials.map((material, idx) => (
                   <div
                     key={material.id}
-                    className={`p-4 rounded-xl border bg-slate-50 dark:bg-slate-800/30 flex flex-col sm:flex-row gap-6 relative group ${
-                      builderError && publishGateIssue?.code === 'material' && publishGateIssue.stepId === activeStep.id && !material.url
-                        ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
-                        : 'border-slate-200 dark:border-slate-700'
-                    }`}
+                    className="p-4 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/30 flex flex-col sm:flex-row gap-6 relative group"
                   >
                     {activeStep.materials.length > 1 && (
                       <button 
@@ -1396,11 +1332,6 @@ export const TemplateBuilder = () => {
                   </div>
                 ))}
               </div>
-              {builderError && publishGateIssue?.code === 'material' && publishGateIssue.stepId === activeStep.id && (
-                <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
-                  {builderError}
-                </p>
-              )}
             </section>
 
             {/* Section 4: Prompt & Settings */}
@@ -1422,34 +1353,60 @@ export const TemplateBuilder = () => {
                 </div>
 
                 {activeStep.feature === 'Image to Video' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30">
+                  <div className="space-y-5 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/30">
                     <div>
-                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Duration</label>
-                       <div className="flex gap-2">
-                         {['5s', '10s'].map(dur => (
-                           <button 
-                             key={dur}
-                             onClick={() => updateActiveStep({ videoParams: { ...activeStep.videoParams, duration: dur, resolution: activeStep.videoParams?.resolution || '1080p' } })}
-                             className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${activeStep.videoParams?.duration === dur ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'}`}
-                           >
-                             {dur}
-                           </button>
-                         ))}
-                       </div>
+                      <label className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Duration
+                        <span className="font-normal text-green-700 dark:text-green-300">
+                          {getImageToVideoDuration(activeStep.videoParams?.duration)}s
+                        </span>
+                      </label>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-medium text-slate-400">3s</span>
+                        <input
+                          type="range"
+                          min="3"
+                          max="15"
+                          step="1"
+                          value={getImageToVideoDuration(activeStep.videoParams?.duration)}
+                          onChange={(event) => updateImageToVideoSettings({ duration: `${event.target.value}s` })}
+                          className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full bg-slate-200 dark:bg-slate-700 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md"
+                        />
+                        <span className="text-xs font-medium text-slate-400">15s</span>
+                      </div>
                     </div>
-                    <div>
-                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Resolution</label>
-                       <div className="flex gap-2">
-                         {['720p', '1080p'].map(res => (
-                           <button 
-                             key={res}
-                             onClick={() => updateActiveStep({ videoParams: { ...activeStep.videoParams, resolution: res, duration: activeStep.videoParams?.duration || '5s' } })}
-                             className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${activeStep.videoParams?.resolution === res ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'}`}
-                           >
-                             {res}
-                           </button>
-                         ))}
-                       </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Resolution</label>
+                        <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800/60">
+                          {['720p', '1080p'].map((resolution) => (
+                            <button
+                              key={resolution}
+                              type="button"
+                              onClick={() => updateImageToVideoSettings({ resolution })}
+                              className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                                (activeStep.videoParams?.resolution || '720p') === resolution
+                                  ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200 dark:bg-slate-700 dark:text-slate-100 dark:ring-slate-600'
+                                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                              }`}
+                            >
+                              {resolution}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <label className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-800/60">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Generate Audio</div>
+                          <div className="mt-0.5 text-[10px] text-slate-400">Include synchronized sound</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={activeStep.videoParams?.generateAudio ?? true}
+                          onChange={(event) => updateImageToVideoSettings({ generateAudio: event.target.checked })}
+                          className="h-4 w-4 cursor-pointer accent-purple-600"
+                        />
+                      </label>
                     </div>
                   </div>
                 )}
@@ -1581,7 +1538,7 @@ export const TemplateBuilder = () => {
 
       {/* Review submission modal */}
       <Modal 
-        isOpen={showPublishModal && !publishGateIssue}
+        isOpen={showPublishModal}
         onClose={() => setShowPublishModal(false)}
         title="Submit Template for Review"
         className="max-w-md"
@@ -1593,7 +1550,7 @@ export const TemplateBuilder = () => {
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">Template cover</label>
+              <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">Template cover <span className="font-normal text-slate-400">(optional)</span></label>
               <p className="text-xs text-slate-500 mb-4">Upload an image or video. This will be displayed on the template marketplace.</p>
               
               <input type="file" ref={publishFileInputRef} onChange={handlePublishCoverUpload} accept="image/*,video/*" className="hidden" />
@@ -1694,7 +1651,7 @@ export const TemplateBuilder = () => {
               <Button
                 variant="gradient"
                 onClick={() => void handleConfirmPublish()}
-                disabled={!publishCover || saveState === 'saving' || reviewState === 'submitting'}
+                disabled={saveState === 'saving' || reviewState === 'submitting'}
               >
                 {reviewState === 'submitting' || saveState === 'saving'
                   ? 'Submitting...'

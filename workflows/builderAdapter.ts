@@ -101,10 +101,10 @@ function buildParameters(
   }
 
   if (capabilityKey === 'video.image_to_video') {
-    parameters.duration = parseDuration(
+    parameters.duration = Math.min(15, Math.max(3, parseDuration(
       step.videoParams?.duration,
       Number(parameters.duration ?? 3),
-    );
+    )));
     parameters.resolution = step.videoParams?.resolution || '720p';
     parameters.generateAudio = step.videoParams?.generateAudio ?? true;
     parameters.outputCount = 1;

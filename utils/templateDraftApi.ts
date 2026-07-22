@@ -773,7 +773,7 @@ export async function loadTemplateDraft(
         typeof parameters.prompt === 'string'
           ? parameters.prompt
           : workflowStep.instruction || '',
-      videoParams: VIDEO_FEATURES.has(feature)
+      videoParams: feature === 'Image to Video'
         ? {
             duration: `${Number(parameters.duration || 3)}s`,
             resolution: String(parameters.resolution || '720p'),
