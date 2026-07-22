@@ -991,10 +991,12 @@ useEffect(() => {
                       )}
                       
                       {/* Status Tag */}
-                      <div className="absolute top-3 left-3 z-10">
+                      <div className="absolute top-3 left-3 z-10 flex flex-wrap gap-1.5">
                         {template.status === 'Draft' && <span className="bg-slate-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Draft</span>}
                         {template.status === 'In review' && <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">In review</span>}
                         {template.status === 'Published' && <span className="bg-emerald-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Published</span>}
+                        {template.updateStatus === 'draft' && <span className="bg-purple-600/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Update draft</span>}
+                        {template.updateStatus === 'in_review' && <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Update in review</span>}
                         {template.status === 'Changes requested' && <span className="bg-red-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Changes requested</span>}
                       </div>
 
@@ -1022,7 +1024,7 @@ useEffect(() => {
                         </div>
                       )}
 
-                      <div className="mt-auto flex gap-2">
+                      <div className={`mt-auto gap-2 ${template.status === 'Published' ? 'grid grid-cols-2' : 'flex'}`}>
                         {template.status === 'Draft' && (
                           <>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit</Button>
@@ -1035,6 +1037,18 @@ useEffect(() => {
                         {template.status === 'Published' && (
                           <>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="flex-1"
+                              disabled={template.updateStatus === 'in_review'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/templates/create?templateId=${template.id}`);
+                              }}
+                            >
+                              {template.updateStatus === 'in_review' ? 'Under review' : 'Edit'}
+                            </Button>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { 
                               e.stopPropagation(); 
                               if (navigator.clipboard) {

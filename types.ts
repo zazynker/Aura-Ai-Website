@@ -84,6 +84,7 @@ export interface CreatorTemplateSummary {
   uses?: number;
   creditsEarned?: number;
   feedback?: string;
+  updateStatus?: 'draft' | 'in_review';
 }
 
 export interface AdminReviewStep {

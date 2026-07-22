@@ -43,6 +43,68 @@ const getFeatureIcon = (featureName: string) => {
   return Layers;
 };
 
+const blockVideoContextMenu = (event: React.MouseEvent<HTMLVideoElement>) => {
+  event.preventDefault();
+};
+
+const LazyProtectedVideo: React.FC<{
+  src: string;
+  poster?: string;
+  className?: string;
+}> = ({ src, poster, className }) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [shouldLoad, setShouldLoad] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setShouldLoad(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        setShouldLoad(true);
+        observer.disconnect();
+      },
+      { rootMargin: '300px' },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={containerRef} className={`relative overflow-hidden ${className || ''}`}>
+      {poster ? (
+        <img
+          src={poster}
+          alt="Video preview"
+          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${ready ? 'opacity-0' : 'opacity-100'}`}
+        />
+      ) : !ready ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-200 to-slate-300 text-slate-500 dark:from-slate-800 dark:to-slate-900 dark:text-slate-400">
+          <Loader2 className="h-6 w-6 animate-spin" />
+        </div>
+      ) : null}
+      <video
+        src={shouldLoad ? src : undefined}
+        poster={poster}
+        className={`h-full w-full object-cover transition-opacity duration-200 ${ready ? 'opacity-100' : 'opacity-0'}`}
+        muted
+        loop
+        autoPlay
+        playsInline
+        preload="metadata"
+        controlsList="nodownload noremoteplayback"
+        disablePictureInPicture
+        onContextMenu={blockVideoContextMenu}
+        onLoadedData={() => setReady(true)}
+      />
+    </div>
+  );
+};
+
 export const TemplateDetail = () => {
   const { templateId } = useParams();
   const navigate = useNavigate();
@@ -51,10 +113,14 @@ export const TemplateDetail = () => {
   const [loadingTemplate, setLoadingTemplate] = useState(true);
   const [templateError, setTemplateError] = useState<string | null>(null);
   const [activeStep, setActiveStep] = useState<string>('');
-  const [modalContent, setModalContent] = useState<{ type: string; url: string } | null>(null);
+  const [modalContent, setModalContent] = useState<{
+    type: string;
+    url: string;
+    poster?: string;
+    allowDownload?: boolean;
+  } | null>(null);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
   const [startingRun, setStartingRun] = useState(false);
-  const [finalVideoLoaded, setFinalVideoLoaded] = useState(false);
   const startingRunRef = useRef(false);
   const startKeyRef = useRef<string | null>(null);
 
@@ -312,31 +378,13 @@ export const TemplateDetail = () => {
             {/* Display Window (3:4 ratio) */}
             <div 
               className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden group cursor-pointer"
-              onClick={(e) => {
+              onClick={() => {
                 if (!template.finalResult.url) return;
-                if (template.finalResult.type === 'video') {
-                  if (!finalVideoLoaded) {
-                    setFinalVideoLoaded(true);
-                    return;
-                  }
-                  const videoEl = e.currentTarget.querySelector('video');
-                  if (videoEl) {
-                    // Reset to beginning, unmute (if it was muted for preview)
-                    videoEl.currentTime = 0;
-                    videoEl.muted = false;
-                    videoEl.play();
-                    
-                    if (videoEl.requestFullscreen) {
-                      videoEl.requestFullscreen();
-                    } else if ((videoEl as any).webkitRequestFullscreen) {
-                      (videoEl as any).webkitRequestFullscreen();
-                    } else if ((videoEl as any).msRequestFullscreen) {
-                      (videoEl as any).msRequestFullscreen();
-                    }
-                  }
-                } else {
-                  setModalContent({ type: template.finalResult.type, url: template.finalResult.url });
-                }
+                setModalContent({
+                  type: template.finalResult.type,
+                  url: template.finalResult.url,
+                  poster: template.finalResult.thumbnail,
+                });
               }}
             >
               {!template.finalResult.url ? (
@@ -346,23 +394,10 @@ export const TemplateDetail = () => {
                 </div>
               ) : template.finalResult.type === 'video' ? (
                 <>
-                  <video 
-                    src={finalVideoLoaded ? template.finalResult.url : undefined}
+                  <LazyProtectedVideo
+                    src={template.finalResult.url}
                     poster={template.finalResult.thumbnail}
-                    className="w-full h-full object-cover"
-                    autoPlay={finalVideoLoaded}
-                    muted 
-                    loop 
-                    playsInline
-                    preload="none"
-                    onFullscreenChange={(e) => {
-                      const videoEl = e.target as HTMLVideoElement;
-                      if (!document.fullscreenElement && !(document as any).webkitIsFullScreen) {
-                        videoEl.pause();
-                        videoEl.muted = true;
-                        videoEl.play(); // resume muted preview
-                      }
-                    }}
+                    className="h-full w-full pointer-events-none"
                   />
                   <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
                     <div className="w-12 h-12 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 shadow-lg group-hover:scale-110 transition-transform">
@@ -471,7 +506,11 @@ export const TemplateDetail = () => {
                                       className="w-10 h-10 rounded-md bg-slate-200 dark:bg-slate-800 flex-shrink-0 flex items-center justify-center overflow-hidden cursor-pointer border border-slate-300 dark:border-slate-700"
                                       onClick={() => {
                                         if (material.type !== 'audio' && material.url !== '#') {
-                                          setModalContent({ type: material.type, url: material.url });
+                                          setModalContent({
+                                            type: material.type,
+                                            url: material.url,
+                                            allowDownload: material.permission === 'download',
+                                          });
                                         }
                                       }}
                                     >
@@ -554,14 +593,20 @@ export const TemplateDetail = () => {
                                 <div 
                                   key={result.id}
                                   className="relative w-24 h-24 rounded-lg overflow-hidden border border-slate-200 dark:border-white/10 cursor-pointer group"
-                                  onClick={() => setModalContent({ type: result.type, url: result.url })}
+                                  onClick={() => setModalContent({
+                                    type: result.type,
+                                    url: result.url,
+                                    poster: result.thumbnail,
+                                  })}
                                 >
                                   {result.type === 'video' ? (
                                     <>
                                       {result.thumbnail ? (
                                         <img src={result.thumbnail} alt="Result" className="w-full h-full object-cover" />
                                       ) : (
-                                        <video src={result.url} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                                        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-200 to-slate-300 text-slate-500 dark:from-slate-800 dark:to-slate-900 dark:text-slate-400">
+                                          <VideoIcon className="h-7 w-7" />
+                                        </div>
                                       )}
                                       <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
                                         <Play className="w-6 h-6 text-white ml-0.5" fill="currentColor" />
@@ -604,21 +649,17 @@ export const TemplateDetail = () => {
             {modalContent.type === 'video' ? (
               <video 
                 src={modalContent.url} 
+                poster={modalContent.poster}
                 className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
                 controls 
                 autoPlay
-                ref={(el) => {
-                  if (el && !document.fullscreenElement) {
-                    el.play().catch(console.error);
-                    if (el.requestFullscreen) {
-                      el.requestFullscreen().catch(console.error);
-                    } else if ((el as any).webkitRequestFullscreen) {
-                      (el as any).webkitRequestFullscreen();
-                    } else if ((el as any).msRequestFullscreen) {
-                      (el as any).msRequestFullscreen();
-                    }
-                  }
-                }}
+                playsInline
+                preload="metadata"
+                controlsList={modalContent.allowDownload
+                  ? 'noremoteplayback'
+                  : 'nodownload noremoteplayback'}
+                disablePictureInPicture
+                onContextMenu={modalContent.allowDownload ? undefined : blockVideoContextMenu}
               />
             ) : modalContent.type === 'image' ? (
               <img 

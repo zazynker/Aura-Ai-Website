@@ -24,6 +24,7 @@ export interface CreatorTemplateCard {
   uses: number;
   creditsEarned: number;
   feedback?: string;
+  updateStatus?: 'draft' | 'in_review';
 }
 
 interface TemplateRow {
@@ -189,6 +190,13 @@ export async function fetchCreatorTemplates(
       uses: Number(template.use_count || 0),
       creditsEarned: creditsByTemplate.get(template.id) || 0,
       feedback: latestFeedbackByTemplate.get(template.id),
+      updateStatus: template.status === 'published'
+        ? template.submitted_version_id
+          ? 'in_review'
+          : template.draft_version_id
+            ? 'draft'
+            : undefined
+        : undefined,
     };
   });
 }

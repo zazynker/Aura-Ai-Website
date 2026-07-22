@@ -12,6 +12,7 @@ import {
   removeTemplateStorageObjects,
   uploadTemplateCover,
   uploadTemplateMaterial,
+  uploadTemplateVideoWithPoster,
   type TemplateStorageIdentity,
   type UploadedTemplateCover,
   type UploadedTemplateObject,
@@ -23,6 +24,7 @@ export interface TemplateDraftIdentity extends TemplateStorageIdentity {
 
 export type PersistedMaterialMap = Record<string, UploadedTemplateObject>;
 export type PersistedResultMap = Record<string, UploadedTemplateObject>;
+export type PersistedResultPosterMap = Record<string, UploadedTemplateObject>;
 
 export interface SaveTemplateDraftInput {
   identity?: TemplateDraftIdentity | null;
@@ -36,6 +38,7 @@ export interface SaveTemplateDraftInput {
   persistedCover: UploadedTemplateCover | null;
   resultFiles: Record<string, File>;
   persistedResults: PersistedResultMap;
+  persistedResultPosters: PersistedResultPosterMap;
   materialFiles: Record<string, File>;
   persistedMaterials: PersistedMaterialMap;
 }
@@ -44,6 +47,7 @@ export interface SaveTemplateDraftResult {
   identity: TemplateDraftIdentity;
   cover: UploadedTemplateCover | null;
   results: PersistedResultMap;
+  resultPosters: PersistedResultPosterMap;
   materials: PersistedMaterialMap;
   materialAssetIds: Record<string, string>;
 }
@@ -66,6 +70,7 @@ export interface LoadTemplateDraftResult {
   coverUrl: string | null;
   coverType: 'image' | 'video' | null;
   results: PersistedResultMap;
+  resultPosters: PersistedResultPosterMap;
   materials: PersistedMaterialMap;
 }
 
@@ -417,6 +422,7 @@ export async function saveTemplateDraft(
 
   let cover = input.persistedCover;
   const resultUploads: PersistedResultMap = { ...input.persistedResults };
+  const resultPosterUploads: PersistedResultPosterMap = { ...input.persistedResultPosters };
   const materialUploads: PersistedMaterialMap = { ...input.persistedMaterials };
   const newlyUploaded: Array<{ bucket: string; path: string }> = [];
   let assetPersistenceStarted = false;
@@ -434,14 +440,29 @@ export async function saveTemplateDraft(
       const file = input.resultFiles[step.id];
       if (!file || step.resultGenerationId) continue;
       const assetType = file.type.startsWith('video/') ? 'video' : 'image';
-      const uploaded = await uploadTemplateMaterial(
-        identity,
-        file,
-        assetType,
-        `${step.id}-result`,
-      );
-      resultUploads[step.id] = uploaded;
-      newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
+      if (assetType === 'video') {
+        const uploaded = await uploadTemplateVideoWithPoster(
+          identity,
+          file,
+          `${step.id}-result`,
+        );
+        resultUploads[step.id] = uploaded.original;
+        resultPosterUploads[step.id] = uploaded.poster;
+        newlyUploaded.push(
+          { bucket: uploaded.original.bucket, path: uploaded.original.path },
+          { bucket: uploaded.poster.bucket, path: uploaded.poster.path },
+        );
+      } else {
+        const uploaded = await uploadTemplateMaterial(
+          identity,
+          file,
+          assetType,
+          `${step.id}-result`,
+        );
+        resultUploads[step.id] = uploaded;
+        delete resultPosterUploads[step.id];
+        newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
+      }
     }
 
     for (const step of input.steps) {
@@ -499,6 +520,20 @@ export async function saveTemplateDraft(
             false,
           ),
         );
+        if (step.resultType === 'video' && step.resultThumbnailUrl) {
+          rows.push(
+            generationRow(
+              identity,
+              input.userId,
+              `step-${stepIndex + 1}-result-thumbnail`,
+              'image',
+              step.resultGenerationId,
+              step.resultThumbnailUrl,
+              sortOrder++,
+              false,
+            ),
+          );
+        }
       } else if (step.resultUrl && resultUploads[step.id]) {
         const uploaded = resultUploads[step.id];
         rows.push(
@@ -512,6 +547,20 @@ export async function saveTemplateDraft(
             false,
           ),
         );
+        const poster = resultPosterUploads[step.id];
+        if ((step.resultType === 'video' || uploaded.mimeType.startsWith('video/')) && poster) {
+          rows.push(
+            uploadRow(
+              identity,
+              input.userId,
+              `step-${stepIndex + 1}-result-thumbnail`,
+              'image',
+              poster,
+              sortOrder++,
+              false,
+            ),
+          );
+        }
       }
 
       step.materials.forEach((material, materialIndex) => {
@@ -610,6 +659,7 @@ export async function saveTemplateDraft(
       identity,
       cover,
       results: resultUploads,
+      resultPosters: resultPosterUploads,
       materials: materialUploads,
       materialAssetIds,
     };
@@ -719,6 +769,7 @@ export async function loadTemplateDraft(
 
   const persistedMaterials: PersistedMaterialMap = {};
   const persistedResults: PersistedResultMap = {};
+  const persistedResultPosters: PersistedResultPosterMap = {};
   const steps: BuilderDraftStep[] = workflow.steps.map((workflowStep, stepIndex) => {
     const feature = CAPABILITY_TO_FEATURE[workflowStep.capability];
     if (!feature) {
@@ -727,9 +778,16 @@ export async function loadTemplateDraft(
     const resultAsset = assets.find(
       (asset) => asset.asset_key === `step-${stepIndex + 1}-result`,
     );
+    const resultThumbnailAsset = assets.find(
+      (asset) => asset.asset_key === `step-${stepIndex + 1}-result-thumbnail`,
+    );
     if (resultAsset?.source_kind === 'upload') {
       const stored = savedObject(resultAsset);
       if (stored) persistedResults[workflowStep.id] = stored;
+    }
+    if (resultThumbnailAsset?.source_kind === 'upload') {
+      const stored = savedObject(resultThumbnailAsset);
+      if (stored) persistedResultPosters[workflowStep.id] = stored;
     }
     const materialAssets = assets.filter((asset) =>
       asset.asset_key.startsWith(`step-${stepIndex + 1}-material-`),
@@ -766,6 +824,9 @@ export async function loadTemplateDraft(
       resultUrl: resultAsset ? urls.get(resultAsset.id) || resultAsset.public_url : null,
       resultType: resultAsset
         ? resultAsset.asset_type === 'video' ? 'video' : 'image'
+        : undefined,
+      resultThumbnailUrl: resultThumbnailAsset
+        ? urls.get(resultThumbnailAsset.id) || resultThumbnailAsset.public_url || undefined
         : undefined,
       resultGenerationId: resultAsset?.generation_id || undefined,
       materials,
@@ -821,6 +882,7 @@ export async function loadTemplateDraft(
     coverUrl: version.cover_url || (coverOriginalRow ? urls.get(coverOriginalRow.id) : null) || template.cover_url || null,
     coverType: version.cover_type === 'video' ? 'video' : 'image',
     results: persistedResults,
+    resultPosters: persistedResultPosters,
     materials: persistedMaterials,
   };
 }

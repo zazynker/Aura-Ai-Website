@@ -19,9 +19,15 @@ import {
   submitTemplateForReview,
   type PersistedMaterialMap,
   type PersistedResultMap,
+  type PersistedResultPosterMap,
   type TemplateDraftIdentity,
 } from '../utils/templateDraftApi';
-import type { UploadedTemplateCover } from '../utils/templateStorage';
+import {
+  TEMPLATE_UPLOAD_LIMITS,
+  validateTemplateCoverFile,
+  validateTemplateMaterialFile,
+  type UploadedTemplateCover,
+} from '../utils/templateStorage';
 import { getWorkflowCapability } from '../workflows/registry';
 
 type WorkflowGeneration = Generation;
@@ -214,6 +220,7 @@ export const TemplateBuilder = () => {
   const [persistedCover, setPersistedCover] = useState<UploadedTemplateCover | null>(null);
   const [resultFiles, setResultFiles] = useState<Record<string, File>>({});
   const [persistedResults, setPersistedResults] = useState<PersistedResultMap>({});
+  const [persistedResultPosters, setPersistedResultPosters] = useState<PersistedResultPosterMap>({});
   const [materialFiles, setMaterialFiles] = useState<Record<string, File>>({});
   const [persistedMaterials, setPersistedMaterials] = useState<PersistedMaterialMap>({});
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
@@ -253,6 +260,7 @@ export const TemplateBuilder = () => {
         setPublishCoverType(draft.coverType);
         setPublishCoverFile(null);
         setPersistedResults(draft.results);
+        setPersistedResultPosters(draft.resultPosters);
         setResultFiles({});
         setPersistedMaterials(draft.materials);
         setMaterialFiles({});
@@ -346,6 +354,16 @@ export const TemplateBuilder = () => {
         addToast('error', 'Please choose an image or video file.');
         return;
       }
+      try {
+        validateTemplateMaterialFile(
+          file,
+          file.type.startsWith('video/') ? 'video' : 'image',
+          'Final result',
+        );
+      } catch (error) {
+        addToast('error', error instanceof Error ? error.message : 'This final result file is not supported.');
+        return;
+      }
       if (isFinalResultManual && finalResult?.startsWith('blob:')) {
         URL.revokeObjectURL(finalResult);
       }
@@ -360,7 +378,15 @@ export const TemplateBuilder = () => {
 
   const handlePublishCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (file) {
+      try {
+        validateTemplateCoverFile(file);
+      } catch (error) {
+        addToast('error', error instanceof Error ? error.message : 'This cover file is not supported.');
+        return;
+      }
+      if (publishCover?.startsWith('blob:')) URL.revokeObjectURL(publishCover);
       const url = URL.createObjectURL(file);
       setPublishCover(url);
       setPublishCoverFile(file);
@@ -463,6 +489,11 @@ export const TemplateBuilder = () => {
       delete next[id];
       return next;
     });
+    setPersistedResultPosters((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
     const newSteps = steps.filter(s => s.id !== id);
     setSteps(newSteps);
     setSaveState('idle');
@@ -473,6 +504,17 @@ export const TemplateBuilder = () => {
 
   const handleMaterialUpload = (materialId: string, file?: File) => {
     if (!file) return;
+    const material = activeStep.materials.find((item) => item.id === materialId);
+    if (!material) return;
+    try {
+      validateTemplateMaterialFile(
+        file,
+        material.type.toLowerCase() as 'image' | 'video' | 'audio',
+      );
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'This material file is not supported.');
+      return;
+    }
     setMaterialFiles((current) => ({ ...current, [materialId]: file }));
     setPersistedMaterials((current) => {
       const next = { ...current };
@@ -488,14 +530,25 @@ export const TemplateBuilder = () => {
       addToast('error', 'Please choose an image or video file.');
       return;
     }
+    const resultType = file.type.startsWith('video/') ? 'video' as const : 'image' as const;
+    try {
+      validateTemplateMaterialFile(file, resultType, 'Result image/video');
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'This result file is not supported.');
+      return;
+    }
 
     if (activeStep.resultUrl?.startsWith('blob:')) {
       URL.revokeObjectURL(activeStep.resultUrl);
     }
     const resultUrl = URL.createObjectURL(file);
-    const resultType = file.type.startsWith('video/') ? 'video' as const : 'image' as const;
     setResultFiles((current) => ({ ...current, [activeStep.id]: file }));
     setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResultPosters((current) => {
       const next = { ...current };
       delete next[activeStep.id];
       return next;
@@ -503,6 +556,7 @@ export const TemplateBuilder = () => {
     updateActiveStep({
       resultUrl,
       resultType,
+      resultThumbnailUrl: undefined,
       resultGenerationId: undefined,
     });
 
@@ -678,6 +732,13 @@ export const TemplateBuilder = () => {
       ...activeStep,
       resultUrl,
       resultType: generation.videoUrl && resultUrl === generation.videoUrl ? 'video' : 'image',
+      resultThumbnailUrl: generation.videoUrl && resultUrl === generation.videoUrl
+        ? generation.thumbnailUrl || (
+            generation.imageUrl && generation.imageUrl !== generation.videoUrl
+              ? generation.imageUrl
+              : undefined
+          )
+        : undefined,
       resultGenerationId: generation.id,
       feature: nextFeature,
       prompt:
@@ -706,6 +767,11 @@ export const TemplateBuilder = () => {
       return next;
     });
     setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResultPosters((current) => {
       const next = { ...current };
       delete next[activeStep.id];
       return next;
@@ -751,7 +817,17 @@ export const TemplateBuilder = () => {
       delete next[activeStep.id];
       return next;
     });
-    updateActiveStep({ resultUrl: null, resultType: undefined, resultGenerationId: undefined });
+    setPersistedResultPosters((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    updateActiveStep({
+      resultUrl: null,
+      resultType: undefined,
+      resultThumbnailUrl: undefined,
+      resultGenerationId: undefined,
+    });
     if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id && finalResult === removedResult) {
       setFinalResult(null);
       setFinalResultType(null);
@@ -799,12 +875,14 @@ export const TemplateBuilder = () => {
         persistedCover,
         resultFiles,
         persistedResults,
+        persistedResultPosters,
         materialFiles,
         persistedMaterials,
       });
       setDraftIdentity(saved.identity);
       setPersistedCover(saved.cover);
       setPersistedResults(saved.results);
+      setPersistedResultPosters(saved.resultPosters);
       setPersistedMaterials(saved.materials);
       setSteps((currentSteps) =>
         currentSteps.map((step) => ({
@@ -886,6 +964,7 @@ export const TemplateBuilder = () => {
     setPersistedCover(null);
     setResultFiles({});
     setPersistedResults({});
+    setPersistedResultPosters({});
     setMaterialFiles({});
     setPersistedMaterials({});
     setSaveState('idle');
@@ -1198,6 +1277,9 @@ export const TemplateBuilder = () => {
                     <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Add a result image or video</p>
                     <p className="px-4 text-center text-xs text-slate-400">
                       Drag and drop a file here, use a saved generation, or choose one from this device.
+                    </p>
+                    <p className="px-4 text-center text-[11px] text-slate-400">
+                      Images or videos up to {TEMPLATE_UPLOAD_LIMITS.materialBytes / (1024 * 1024)} MB.
                     </p>
                     <div className="flex flex-wrap items-center justify-center gap-2 px-4">
                       <button
@@ -1860,7 +1942,9 @@ export const TemplateBuilder = () => {
                   </div>
                   <div className="text-center">
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Add template cover</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-500">Image or video</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-500">
+                      Image up to {TEMPLATE_UPLOAD_LIMITS.coverImageBytes / (1024 * 1024)} MB or video up to {TEMPLATE_UPLOAD_LIMITS.coverVideoBytes / (1024 * 1024)} MB / {TEMPLATE_UPLOAD_LIMITS.coverVideoSeconds}s
+                    </p>
                   </div>
                 </button>
               )}

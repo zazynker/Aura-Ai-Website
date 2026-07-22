@@ -159,7 +159,13 @@ export async function fetchTemplateDetail(
     const resultAsset = assets.find(
       (asset) => asset.asset_key === `step-${stepIndex + 1}-result`,
     );
+    const resultThumbnailAsset = assets.find(
+      (asset) => asset.asset_key === `step-${stepIndex + 1}-result-thumbnail`,
+    );
     const resultUrl = resultAsset ? urls.get(resultAsset.id) : undefined;
+    const resultThumbnail = resultThumbnailAsset
+      ? urls.get(resultThumbnailAsset.id)
+      : undefined;
     // Older saved Lip Sync/Motion Control rows may have been persisted with
     // asset_type=image. The workflow capability is the source of truth for
     // the generated result type, so those existing templates still play.
@@ -169,7 +175,7 @@ export async function fetchTemplateDetail(
           id: resultAsset.id,
           type: resultType,
           url: resultUrl,
-          thumbnail: resultType === 'video' ? coverThumbnail : undefined,
+          thumbnail: resultType === 'video' ? resultThumbnail || coverThumbnail : undefined,
         }]
       : [];
     const prompt = typeof step.parameters?.prompt === 'string'

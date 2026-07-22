@@ -3,10 +3,12 @@ import { supabase } from './supabase';
 export const TEMPLATE_PREVIEWS_BUCKET = 'template-previews';
 export const TEMPLATE_ASSETS_BUCKET = 'template-assets';
 
-const MAX_COVER_IMAGE_BYTES = 10 * 1024 * 1024;
-const MAX_COVER_VIDEO_BYTES = 5 * 1024 * 1024;
-const MAX_COVER_VIDEO_SECONDS = 15;
-const MAX_MATERIAL_BYTES = 25 * 1024 * 1024;
+export const TEMPLATE_UPLOAD_LIMITS = {
+  coverImageBytes: 10 * 1024 * 1024,
+  coverVideoBytes: 5 * 1024 * 1024,
+  coverVideoSeconds: 15,
+  materialBytes: 25 * 1024 * 1024,
+} as const;
 
 const COVER_IMAGE_TYPES = new Set([
   'image/jpeg',
@@ -51,6 +53,11 @@ export interface UploadedTemplateCover {
   coverType: 'image' | 'video';
   original: UploadedTemplateObject;
   thumbnail: UploadedTemplateObject;
+}
+
+export interface UploadedTemplateVideoWithPoster {
+  original: UploadedTemplateObject;
+  poster: UploadedTemplateObject;
 }
 
 export interface GenerationAssetReference {
@@ -123,6 +130,22 @@ function assertFile(
   if (file.size > maxBytes) {
     throw new Error(`${label} must be smaller than ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
   }
+}
+
+export function validateTemplateCoverFile(file: File): void {
+  if (file.type.startsWith('image/')) {
+    assertFile(file, COVER_IMAGE_TYPES, TEMPLATE_UPLOAD_LIMITS.coverImageBytes, 'Cover image');
+    return;
+  }
+  assertFile(file, COVER_VIDEO_TYPES, TEMPLATE_UPLOAD_LIMITS.coverVideoBytes, 'Cover video');
+}
+
+export function validateTemplateMaterialFile(
+  file: File,
+  assetType: TemplateAssetType,
+  label = 'Template material',
+): void {
+  assertFile(file, MATERIAL_TYPES[assetType], TEMPLATE_UPLOAD_LIMITS.materialBytes, label);
 }
 
 function loadImage(file: Blob): Promise<HTMLImageElement> {
@@ -241,7 +264,7 @@ export async function uploadTemplateCover(
   file: File,
 ): Promise<UploadedTemplateCover> {
   if (file.type.startsWith('image/')) {
-    assertFile(file, COVER_IMAGE_TYPES, MAX_COVER_IMAGE_BYTES, 'Cover image');
+    validateTemplateCoverFile(file);
     const [cover, thumbnail] = await Promise.all([
       createImageVariant(file, 1600, 1600, 0.88),
       createImageVariant(file, 480, 640, 0.8),
@@ -270,11 +293,11 @@ export async function uploadTemplateCover(
     }
   }
 
-  assertFile(file, COVER_VIDEO_TYPES, MAX_COVER_VIDEO_BYTES, 'Cover video');
+  validateTemplateCoverFile(file);
   const video = await readVideo(file);
   try {
-    if (!Number.isFinite(video.duration) || video.duration > MAX_COVER_VIDEO_SECONDS) {
-      throw new Error(`Cover video must be ${MAX_COVER_VIDEO_SECONDS} seconds or shorter.`);
+    if (!Number.isFinite(video.duration) || video.duration > TEMPLATE_UPLOAD_LIMITS.coverVideoSeconds) {
+      throw new Error(`Cover video must be ${TEMPLATE_UPLOAD_LIMITS.coverVideoSeconds} seconds or shorter.`);
     }
     const poster = await createVideoPoster(video);
     const videoPath = buildObjectPath(identity, 'cover-video', file.type);
@@ -314,9 +337,49 @@ export async function uploadTemplateMaterial(
   assetType: TemplateAssetType,
   assetKey: string,
 ): Promise<UploadedTemplateObject> {
-  assertFile(file, MATERIAL_TYPES[assetType], MAX_MATERIAL_BYTES, 'Template material');
+  validateTemplateMaterialFile(file, assetType);
   const path = buildObjectPath(identity, assetKey, file.type);
   return uploadObject(TEMPLATE_ASSETS_BUCKET, path, file, file.type);
+}
+
+export async function uploadTemplateVideoWithPoster(
+  identity: TemplateStorageIdentity,
+  file: File,
+  assetKey: string,
+): Promise<UploadedTemplateVideoWithPoster> {
+  validateTemplateMaterialFile(file, 'video', 'Result video');
+  const video = await readVideo(file);
+  try {
+    const poster = await createVideoPoster(video);
+    const videoPath = buildObjectPath(identity, assetKey, file.type);
+    const posterPath = buildObjectPath(identity, `${assetKey}-poster`, 'image/webp');
+    const original = await uploadObject(
+      TEMPLATE_ASSETS_BUCKET,
+      videoPath,
+      file,
+      file.type,
+      {
+        width: video.videoWidth,
+        height: video.videoHeight,
+        durationSeconds: video.duration,
+      },
+    );
+    try {
+      const uploadedPoster = await uploadObject(
+        TEMPLATE_PREVIEWS_BUCKET,
+        posterPath,
+        poster.blob,
+        'image/webp',
+        poster,
+      );
+      return { original, poster: uploadedPoster };
+    } catch (error) {
+      await supabase.storage.from(TEMPLATE_ASSETS_BUCKET).remove([original.path]);
+      throw error;
+    }
+  } finally {
+    URL.revokeObjectURL(video.src);
+  }
 }
 
 export function referenceGenerationAsset(
