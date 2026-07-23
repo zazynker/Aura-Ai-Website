@@ -10,7 +10,10 @@ import { WorkflowDock } from './components/workflow/WorkflowDock';
 import { clearWorkflow, restoreActiveWorkflow } from './components/workflow/workflowManager';
 import { RewardCelebrationModal } from './components/RewardCelebrationModal';
 import { useStore } from './context/StoreContext';
-import { claimCreatorRewardCelebration } from './utils/notificationsApi';
+import {
+  claimCreatorRewardCelebration,
+  CREATOR_REWARD_AVAILABLE_EVENT,
+} from './utils/notificationsApi';
 import type { CreatorRewardCelebration } from './types';
 
 const pendingCelebrationClaims = new Map<string, Promise<CreatorRewardCelebration | null>>();
@@ -92,15 +95,34 @@ const AppContent = () => {
     }
 
     let active = true;
-    void claimCelebrationOnce(user.id)
-      .then((celebration) => {
-        if (active && celebration) setRewardCelebration(celebration);
-      })
-      .catch((error) => {
-        if (active) console.error('Could not claim creator reward celebration.', error);
-      });
-    return () => { active = false; };
-  }, [authLoading, user?.id]);
+    const checkForCreatorRewards = () => {
+      if (!active || rewardCelebration) return;
+      void claimCelebrationOnce(user.id)
+        .then((celebration) => {
+          if (active && celebration) setRewardCelebration(celebration);
+        })
+        .catch((error) => {
+          if (active) console.error('Could not claim creator reward celebration.', error);
+        });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') checkForCreatorRewards();
+    };
+
+    checkForCreatorRewards();
+    window.addEventListener(CREATOR_REWARD_AVAILABLE_EVENT, checkForCreatorRewards);
+    window.addEventListener('focus', checkForCreatorRewards);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    const intervalId = window.setInterval(checkForCreatorRewards, 30_000);
+
+    return () => {
+      active = false;
+      window.removeEventListener(CREATOR_REWARD_AVAILABLE_EVENT, checkForCreatorRewards);
+      window.removeEventListener('focus', checkForCreatorRewards);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [authLoading, user?.id, rewardCelebration]);
 
   React.useEffect(() => {
     if (authLoading) return;

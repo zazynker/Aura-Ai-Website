@@ -8,6 +8,7 @@ import {
   fetchMyNotifications,
   markAllNotificationsRead,
   markNotificationRead,
+  CREATOR_REWARD_AVAILABLE_EVENT,
   type UserNotification,
 } from '../utils/notificationsApi';
 
@@ -78,7 +79,12 @@ export const Navbar = () => {
     void refreshNotifications();
     if (!user) return;
     const intervalId = window.setInterval(() => void refreshNotifications(), 60_000);
-    return () => window.clearInterval(intervalId);
+    const handleCreatorReward = () => void refreshNotifications();
+    window.addEventListener(CREATOR_REWARD_AVAILABLE_EVENT, handleCreatorReward);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener(CREATOR_REWARD_AVAILABLE_EVENT, handleCreatorReward);
+    };
   }, [refreshNotifications, user?.id]);
 
   useEffect(() => {

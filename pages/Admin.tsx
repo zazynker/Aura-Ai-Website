@@ -28,6 +28,7 @@ import {
   AdminReviewTemplate,
   AdminReviewedTemplate,
 } from '../utils/adminApi';
+import { announceCreatorRewardAvailable } from '../utils/notificationsApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
 type TabType = 'overview' | 'users' | 'templates' | 'rewards' | 'unused' | 'video' | 'review';
@@ -440,6 +441,7 @@ export const Admin = () => {
             total_credits: item.total_credits + rewardCredits,
           }
         : item));
+      announceCreatorRewardAvailable();
       addToast(
         'success',
         `${data.virtualUsername || boostVirtualUsername} used the template · ${rewardCredits} credits awarded`,

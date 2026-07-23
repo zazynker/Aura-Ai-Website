@@ -1,6 +1,14 @@
 import { supabase } from './supabase';
 import type { CreatorRewardCelebration, CreatorRewardTemplateSummary } from '../types';
 
+export const CREATOR_REWARD_AVAILABLE_EVENT = 'lazora:creator-reward-available';
+
+export const announceCreatorRewardAvailable = (): void => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(CREATOR_REWARD_AVAILABLE_EVENT));
+  }
+};
+
 export type NotificationType =
   | 'template_approved'
   | 'template_changes_requested'
