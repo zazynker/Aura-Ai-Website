@@ -340,7 +340,7 @@ begin
     '',
     v_eligible_credits,
     'image',
-    '{}'::jsonb,
+    '[]'::jsonb,
     '{}'::jsonb,
     gen_random_uuid()::text,
     now()
