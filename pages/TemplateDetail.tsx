@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Share,
   Play,
@@ -31,6 +31,7 @@ import {
   fetchTemplateDetail,
   type RealTemplateDetail,
 } from '../utils/templateDetailApi';
+import { ensureTemplateResultPoster } from '../utils/templatePosterApi';
 import {
   createRunIdempotencyKey,
   startTemplateRun,
@@ -47,60 +48,43 @@ const blockVideoContextMenu = (event: React.MouseEvent<HTMLVideoElement>) => {
   event.preventDefault();
 };
 
-const LazyProtectedVideo: React.FC<{
+const VideoPosterFrame: React.FC<{
   src: string;
   poster?: string;
   className?: string;
 }> = ({ src, poster, className }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [shouldLoad, setShouldLoad] = useState(false);
-  const [ready, setReady] = useState(false);
-
   useEffect(() => {
-    const node = containerRef.current;
-    if (!node || typeof IntersectionObserver === 'undefined') {
-      setShouldLoad(true);
+    let origin: string;
+    try {
+      origin = new URL(src, window.location.href).origin;
+    } catch {
       return;
     }
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry?.isIntersecting) return;
-        setShouldLoad(true);
-        observer.disconnect();
-      },
-      { rootMargin: '300px' },
-    );
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []);
+    if (origin === window.location.origin) return;
+    const selector = `link[data-template-video-origin="${CSS.escape(origin)}"]`;
+    if (document.head.querySelector(selector)) return;
+    const link = document.createElement('link');
+    link.rel = 'preconnect';
+    link.href = origin;
+    link.crossOrigin = 'anonymous';
+    link.dataset.templateVideoOrigin = origin;
+    document.head.appendChild(link);
+    return () => link.remove();
+  }, [src]);
 
   return (
-    <div ref={containerRef} className={`relative overflow-hidden ${className || ''}`}>
+    <div className={`relative overflow-hidden ${className || ''}`}>
       {poster ? (
         <img
           src={poster}
           alt="Video preview"
-          className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-200 ${ready ? 'opacity-0' : 'opacity-100'}`}
+          className="absolute inset-0 h-full w-full object-cover"
         />
-      ) : !ready ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-200 to-slate-300 text-slate-500 dark:from-slate-800 dark:to-slate-900 dark:text-slate-400">
-          <Loader2 className="h-6 w-6 animate-spin" />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-800 to-black text-slate-300">
+          <VideoIcon className="h-10 w-10" />
         </div>
-      ) : null}
-      <video
-        src={shouldLoad ? src : undefined}
-        poster={poster}
-        className={`h-full w-full object-cover transition-opacity duration-200 ${ready ? 'opacity-100' : 'opacity-0'}`}
-        muted
-        loop
-        autoPlay
-        playsInline
-        preload="metadata"
-        controlsList="nodownload noremoteplayback"
-        disablePictureInPicture
-        onContextMenu={blockVideoContextMenu}
-        onLoadedData={() => setReady(true)}
-      />
+      )}
     </div>
   );
 };
@@ -108,6 +92,7 @@ const LazyProtectedVideo: React.FC<{
 export const TemplateDetail = () => {
   const { templateId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, saveBrowsingState, addToast } = useStore();
   const [template, setTemplate] = useState<RealTemplateDetail | null>(null);
   const [loadingTemplate, setLoadingTemplate] = useState(true);
@@ -121,6 +106,7 @@ export const TemplateDetail = () => {
   } | null>(null);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
   const [startingRun, setStartingRun] = useState(false);
+  const [modalVideoReady, setModalVideoReady] = useState(false);
   const startingRunRef = useRef(false);
   const startKeyRef = useRef<string | null>(null);
 
@@ -142,6 +128,41 @@ export const TemplateDetail = () => {
         if (cancelled) return;
         setTemplate(data);
         setActiveStep(data.steps[0]?.id || '');
+        setModalContent(null);
+        if (
+          data.finalResult.type === 'video'
+          && (data.finalResult.thumbnailIsFallback || !data.finalResult.thumbnail)
+        ) {
+          void ensureTemplateResultPoster(data.id, data.versionId).then((thumbnail) => {
+            if (cancelled || !thumbnail) return;
+            setTemplate((current) => {
+              if (
+                !current
+                || current.id !== data.id
+                || current.versionId !== data.versionId
+              ) {
+                return current;
+              }
+              const finalResultId = current.finalResult.id;
+              return {
+                ...current,
+                finalResult: {
+                  ...current.finalResult,
+                  thumbnail,
+                  thumbnailIsFallback: false,
+                },
+                steps: current.steps.map((step) => ({
+                  ...step,
+                  results: step.results.map((result) => (
+                    result.id === finalResultId
+                      ? { ...result, thumbnail, thumbnailIsFallback: false }
+                      : result
+                  )),
+                })),
+              };
+            });
+          });
+        }
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -154,7 +175,11 @@ export const TemplateDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [templateId]);
+  }, [templateId, location.key, location.search]);
+
+  useEffect(() => {
+    setModalVideoReady(false);
+  }, [modalContent?.url]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -394,7 +419,7 @@ export const TemplateDetail = () => {
                 </div>
               ) : template.finalResult.type === 'video' ? (
                 <>
-                  <LazyProtectedVideo
+                  <VideoPosterFrame
                     src={template.finalResult.url}
                     poster={template.finalResult.thumbnail}
                     className="h-full w-full pointer-events-none"
@@ -647,20 +672,40 @@ export const TemplateDetail = () => {
           
           <div className="w-full h-full flex items-center justify-center p-4">
             {modalContent.type === 'video' ? (
-              <video 
-                src={modalContent.url} 
-                poster={modalContent.poster}
-                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                controls 
-                autoPlay
-                playsInline
-                preload="metadata"
-                controlsList={modalContent.allowDownload
-                  ? 'noremoteplayback'
-                  : 'nodownload noremoteplayback'}
-                disablePictureInPicture
-                onContextMenu={modalContent.allowDownload ? undefined : blockVideoContextMenu}
-              />
+              <div className="relative flex h-full w-full items-center justify-center">
+                {!modalVideoReady && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {modalContent.poster && (
+                      <img
+                        src={modalContent.poster}
+                        alt=""
+                        className="absolute inset-0 h-full w-full object-contain opacity-60"
+                      />
+                    )}
+                    <div className="relative z-10 flex items-center gap-2 rounded-full bg-black/65 px-4 py-2 text-sm text-white backdrop-blur">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading video...
+                    </div>
+                  </div>
+                )}
+                <video
+                  src={modalContent.url}
+                  poster={modalContent.poster}
+                  className={`max-h-full max-w-full rounded-lg object-contain shadow-2xl transition-opacity ${
+                    modalVideoReady ? 'opacity-100' : 'opacity-0'
+                  }`}
+                  controls
+                  autoPlay
+                  playsInline
+                  preload="auto"
+                  controlsList={modalContent.allowDownload
+                    ? 'noremoteplayback'
+                    : 'nodownload noremoteplayback'}
+                  disablePictureInPicture
+                  onCanPlay={() => setModalVideoReady(true)}
+                  onContextMenu={modalContent.allowDownload ? undefined : blockVideoContextMenu}
+                />
+              </div>
             ) : modalContent.type === 'image' ? (
               <img 
                 src={modalContent.url} 

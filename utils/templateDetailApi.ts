@@ -13,6 +13,7 @@ export interface TemplateDetailResult {
   type: 'image' | 'video';
   url: string;
   thumbnail?: string;
+  thumbnailIsFallback?: boolean;
 }
 
 export interface TemplateDetailStep {
@@ -26,6 +27,7 @@ export interface TemplateDetailStep {
 
 export interface RealTemplateDetail {
   id: string;
+  versionId: string;
   slug: string;
   name: string;
   status: 'draft' | 'pending_review' | 'published' | 'rejected' | 'archived';
@@ -40,6 +42,7 @@ interface AssetRow {
   id: string;
   asset_key: string;
   asset_type: 'image' | 'video' | 'audio';
+  generation_id: string | null;
   storage_bucket: string | null;
   storage_path: string | null;
   public_url: string | null;
@@ -57,6 +60,7 @@ const FEATURE_NAMES: Record<string, string> = {
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const VIDEO_URL_PATTERN = /\.(mp4|webm|mov|m4v)(?:$|[?#])/i;
 
 async function createReadableUrls(assets: AssetRow[]): Promise<Map<string, string>> {
   const urls = new Map<string, string>();
@@ -81,7 +85,7 @@ export async function fetchTemplateDetail(
 ): Promise<RealTemplateDetail> {
   let query = supabase
     .from('templates')
-    .select('id,slug,name,display_name,description,status,creator_id,use_count,current_version_id,draft_version_id,submitted_version_id,cover_url,thumb_url,cover_type');
+    .select('id,slug,name,display_name,description,status,creator_id,use_count,current_version_id,draft_version_id,submitted_version_id,cover_url,thumb_url,cover_type,image_url,preview_url');
   query = UUID_PATTERN.test(idOrSlug)
     ? query.eq('id', idOrSlug)
     : query.eq('slug', idOrSlug);
@@ -107,7 +111,7 @@ export async function fetchTemplateDetail(
         .single(),
       supabase
         .from('template_assets')
-        .select('id,asset_key,asset_type,storage_bucket,storage_path,public_url,is_reusable')
+        .select('id,asset_key,asset_type,generation_id,storage_bucket,storage_path,public_url,is_reusable')
         .eq('template_id', template.id)
         .eq('version_id', selectedVersionId)
         .order('sort_order', { ascending: true }),
@@ -134,10 +138,44 @@ export async function fetchTemplateDetail(
 
   const assets = (assetData || []) as AssetRow[];
   const urls = await createReadableUrls(assets);
+  const generationIds = Array.from(new Set(
+    assets
+      .map((asset) => asset.generation_id)
+      .filter((id): id is string => Boolean(id)),
+  ));
+  const generationPosters = new Map<string, string>();
+  if (generationIds.length > 0) {
+    const { data: generationData } = await supabase
+      .from('generations')
+      .select('id,thumbnail_url,image_url,video_url')
+      .in('id', generationIds);
+    for (const generation of generationData || []) {
+      const poster = generation.thumbnail_url || (
+        generation.image_url
+        && generation.image_url !== generation.video_url
+        && !VIDEO_URL_PATTERN.test(generation.image_url)
+          ? generation.image_url
+          : null
+      );
+      if (poster) generationPosters.set(generation.id, poster);
+    }
+  }
   const coverThumbnailAsset = assets.find((asset) => asset.asset_key === 'cover-thumbnail');
   const coverOriginalAsset = assets.find((asset) => asset.asset_key === 'cover-original');
+  const safeTemplateImage = template.image_url && !VIDEO_URL_PATTERN.test(template.image_url)
+    ? template.image_url
+    : undefined;
+  const safeImageCover = template.cover_type !== 'video'
+    && template.cover_url
+    && !VIDEO_URL_PATTERN.test(template.cover_url)
+      ? template.cover_url
+      : undefined;
   const coverThumbnail =
-    (coverThumbnailAsset && urls.get(coverThumbnailAsset.id)) || template.thumb_url || undefined;
+    (coverThumbnailAsset && urls.get(coverThumbnailAsset.id))
+    || template.thumb_url
+    || safeImageCover
+    || safeTemplateImage
+    || undefined;
   const coverOriginal =
     (coverOriginalAsset && urls.get(coverOriginalAsset.id)) || template.cover_url || '';
 
@@ -171,12 +209,21 @@ export async function fetchTemplateDetail(
     // the generated result type, so those existing templates still play.
     const resultType = step.capability.startsWith('video.') ? 'video' : 'image';
     const results: TemplateDetailResult[] = resultAsset && resultUrl
-      ? [{
+      ? (() => {
+          const dedicatedThumbnail = resultType === 'video'
+            ? resultThumbnail
+              || (resultAsset.generation_id
+                ? generationPosters.get(resultAsset.generation_id)
+                : undefined)
+            : undefined;
+          return [{
           id: resultAsset.id,
           type: resultType,
           url: resultUrl,
-          thumbnail: resultType === 'video' ? resultThumbnail || coverThumbnail : undefined,
-        }]
+          thumbnail: resultType === 'video' ? dedicatedThumbnail || coverThumbnail : undefined,
+          thumbnailIsFallback: resultType === 'video' && !dedicatedThumbnail,
+        }];
+        })()
       : [];
     const prompt = typeof step.parameters?.prompt === 'string'
       ? step.parameters.prompt
@@ -201,6 +248,7 @@ export async function fetchTemplateDetail(
 
   return {
     id: template.id,
+    versionId: selectedVersionId,
     slug: template.slug,
     name: template.display_name || template.name,
     status: template.status,

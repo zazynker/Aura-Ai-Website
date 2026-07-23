@@ -29,6 +29,7 @@ import {
   type UploadedTemplateCover,
 } from '../utils/templateStorage';
 import { getWorkflowCapability } from '../workflows/registry';
+import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 
 type WorkflowGeneration = Generation;
 
@@ -778,6 +779,16 @@ export const TemplateBuilder = () => {
     });
     if (activeStep.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(activeStep.resultUrl);
     updateActiveStep(nextStep);
+    if (nextStep.resultType === 'video' && !nextStep.resultThumbnailUrl) {
+      void ensureGenerationThumbnail(generation).then((thumbnailUrl) => {
+        if (!thumbnailUrl) return;
+        setSteps((current) => current.map((step) => (
+          step.id === activeStep.id && step.resultGenerationId === generation.id
+            ? { ...step, resultThumbnailUrl: thumbnailUrl }
+            : step
+        )));
+      });
+    }
 
     if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id) {
       setFinalResult(resultUrl);
@@ -849,7 +860,25 @@ export const TemplateBuilder = () => {
       return null;
     }
 
-    const { workflow, validation } = convertAndValidateBuilderWorkflow(steps);
+    setSaveState('saving');
+    setBuilderError(null);
+    const stepsForSave = await Promise.all(steps.map(async (step) => {
+      if (
+        step.resultType !== 'video'
+        || !step.resultGenerationId
+        || step.resultThumbnailUrl
+      ) {
+        return step;
+      }
+      const generation = generations.find((item) => item.id === step.resultGenerationId);
+      if (!generation) return step;
+      const thumbnailUrl = await ensureGenerationThumbnail(generation);
+      return thumbnailUrl ? { ...step, resultThumbnailUrl: thumbnailUrl } : step;
+    }));
+    if (stepsForSave.some((step, index) => step !== steps[index])) {
+      setSteps(stepsForSave);
+    }
+    const { workflow, validation } = convertAndValidateBuilderWorkflow(stepsForSave);
     if (!validation.valid) {
       const message =
         validation.issues[0]?.message ||
@@ -860,8 +889,6 @@ export const TemplateBuilder = () => {
       return null;
     }
 
-    setSaveState('saving');
-    setBuilderError(null);
     try {
       const saved = await saveTemplateDraft({
         identity: draftIdentity,
@@ -869,7 +896,7 @@ export const TemplateBuilder = () => {
         title: templateTitle,
         description: templateDescription,
         workflow,
-        steps,
+        steps: stepsForSave,
         finalResultUrl: finalResult,
         coverFile: publishCoverFile,
         persistedCover,

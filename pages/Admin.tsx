@@ -30,7 +30,7 @@ import {
 } from '../utils/adminApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
-type TabType = 'overview' | 'users' | 'templates' | 'unused' | 'video' | 'review';
+type TabType = 'overview' | 'users' | 'templates' | 'rewards' | 'unused' | 'video' | 'review';
 
 const VIRTUAL_USERNAME_SUGGESTIONS = [
   'Bananapiepie', 'MochiStudio', 'PeachyNova', 'CocoCanvas',
@@ -88,6 +88,7 @@ export const Admin = () => {
   const [boostRewardCredits, setBoostRewardCredits] = useState('10');
   const [boostInternalNote, setBoostInternalNote] = useState('');
   const [boostSaving, setBoostSaving] = useState(false);
+  const [boostTemplateSearch, setBoostTemplateSearch] = useState('');
 
   // Unused templates state
   const [unusedTemplates, setUnusedTemplates] = useState<UnusedTemplate[]>([]);
@@ -165,7 +166,7 @@ export const Admin = () => {
   // Load template stats
   const loadTemplateStats = useCallback(async () => {
     setTemplateStatsLoading(true);
-    const { data, error } = await adminGetTemplateStats(30);
+    const { data, error } = await adminGetTemplateStats(100);
     if (error) {
       addToast('error', `Failed to load template stats: ${error}`);
     } else if (data) {
@@ -228,7 +229,7 @@ export const Admin = () => {
       loadStats();
     } else if (activeTab === 'users' && users.length === 0) {
       loadUsers(1, '');
-    } else if (activeTab === 'templates' && templateStats.length === 0) {
+    } else if ((activeTab === 'templates' || activeTab === 'rewards') && templateStats.length === 0) {
       loadTemplateStats();
     } else if (activeTab === 'unused' && unusedTemplates.length === 0) {
       loadUnusedTemplates();
@@ -465,6 +466,12 @@ export const Admin = () => {
   }
 
   const totalPages = Math.ceil(usersTotal / 15);
+  const visibleRewardTemplates = templateStats.filter((template) => {
+    const query = boostTemplateSearch.trim().toLowerCase();
+    return !query
+      || template.template_name?.toLowerCase().includes(query)
+      || template.template_id.toLowerCase().includes(query);
+  });
 
   return (
     <div className="min-h-screen pt-24 px-4 pb-12">
@@ -486,6 +493,7 @@ export const Admin = () => {
             { id: 'overview', label: 'Overview', icon: BarChart3 },
             { id: 'users', label: 'Users', icon: Users },
             { id: 'templates', label: 'Top Templates', icon: TrendingUp },
+            { id: 'rewards', label: 'Creator Rewards', icon: Gift },
             { id: 'unused', label: 'Low Usage', icon: AlertTriangle },
             { id: 'video', label: 'Video Interest', icon: Video },
             { id: 'review', label: 'Template Review', icon: Layers },
@@ -782,6 +790,107 @@ export const Admin = () => {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Creator Rewards / Golden Finger Tab */}
+        {activeTab === 'rewards' && (
+          <div className="space-y-5">
+            <div className="flex flex-col gap-4 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-pink-50 p-5 dark:border-amber-500/20 dark:from-amber-500/10 dark:to-pink-500/10 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="mb-1 flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-amber-500" />
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                    Creator Rewards / Golden Finger
+                  </h2>
+                </div>
+                <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300">
+                  Adjust a template's displayed usage count or issue an encouragement reward with a virtual username.
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={loadTemplateStats}
+                disabled={templateStatsLoading}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${templateStatsLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={boostTemplateSearch}
+                onChange={(event) => setBoostTemplateSearch(event.target.value)}
+                placeholder="Search template name or ID..."
+                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-amber-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+              />
+            </div>
+
+            {templateStatsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
+              </div>
+            ) : visibleRewardTemplates.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 py-14 text-center text-sm text-slate-500 dark:border-white/20">
+                No matching published templates.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/40">
+                <div className="divide-y divide-slate-200 dark:divide-white/10">
+                  {visibleRewardTemplates.map((template) => (
+                    <div
+                      key={template.template_id}
+                      className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center"
+                    >
+                      <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800">
+                        {template.thumb_url || template.image_url ? (
+                          <img
+                            src={template.thumb_url || template.image_url || ''}
+                            alt={template.template_name || 'Template'}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center">
+                            <Image className="h-6 w-6 text-slate-400" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate font-semibold text-slate-900 dark:text-white">
+                          {template.template_name || template.template_id}
+                        </h3>
+                        <p className="mt-1 truncate text-xs text-slate-400">{template.template_id}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-5 text-sm sm:text-right">
+                        <div>
+                          <p className="text-xs text-slate-400">Displayed uses</p>
+                          <p className="font-semibold text-purple-600 dark:text-purple-400">
+                            {template.usage_count.toLocaleString()}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">Credits earned</p>
+                          <p className="font-semibold text-amber-600 dark:text-amber-400">
+                            {template.total_credits.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        className="bg-gradient-to-r from-amber-500 to-pink-500 text-white hover:from-amber-600 hover:to-pink-600"
+                        onClick={() => openTemplateBoostModal(template)}
+                      >
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        Manage reward
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

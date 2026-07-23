@@ -25,11 +25,20 @@ const formatRelativeTime = (createdAt: string): string => {
 
 const getNotificationLink = (notification: UserNotification): string => {
   const metadataLink = notification.metadata.link;
-  if (typeof metadataLink === 'string' && metadataLink.startsWith('/')) return metadataLink;
-  if (notification.type === 'template_approved' && notification.templateId) {
-    return `/templates/${notification.templateId}`;
+  const baseLink = typeof metadataLink === 'string' && metadataLink.startsWith('/')
+    ? metadataLink
+    : notification.type === 'template_approved' && notification.templateId
+      ? `/templates/${notification.templateId}`
+      : '/dashboard?tab=templates';
+  const approvedVersionId = notification.type === 'template_approved'
+    && typeof notification.metadata.version_id === 'string'
+      ? notification.metadata.version_id
+      : null;
+  if (approvedVersionId && baseLink.startsWith('/templates/')) {
+    const separator = baseLink.includes('?') ? '&' : '?';
+    return `${baseLink}${separator}version=${encodeURIComponent(approvedVersionId)}`;
   }
-  return '/dashboard?tab=templates';
+  return baseLink;
 };
 
 export const Navbar = () => {
