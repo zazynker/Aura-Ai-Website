@@ -167,10 +167,11 @@ export const Admin = () => {
   const loadTemplateStats = useCallback(async () => {
     setTemplateStatsLoading(true);
     const { data, error } = await adminGetTemplateStats(100);
+    if (data) {
+      setTemplateStats(data);
+    }
     if (error) {
       addToast('error', `Failed to load template stats: ${error}`);
-    } else if (data) {
-      setTemplateStats(data);
     }
     setTemplateStatsLoading(false);
   }, [addToast]);
@@ -205,6 +206,10 @@ export const Admin = () => {
     feedback?: string,
   ) => {
     if (!reviewingTemplate || reviewActionLoading) return;
+    if (decision === 'approve' && !reviewingTemplate.coverUrl) {
+      addToast('error', 'A template cover is required before approval.');
+      return;
+    }
     setReviewActionLoading(true);
     const result = await adminReviewTemplate(reviewingTemplate.id, reviewingTemplate.versionId, decision, feedback);
     if (!result.success) {
@@ -229,7 +234,7 @@ export const Admin = () => {
       loadStats();
     } else if (activeTab === 'users' && users.length === 0) {
       loadUsers(1, '');
-    } else if ((activeTab === 'templates' || activeTab === 'rewards') && templateStats.length === 0) {
+    } else if (activeTab === 'templates' && templateStats.length === 0) {
       loadTemplateStats();
     } else if (activeTab === 'unused' && unusedTemplates.length === 0) {
       loadUnusedTemplates();
@@ -500,7 +505,10 @@ export const Admin = () => {
           ].map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as TabType)}
+              onClick={() => {
+                setActiveTab(tab.id as TabType);
+                if (tab.id === 'rewards') void loadTemplateStats();
+              }}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'border-purple-500 text-purple-600 dark:text-purple-400'
@@ -1723,6 +1731,7 @@ export const Admin = () => {
           <div className="space-y-6">
             <div className="flex flex-col md:flex-row gap-6">
               <div className="w-full md:w-[240px] md:flex-none">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Template Cover</p>
                 {reviewingTemplate.coverUrl ? (
                   <button
                     type="button"
@@ -1754,6 +1763,47 @@ export const Admin = () => {
                 ) : (
                   <div className="w-full aspect-video flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10">
                     <Image className="w-9 h-9 text-slate-300" />
+                  </div>
+                )}
+              </div>
+              <div className="w-full md:w-[240px] md:flex-none">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Final Result</p>
+                {reviewingTemplate.finalResultUrl ? (
+                  <button
+                    type="button"
+                    className="group relative w-full aspect-video overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-white/10 dark:bg-slate-800"
+                    onClick={() => setReviewMediaPreview({
+                      url: reviewingTemplate.finalResultUrl!,
+                      type: reviewingTemplate.finalResultType === 'video' ? 'video' : 'image',
+                      title: `${reviewingTemplate.name} final result`,
+                    })}
+                  >
+                    {reviewingTemplate.finalResultType === 'video' ? (
+                      <>
+                        <video
+                          src={reviewingTemplate.finalResultUrl}
+                          poster={reviewingTemplate.finalResultPosterUrl}
+                          className="h-full w-full object-cover"
+                          muted
+                          playsInline
+                          preload="metadata"
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25">
+                          <PlayCircle className="h-10 w-10 text-white drop-shadow" />
+                        </span>
+                      </>
+                    ) : (
+                      <img
+                        src={reviewingTemplate.finalResultUrl}
+                        alt="Final result"
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                    <Maximize2 className="absolute right-2 top-2 h-4 w-4 text-white drop-shadow" />
+                  </button>
+                ) : (
+                  <div className="flex w-full aspect-video items-center justify-center rounded-xl border border-slate-200 bg-slate-100 text-xs text-slate-400 dark:border-white/10 dark:bg-slate-800">
+                    No final result
                   </div>
                 )}
               </div>
@@ -1916,7 +1966,7 @@ export const Admin = () => {
               </Button>
               <Button 
                 className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
-                disabled={reviewActionLoading}
+                disabled={reviewActionLoading || !reviewingTemplate.coverUrl}
                 onClick={() => {
                   setApproveConfirmOpen(true);
                 }}

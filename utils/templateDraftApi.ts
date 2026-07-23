@@ -34,6 +34,11 @@ export interface SaveTemplateDraftInput {
   workflow: WorkflowDefinition;
   steps: BuilderDraftStep[];
   finalResultUrl: string | null;
+  finalResultType: 'image' | 'video' | null;
+  isFinalResultManual: boolean;
+  finalResultFile: File | null;
+  persistedFinalResult: UploadedTemplateObject | null;
+  persistedFinalResultPoster: UploadedTemplateObject | null;
   coverFile: File | null;
   persistedCover: UploadedTemplateCover | null;
   resultFiles: Record<string, File>;
@@ -46,6 +51,8 @@ export interface SaveTemplateDraftInput {
 export interface SaveTemplateDraftResult {
   identity: TemplateDraftIdentity;
   cover: UploadedTemplateCover | null;
+  finalResult: UploadedTemplateObject | null;
+  finalResultPoster: UploadedTemplateObject | null;
   results: PersistedResultMap;
   resultPosters: PersistedResultPosterMap;
   materials: PersistedMaterialMap;
@@ -66,6 +73,9 @@ export interface LoadTemplateDraftResult {
   steps: BuilderDraftStep[];
   finalResultUrl: string | null;
   finalResultType: 'image' | 'video' | null;
+  isFinalResultManual: boolean;
+  finalResult: UploadedTemplateObject | null;
+  finalResultPoster: UploadedTemplateObject | null;
   cover: UploadedTemplateCover | null;
   coverUrl: string | null;
   coverType: 'image' | 'video' | null;
@@ -421,6 +431,10 @@ export async function saveTemplateDraft(
   await ensureDraftRows(identity, input);
 
   let cover = input.persistedCover;
+  let finalResultUpload = input.isFinalResultManual ? input.persistedFinalResult : null;
+  let finalResultPosterUpload = input.isFinalResultManual
+    ? input.persistedFinalResultPoster
+    : null;
   const resultUploads: PersistedResultMap = { ...input.persistedResults };
   const resultPosterUploads: PersistedResultPosterMap = { ...input.persistedResultPosters };
   const materialUploads: PersistedMaterialMap = { ...input.persistedMaterials };
@@ -434,6 +448,35 @@ export async function saveTemplateDraft(
         { bucket: cover.original.bucket, path: cover.original.path },
         { bucket: cover.thumbnail.bucket, path: cover.thumbnail.path },
       );
+    }
+
+    if (input.isFinalResultManual && input.finalResultFile) {
+      const assetType = input.finalResultFile.type.startsWith('video/') ? 'video' : 'image';
+      if (assetType === 'video') {
+        const uploaded = await uploadTemplateVideoWithPoster(
+          identity,
+          input.finalResultFile,
+          'final-result',
+        );
+        finalResultUpload = uploaded.original;
+        finalResultPosterUpload = uploaded.poster;
+        newlyUploaded.push(
+          { bucket: uploaded.original.bucket, path: uploaded.original.path },
+          { bucket: uploaded.poster.bucket, path: uploaded.poster.path },
+        );
+      } else {
+        finalResultUpload = await uploadTemplateMaterial(
+          identity,
+          input.finalResultFile,
+          'image',
+          'final-result',
+        );
+        finalResultPosterUpload = null;
+        newlyUploaded.push({
+          bucket: finalResultUpload.bucket,
+          path: finalResultUpload.path,
+        });
+      }
     }
 
     for (const step of input.steps) {
@@ -504,6 +547,34 @@ export async function saveTemplateDraft(
           false,
         ),
       );
+    }
+    if (input.isFinalResultManual && finalResultUpload) {
+      const finalAssetType = input.finalResultType
+        || (finalResultUpload.mimeType.startsWith('video/') ? 'video' : 'image');
+      rows.push(
+        uploadRow(
+          identity,
+          input.userId,
+          'final-result',
+          finalAssetType,
+          finalResultUpload,
+          sortOrder++,
+          false,
+        ),
+      );
+      if (finalAssetType === 'video' && finalResultPosterUpload) {
+        rows.push(
+          uploadRow(
+            identity,
+            input.userId,
+            'final-result-thumbnail',
+            'image',
+            finalResultPosterUpload,
+            sortOrder++,
+            false,
+          ),
+        );
+      }
     }
 
     input.steps.forEach((step, stepIndex) => {
@@ -658,6 +729,8 @@ export async function saveTemplateDraft(
     return {
       identity,
       cover,
+      finalResult: finalResultUpload,
+      finalResultPoster: finalResultPosterUpload,
       results: resultUploads,
       resultPosters: resultPosterUploads,
       materials: materialUploads,
@@ -853,6 +926,10 @@ export async function loadTemplateDraft(
 
   const coverOriginalRow = assets.find((asset) => asset.asset_key === 'cover-original');
   const coverThumbnailRow = assets.find((asset) => asset.asset_key === 'cover-thumbnail');
+  const finalResultRow = assets.find((asset) => asset.asset_key === 'final-result');
+  const finalResultThumbnailRow = assets.find(
+    (asset) => asset.asset_key === 'final-result-thumbnail',
+  );
   const original = coverOriginalRow ? savedObject(coverOriginalRow) : null;
   const thumbnail = coverThumbnailRow ? savedObject(coverThumbnailRow) : null;
   const cover = original && thumbnail
@@ -863,6 +940,16 @@ export async function loadTemplateDraft(
       }
     : null;
   const finalStep = steps[steps.length - 1];
+  const savedFinalResult = finalResultRow ? savedObject(finalResultRow) : null;
+  const savedFinalResultPoster = finalResultThumbnailRow
+    ? savedObject(finalResultThumbnailRow)
+    : null;
+  const manualFinalResultUrl = finalResultRow
+    ? urls.get(finalResultRow.id) || finalResultRow.public_url
+    : null;
+  const manualFinalResultType = finalResultRow
+    ? finalResultRow.asset_type === 'video' ? 'video' as const : 'image' as const
+    : null;
 
   return {
     identity: {
@@ -874,10 +961,13 @@ export async function loadTemplateDraft(
     title: version.display_name || version.name || template.display_name || template.name,
     description: version.description || template.description || '',
     steps,
-    finalResultUrl: finalStep?.resultUrl || null,
-    finalResultType: finalStep?.resultType || (finalStep
+    finalResultUrl: manualFinalResultUrl || finalStep?.resultUrl || null,
+    finalResultType: manualFinalResultType || finalStep?.resultType || (finalStep
       ? VIDEO_FEATURES.has(finalStep.feature) ? 'video' : 'image'
       : null),
+    isFinalResultManual: Boolean(finalResultRow && manualFinalResultUrl),
+    finalResult: savedFinalResult,
+    finalResultPoster: savedFinalResultPoster,
     cover,
     coverUrl: version.cover_url || (coverOriginalRow ? urls.get(coverOriginalRow.id) : null) || template.cover_url || null,
     coverType: version.cover_type === 'video' ? 'video' : 'image',
@@ -896,6 +986,19 @@ export async function submitTemplateForReview(
   }
   if (sessionData.user.id !== identity.userId) {
     throw new Error('This draft belongs to a different account.');
+  }
+
+  const { count: coverCount, error: coverError } = await supabase
+    .from('template_assets')
+    .select('id', { count: 'exact', head: true })
+    .eq('template_id', identity.templateId)
+    .eq('version_id', identity.versionId)
+    .eq('asset_key', 'cover-original');
+  if (coverError) {
+    throw new Error(`Could not verify the template cover: ${coverError.message}`);
+  }
+  if (!coverCount) {
+    throw new Error('A template cover is required before submitting for review.');
   }
 
   const { data, error } = await supabase.rpc('submit_template_for_review', {

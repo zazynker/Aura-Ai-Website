@@ -167,7 +167,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? versionData.workflow.steps as Array<{ capability?: string }>
       : [];
     const resultAssets = assets.filter((asset) => /^step-\d+-result$/.test(asset.asset_key));
-    const resultAsset = [...resultAssets].reverse().find((asset) => {
+    const manualFinalResult = assets.find(
+      (asset) => asset.asset_key === 'final-result' && asset.asset_type === 'video',
+    );
+    const resultAsset = manualFinalResult || [...resultAssets].reverse().find((asset) => {
       const match = /^step-(\d+)-result$/.exec(asset.asset_key);
       const stepIndex = match ? Number(match[1]) - 1 : -1;
       return asset.asset_type === 'video'

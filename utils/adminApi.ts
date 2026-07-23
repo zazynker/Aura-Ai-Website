@@ -200,22 +200,45 @@ export async function adminGetTemplateStats(
   error: string | null 
 }> {
   try {
-    const { data, error } = await supabase.rpc('admin_get_template_stats', {
-      limit_num: limit
-    });
+    const [{ data, error }, { data: publishedRows, error: publishedError }] = await Promise.all([
+      supabase.rpc('admin_get_template_stats', { limit_num: limit }),
+      supabase
+        .from('templates')
+        .select('id,name,display_name,thumb_url,image_url,use_count,status,current_version_id')
+        .eq('status', 'published')
+        .not('current_version_id', 'is', null)
+        .limit(1000),
+    ]);
 
-    if (error) {
-      console.error('Error fetching template stats:', error);
+    if (error && publishedError) {
+      console.error('Error fetching template stats:', error, publishedError);
       return { data: null, error: error.message };
     }
 
-    if (!data.success) {
-      return { data: null, error: data.error || 'Unknown error' };
+    const statsById = new Map<string, TemplateStats>();
+    if (!error && data?.success) {
+      for (const template of (data.templates || []) as TemplateStats[]) {
+        statsById.set(template.template_id, template);
+      }
+    }
+    for (const template of publishedRows || []) {
+      const current = statsById.get(template.id);
+      statsById.set(template.id, {
+        template_id: template.id,
+        template_name: template.display_name || template.name || current?.template_name || null,
+        thumb_url: template.thumb_url || current?.thumb_url || null,
+        image_url: template.image_url || current?.image_url || null,
+        usage_count: Number(template.use_count ?? current?.usage_count ?? 0),
+        total_credits: Number(current?.total_credits || 0),
+      });
     }
 
-    return { 
-      data: data.templates || [], 
-      error: null 
+    return {
+      data: Array.from(statsById.values()).sort(
+        (a, b) => b.usage_count - a.usage_count
+          || String(a.template_name || '').localeCompare(String(b.template_name || '')),
+      ),
+      error: publishedError?.message || (!data?.success ? data?.error || null : null),
     };
   } catch (err) {
     console.error('Unexpected error:', err);
@@ -451,6 +474,9 @@ export interface AdminReviewTemplate {
   stepsCount: number;
   description: string;
   status: 'In review';
+  finalResultUrl?: string;
+  finalResultType?: 'image' | 'video';
+  finalResultPosterUrl?: string;
   steps: AdminReviewStep[];
 }
 
@@ -564,6 +590,19 @@ async function mapPendingReview(
       resultType: isVideoResult ? 'video' : 'image',
     };
   }));
+  const savedFinalResultAsset = assets.find((asset) => asset.asset_key === 'final-result');
+  const savedFinalResultPosterAsset = assets.find(
+    (asset) => asset.asset_key === 'final-result-thumbnail',
+  );
+  const lastStepResult = [...steps].reverse().find((step) => step.resultUrl);
+  const [savedFinalResultUrl, savedFinalResultPosterUrl] = await Promise.all([
+    signedAssetUrl(savedFinalResultAsset),
+    signedAssetUrl(savedFinalResultPosterAsset),
+  ]);
+  const finalResultUrl = savedFinalResultUrl || lastStepResult?.resultUrl;
+  const finalResultType = savedFinalResultAsset
+    ? savedFinalResultAsset.asset_type === 'video' ? 'video' as const : 'image' as const
+    : lastStepResult?.resultType;
   const email = row.creator_email || 'Creator';
   return {
     id: row.id,
@@ -582,6 +621,9 @@ async function mapPendingReview(
     stepsCount: steps.length,
     description: row.description || 'No description provided.',
     status: 'In review',
+    finalResultUrl,
+    finalResultType,
+    finalResultPosterUrl: savedFinalResultPosterUrl,
     steps,
   };
 }

@@ -27,6 +27,7 @@ import {
   validateTemplateCoverFile,
   validateTemplateMaterialFile,
   type UploadedTemplateCover,
+  type UploadedTemplateObject,
 } from '../utils/templateStorage';
 import { getWorkflowCapability } from '../workflows/registry';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
@@ -197,6 +198,9 @@ export const TemplateBuilder = () => {
   const [finalResult, setFinalResult] = useState<string | null>(null);
   const [finalResultType, setFinalResultType] = useState<'image' | 'video' | null>(null);
   const [isFinalResultManual, setIsFinalResultManual] = useState(false);
+  const [finalResultFile, setFinalResultFile] = useState<File | null>(null);
+  const [persistedFinalResult, setPersistedFinalResult] = useState<UploadedTemplateObject | null>(null);
+  const [persistedFinalResultPoster, setPersistedFinalResultPoster] = useState<UploadedTemplateObject | null>(null);
   const [showFinalResultPreview, setShowFinalResultPreview] = useState(false);
   
   const [templateTitle, setTemplateTitle] = useState('');
@@ -254,7 +258,10 @@ export const TemplateBuilder = () => {
         setActiveStepId(draft.steps[0]?.id || 'step-1');
         setFinalResult(draft.finalResultUrl);
         setFinalResultType(draft.finalResultType);
-        setIsFinalResultManual(false);
+        setIsFinalResultManual(draft.isFinalResultManual);
+        setFinalResultFile(null);
+        setPersistedFinalResult(draft.finalResult);
+        setPersistedFinalResultPoster(draft.finalResultPoster);
         setShowFinalResultPreview(false);
         setPersistedCover(draft.cover);
         setPublishCover(draft.coverUrl);
@@ -372,6 +379,9 @@ export const TemplateBuilder = () => {
       setFinalResult(url);
       setFinalResultType(file.type.startsWith('video/') ? 'video' : 'image');
       setIsFinalResultManual(true);
+      setFinalResultFile(file);
+      setPersistedFinalResult(null);
+      setPersistedFinalResultPoster(null);
       setShowFinalResultPreview(false);
       setSaveState('idle');
     }
@@ -898,6 +908,11 @@ export const TemplateBuilder = () => {
         workflow,
         steps: stepsForSave,
         finalResultUrl: finalResult,
+        finalResultType,
+        isFinalResultManual,
+        finalResultFile,
+        persistedFinalResult,
+        persistedFinalResultPoster,
         coverFile: publishCoverFile,
         persistedCover,
         resultFiles,
@@ -908,6 +923,8 @@ export const TemplateBuilder = () => {
       });
       setDraftIdentity(saved.identity);
       setPersistedCover(saved.cover);
+      setPersistedFinalResult(saved.finalResult);
+      setPersistedFinalResultPoster(saved.finalResultPoster);
       setPersistedResults(saved.results);
       setPersistedResultPosters(saved.resultPosters);
       setPersistedMaterials(saved.materials);
@@ -922,6 +939,7 @@ export const TemplateBuilder = () => {
         })),
       );
       setPublishCoverFile(null);
+      setFinalResultFile(null);
       setResultFiles({});
       setMaterialFiles({});
       setSaveState('saved');
@@ -937,6 +955,11 @@ export const TemplateBuilder = () => {
   };
 
   const handleConfirmPublish = async () => {
+    if (!publishCover || !publishCoverType) {
+      setReviewState('failed');
+      addToast('error', 'A template cover is required before submitting for review.');
+      return;
+    }
     setReviewState('submitting');
     const savedIdentity = await handleSaveDraft(false);
     if (!savedIdentity) {
@@ -973,6 +996,9 @@ export const TemplateBuilder = () => {
     setFinalResult(null);
     setFinalResultType(null);
     setIsFinalResultManual(false);
+    setFinalResultFile(null);
+    setPersistedFinalResult(null);
+    setPersistedFinalResultPoster(null);
     setShowFinalResultPreview(false);
     setTemplateTitle('');
     setTemplateDescription('');
@@ -1834,21 +1860,23 @@ export const TemplateBuilder = () => {
         title="Submit Template for Review"
         className="max-w-md"
       >
-        <div className="space-y-6">
+        <div className="space-y-4">
             {draftIdentity && draftIdentity.versionNumber > 1 && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-                Submitting this update will replace the older submitted version in the review queue. The currently published version, if any, stays live until this version is approved.
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-4 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                This update replaces the version waiting for review. The published version stays live until this update is approved.
               </div>
             )}
             <div>
-              <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">Template cover <span className="font-normal text-slate-400">(optional)</span></label>
-              <p className="text-xs text-slate-500 mb-4">Upload an image or video. This will be displayed on the template marketplace.</p>
+              <label className="mb-1 block text-sm font-medium text-slate-900 dark:text-white">
+                Template cover <span className="text-red-500">*</span>
+              </label>
+              <p className="mb-2 text-xs text-slate-500">Required. Upload the image or video shown on the template marketplace.</p>
               
               <input type="file" ref={publishFileInputRef} onChange={handlePublishCoverUpload} accept="image/*,video/*" className="hidden" />
               {publishCover ? (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   <div 
-                    className="aspect-[3/4] w-full max-w-[240px] mx-auto bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700"
+                    className="aspect-[3/4] w-full max-w-[180px] mx-auto bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700"
                     onClick={() => publishFileInputRef.current?.click()}
                   >
                     {publishCoverType === 'video' ? (
@@ -1962,7 +1990,7 @@ export const TemplateBuilder = () => {
               ) : (
                 <button 
                   onClick={() => publishFileInputRef.current?.click()}
-                  className="aspect-[3/4] w-full max-w-[240px] mx-auto bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                  className="aspect-[3/4] w-full max-w-[180px] mx-auto bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-red-200 dark:border-red-500/30 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
                 >
                   <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 group-hover:scale-110 transition-transform">
                     <Camera className="w-5 h-5" />
@@ -1977,12 +2005,12 @@ export const TemplateBuilder = () => {
               )}
             </div>
             
-            <div className="pt-4 flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800">
+            <div className="pt-3 flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800">
               <Button variant="outline" onClick={() => setShowPublishModal(false)} disabled={reviewState === 'submitting'}>Cancel</Button>
               <Button
                 variant="gradient"
                 onClick={() => void handleConfirmPublish()}
-                disabled={saveState === 'saving' || reviewState === 'submitting'}
+                disabled={!publishCover || saveState === 'saving' || reviewState === 'submitting'}
               >
                 {reviewState === 'submitting' || saveState === 'saving'
                   ? 'Submitting...'

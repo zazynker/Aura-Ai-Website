@@ -242,6 +242,30 @@ export async function fetchTemplateDetail(
     .reverse()
     .find((step) => step.results.length > 0)
     ?.results[0];
+  const manualFinalResultAsset = assets.find((asset) => asset.asset_key === 'final-result');
+  const manualFinalResultThumbnailAsset = assets.find(
+    (asset) => asset.asset_key === 'final-result-thumbnail',
+  );
+  const manualFinalResultUrl = manualFinalResultAsset
+    ? urls.get(manualFinalResultAsset.id)
+    : undefined;
+  const manualFinalResultThumbnail = manualFinalResultThumbnailAsset
+    ? urls.get(manualFinalResultThumbnailAsset.id)
+    : undefined;
+  const manualFinalResult: TemplateDetailResult | undefined =
+    manualFinalResultAsset && manualFinalResultUrl
+      ? {
+          id: manualFinalResultAsset.id,
+          type: manualFinalResultAsset.asset_type === 'video' ? 'video' : 'image',
+          url: manualFinalResultUrl,
+          thumbnail: manualFinalResultAsset.asset_type === 'video'
+            ? manualFinalResultThumbnail || coverThumbnail
+            : undefined,
+          thumbnailIsFallback:
+            manualFinalResultAsset.asset_type === 'video'
+            && !manualFinalResultThumbnail,
+        }
+      : undefined;
   const fallbackType = coverOriginalAsset?.asset_type === 'video' || template.cover_type === 'video'
     ? 'video'
     : 'image';
@@ -255,7 +279,7 @@ export async function fetchTemplateDetail(
     creatorId: template.creator_id,
     usageCount: Number(template.use_count || 0),
     description: template.description || '',
-    finalResult: finalStepResult || {
+    finalResult: manualFinalResult || finalStepResult || {
       id: 'cover',
       type: fallbackType,
       url: coverOriginal,
