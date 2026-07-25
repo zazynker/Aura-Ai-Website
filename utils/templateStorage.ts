@@ -197,25 +197,99 @@ async function readVideo(file: File): Promise<HTMLVideoElement> {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);
     const video = document.createElement('video');
-    video.preload = 'metadata';
+    // `loadedmetadata` only guarantees dimensions and duration. Drawing at that
+    // point can capture a transparent canvas before the first frame is decoded.
+    video.preload = 'auto';
     video.muted = true;
     video.playsInline = true;
-    video.onloadedmetadata = () => resolve(video);
+    video.onloadeddata = () => resolve(video);
     video.onerror = () => {
       URL.revokeObjectURL(objectUrl);
       reject(new Error('The video could not be decoded.'));
     };
     video.src = objectUrl;
+    video.load();
   });
 }
 
-async function createVideoPoster(video: HTMLVideoElement): Promise<ImageVariant> {
-  const seekTime = Math.min(Math.max(video.duration / 2, 0.1), 1);
-  await new Promise<void>((resolve, reject) => {
-    video.onseeked = () => resolve();
-    video.onerror = () => reject(new Error('The video poster could not be generated.'));
-    video.currentTime = seekTime;
+async function waitForDecodedVideoFrame(
+  video: HTMLVideoElement,
+  requestedTime: number,
+): Promise<void> {
+  const maximumTime = Number.isFinite(video.duration)
+    ? Math.max(0, video.duration - 0.05)
+    : requestedTime;
+  const targetTime = Math.min(Math.max(requestedTime, 0), maximumTime);
+
+  if (Math.abs(video.currentTime - targetTime) > 0.01) {
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(
+        () => reject(new Error('Timed out while seeking the cover video.')),
+        5_000,
+      );
+      const finish = () => {
+        window.clearTimeout(timeout);
+        video.removeEventListener('seeked', finish);
+        video.removeEventListener('error', fail);
+        resolve();
+      };
+      const fail = () => {
+        window.clearTimeout(timeout);
+        video.removeEventListener('seeked', finish);
+        video.removeEventListener('error', fail);
+        reject(new Error('The cover video could not seek to a preview frame.'));
+      };
+      video.addEventListener('seeked', finish, { once: true });
+      video.addEventListener('error', fail, { once: true });
+      video.currentTime = targetTime;
+    });
+  }
+
+  if (typeof video.requestVideoFrameCallback === 'function') {
+    await new Promise<void>((resolve) => {
+      let callbackId = 0;
+      const timeout = window.setTimeout(() => {
+        if (typeof video.cancelVideoFrameCallback === 'function') {
+          video.cancelVideoFrameCallback(callbackId);
+        }
+        resolve();
+      }, 2_000);
+      callbackId = video.requestVideoFrameCallback(() => {
+        window.clearTimeout(timeout);
+        resolve();
+      });
+    });
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve()));
   });
+}
+
+function canvasContainsVideoFrame(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): boolean {
+  const pixels = context.getImageData(0, 0, width, height).data;
+  const sampleStride = Math.max(1, Math.floor((width * height) / 2_000)) * 4;
+  let visibleSamples = 0;
+
+  for (let index = 3; index < pixels.length; index += sampleStride) {
+    if (pixels[index] > 16) {
+      visibleSamples += 1;
+      if (visibleSamples >= 8) return true;
+    }
+  }
+  return false;
+}
+
+async function createVideoPoster(video: HTMLVideoElement): Promise<ImageVariant> {
+  if (!video.videoWidth || !video.videoHeight) {
+    throw new Error('The cover video has no readable frame dimensions.');
+  }
+
   const scale = Math.min(1, 480 / video.videoWidth, 640 / video.videoHeight);
   const width = Math.max(1, Math.round(video.videoWidth * scale));
   const height = Math.max(1, Math.round(video.videoHeight * scale));
@@ -224,8 +298,24 @@ async function createVideoPoster(video: HTMLVideoElement): Promise<ImageVariant>
   canvas.height = height;
   const context = canvas.getContext('2d');
   if (!context) throw new Error('This browser cannot create a video poster.');
-  context.drawImage(video, 0, 0, width, height);
-  return { blob: await canvasToBlob(canvas, 0.82), width, height };
+
+  const duration = Number.isFinite(video.duration) ? video.duration : 0;
+  const candidateTimes = [
+    Math.min(Math.max(duration / 2, 0.1), 1),
+    Math.min(Math.max(duration * 0.25, 0.1), Math.max(0.1, duration - 0.05)),
+    Math.min(0.1, Math.max(0, duration - 0.05)),
+  ].filter((time, index, values) => values.indexOf(time) === index);
+
+  for (const seekTime of candidateTimes) {
+    await waitForDecodedVideoFrame(video, seekTime);
+    context.clearRect(0, 0, width, height);
+    context.drawImage(video, 0, 0, width, height);
+    if (canvasContainsVideoFrame(context, width, height)) {
+      return { blob: await canvasToBlob(canvas, 0.82), width, height };
+    }
+  }
+
+  throw new Error('The video preview frame was empty. Please try another video.');
 }
 
 async function uploadObject(
