@@ -135,6 +135,7 @@ type GenerateRequestBody = {
   imageSize?: string;
   aspectRatio?: string;
   capability?: string;
+  provider?: "fal-gpt-image-2-edit";
   quality?: FalImageQuality;
   requestId?: string;
   recoverOnly?: boolean;
@@ -225,12 +226,24 @@ function isFalGptImage2Capability(capability: unknown): boolean {
   return capability === "image.text_to_image" || capability === "image.replace_product";
 }
 
+function isFalGptImage2Request(body: GenerateRequestBody): boolean {
+  return (
+    isFalGptImage2Capability(body.capability) ||
+    body.provider === "fal-gpt-image-2-edit"
+  );
+}
+
 function normalizeFalQuality(value: unknown): FalImageQuality {
   return value === "low" || value === "high" ? value : "medium";
 }
 
 function resolveFalMode(body: GenerateRequestBody): FalImageMode {
-  if (body.capability === "image.replace_product") return "edit";
+  if (
+    body.capability === "image.replace_product" ||
+    body.provider === "fal-gpt-image-2-edit"
+  ) {
+    return "edit";
+  }
   return body.imageUrl || body.productImageUrl ? "edit" : "text";
 }
 
@@ -887,7 +900,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     body.imageSize && VALID_SIZES.includes(body.imageSize)
       ? body.imageSize
       : "1K";
-  const useFalGptImage2 = isFalGptImage2Capability(body.capability);
+  const useFalGptImage2 = isFalGptImage2Request(body);
   const estimatedCredits = useFalGptImage2
     ? estimateFalCredits(body, requestedImages)
     : estimateImageCredits(requestedSize, requestedImages);
@@ -1014,7 +1027,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     console.log("Image size:", imageSize);
     console.log("Aspect ratio:", aspectRatio || "default");
     console.log("Capability:", capability || "image.modify");
-    console.log("Provider:", useFalGptImage2 ? "fal-gpt-image-2" : "gemini");
+    console.log(
+      "Provider:",
+      useFalGptImage2
+        ? resolveFalMode(body) === "edit"
+          ? "fal-gpt-image-2-edit"
+          : "fal-gpt-image-2"
+        : "gemini",
+    );
     console.log("User ID:", user.id);
 
     // ============================================

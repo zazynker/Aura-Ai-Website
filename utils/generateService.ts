@@ -10,6 +10,7 @@ import {
 export interface GenerateOptions {
   prompt: string;
   capability?: string;
+  provider?: "fal-gpt-image-2-edit";
   imageUrl?: string; // Base/scene image (e.g., model photo)
   productImageUrl?: string; // Product image to replace/insert
   numberOfImages?: number;
@@ -239,6 +240,7 @@ export async function generateImages(
     imageUrl,
     productImageUrl,
     capability,
+    provider,
     numberOfImages = 1,
     imageSize = "1K",
     aspectRatio,
@@ -251,6 +253,7 @@ export async function generateImages(
   console.log("Has product image:", !!productImageUrl);
   console.log("Image size:", imageSize);
   console.log("Capability:", capability || "image.modify");
+  console.log("Provider override:", provider || "default");
   console.log("Quality:", quality);
 
   const {
@@ -288,6 +291,7 @@ export async function generateImages(
         imageSize,
         aspectRatio,
         capability,
+        provider,
         quality,
         requestId,
         ...(templateContext || {}),

@@ -545,7 +545,7 @@ export const Modify = () => {
     }
   };
 
-  // --- Logic: Generation (Fal GPT Image 2 for Text/Replace; Gemini for the other tools) ---
+  // --- Logic: Generation (Fal GPT Image 2 for Text/Replace/Modify Content) ---
   const saveDescribeToHistory = (text: string) => {
     if (!text.trim()) return;
     const newHistory = [text, ...describeHistory.filter(h => h !== text)].slice(0, 3);
@@ -566,14 +566,15 @@ export const Modify = () => {
     }
     
     // Pre-check: estimate credits needed (actual amount will be based on real token usage)
-    const estimatedCredits = toolName === 'Replace'
+    const usesFalGptImage2Edit = toolName === 'Replace' || toolName === 'Modify';
+    const estimatedCredits = usesFalGptImage2Edit
       ? estimateFalImageCredits({
           mode: 'edit',
           resolution: '1K',
           aspectRatio: 'auto',
           imageCount: outputCount,
           quality: 'medium',
-          inputImageCount: 2,
+          inputImageCount: toolName === 'Replace' || modifyReferenceFile ? 2 : 1,
         })
       : estimateCredits(resolution, outputCount);
     if (user.credits < estimatedCredits) { 
@@ -843,17 +844,19 @@ export const Modify = () => {
         console.log('Ratio tool - Target ratio:', targetAspectRatio);
       }
       
-      // Route by capability: Quick Replace uses Fal GPT Image 2 Edit; other tools stay on Gemini
+      // Modify Content explicitly selects Fal without changing other image.modify callers.
       const capability = MODIFY_CAPABILITY_BY_TOOL[toolName] || 'image.modify';
+      const usesFalGptImage2Edit = toolName === 'Replace' || toolName === 'Modify';
       const result = await generateImages({
         prompt: fullPrompt,
         capability,
+        provider: toolName === 'Modify' ? 'fal-gpt-image-2-edit' : undefined,
         imageUrl: baseImageUrl,           // The scene/model image
         productImageUrl: productImageUrl, // The product to insert (for Replace)
         numberOfImages: outputCount,      // Generate multiple images in parallel
         imageSize: targetImageSize,       // Resolution setting
         aspectRatio: targetAspectRatio,   // Target aspect ratio
-        quality: capability === 'image.replace_product' ? 'medium' : undefined,
+        quality: usesFalGptImage2Edit ? 'medium' : undefined,
       });
 
       clearInterval(progressInterval);
@@ -936,8 +939,8 @@ export const Modify = () => {
           ratio: targetAspectRatio,
           extraBlend,
           productSizePercent: Number(productSizePercent || 100),
-          provider: capability === 'image.replace_product' ? 'fal-gpt-image-2-edit' : 'gemini',
-          quality: capability === 'image.replace_product' ? 'medium' : undefined,
+          provider: result.provider || (usesFalGptImage2Edit ? 'fal-gpt-image-2-edit' : 'gemini'),
+          quality: usesFalGptImage2Edit ? 'medium' : undefined,
         },
     }));
 
@@ -2304,7 +2307,14 @@ export const Modify = () => {
                             <ImageCountSelector />
                             <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || isUploading || !modifyPrompt.trim()} onClick={() => runGeneration('Modify', modifyPrompt)}>
                                 {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                                {isUploading ? 'Uploading...' : `Generate Changes · ~${estimateCredits('1K', outputCount)} credits`}
+                                {isUploading ? 'Uploading...' : `Generate Changes · ~${estimateFalImageCredits({
+                                  mode: 'edit',
+                                  resolution: '1K',
+                                  aspectRatio: 'auto',
+                                  imageCount: outputCount,
+                                  quality: 'medium',
+                                  inputImageCount: modifyReferenceFile ? 2 : 1,
+                                })} credits`}
                             </Button>
                         </div>
                     )}
