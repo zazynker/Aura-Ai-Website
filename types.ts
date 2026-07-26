@@ -38,6 +38,7 @@ export interface Template {
   isWorkflow?: boolean;
   authorName?: string;
   usesCount?: number;
+  publishedAt?: string;
 }
 
 // ============================================

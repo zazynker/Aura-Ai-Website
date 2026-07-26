@@ -719,7 +719,11 @@ export async function saveTemplateDraft(
       }
       const { error: coverError } = await supabase
         .from('templates')
-        .update(coverMetadata)
+        .update({
+          ...coverMetadata,
+          width: cover.thumbnail.width || cover.original.width,
+          height: cover.thumbnail.height || cover.original.height,
+        })
         .eq('id', identity.templateId)
         .is('current_version_id', null);
       if (coverError) throw new Error(`Could not save the cover metadata: ${coverError.message}`);

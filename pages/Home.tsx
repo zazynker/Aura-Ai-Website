@@ -24,7 +24,13 @@ const LazyImage = ({
   
   const [isLoaded, setIsLoaded] = useState(false);
   const [isInView, setIsInView] = useState(false);
+  const [intrinsicAspectRatio, setIntrinsicAspectRatio] = useState<number | null>(null);
   const imgRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setIsLoaded(false);
+    setIntrinsicAspectRatio(null);
+  }, [src]);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -45,7 +51,7 @@ const LazyImage = ({
   }, []);
 
   // 计算 aspect-ratio，如果有宽高则使用，否则用默认值
-  const aspectRatio = width && height ? `${width} / ${height}` : '3 / 4';
+  const aspectRatio = intrinsicAspectRatio || (width && height ? width / height : 3 / 4);
 
   return (
     <div 
@@ -62,7 +68,13 @@ const LazyImage = ({
         <img
           src={src}
           alt={alt}
-          onLoad={() => setIsLoaded(true)}
+          onLoad={(event) => {
+            const image = event.currentTarget;
+            if (image.naturalWidth && image.naturalHeight) {
+              setIntrinsicAspectRatio(image.naturalWidth / image.naturalHeight);
+            }
+            setIsLoaded(true);
+          }}
           className={`absolute inset-0 w-full h-full object-cover ${className} ${isLoaded ? 'opacity-100' : 'opacity-0'} transition-opacity duration-300`}
         />
       )}
@@ -83,6 +95,23 @@ const LazyWorkflowVideo = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [shouldLoad, setShouldLoad] = useState(false);
+  const [intrinsicAspectRatio, setIntrinsicAspectRatio] = useState<number | null>(null);
+
+  useEffect(() => {
+    setShouldLoad(false);
+    setIntrinsicAspectRatio(null);
+    if (!posterUrl) return;
+    const poster = new Image();
+    poster.onload = () => {
+      if (poster.naturalWidth && poster.naturalHeight) {
+        setIntrinsicAspectRatio(poster.naturalWidth / poster.naturalHeight);
+      }
+    };
+    poster.src = posterUrl;
+    return () => {
+      poster.onload = null;
+    };
+  }, [posterUrl, videoUrl]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -103,19 +132,28 @@ const LazyWorkflowVideo = ({
     return () => observer.disconnect();
   }, []);
 
+  const aspectRatio = intrinsicAspectRatio || (width && height ? width / height : 3 / 4);
+
   return (
-    <video
-      ref={videoRef}
-      src={shouldLoad ? videoUrl : undefined}
-      poster={posterUrl}
-      autoPlay={shouldLoad}
-      loop
-      muted
-      playsInline
-      preload="none"
-      className="w-full object-cover transform transition-transform duration-700 group-hover:scale-105"
-      style={{ aspectRatio: (width && height) ? width / height : 'auto' }}
-    />
+    <div className="relative w-full overflow-hidden" style={{ aspectRatio }}>
+      <video
+        ref={videoRef}
+        src={shouldLoad ? videoUrl : undefined}
+        poster={posterUrl}
+        autoPlay={shouldLoad}
+        loop
+        muted
+        playsInline
+        preload="none"
+        onLoadedMetadata={(event) => {
+          const video = event.currentTarget;
+          if (video.videoWidth && video.videoHeight) {
+            setIntrinsicAspectRatio(video.videoWidth / video.videoHeight);
+          }
+        }}
+        className="absolute inset-0 h-full w-full object-cover transform transition-transform duration-700 group-hover:scale-105"
+      />
+    </div>
   );
 };
 
@@ -329,6 +367,7 @@ export const Home = () => {
               ? user.name
               : row.author_name || (row.creator_id ? 'Lazora creator' : 'Lazora'),
             usesCount: Number(row.use_count || 0),
+            publishedAt: row.published_at || undefined,
           };
         });
         setTemplates(mapped);
@@ -405,7 +444,15 @@ export const Home = () => {
     if (normalizedSearch) return matchesSearch;
     if (t.isWorkflow) return true;
     return matchesCategory && matchesScene && matchesModel && matchesMood && matchesHoliday;
-  }).sort((left, right) => Number(Boolean(right.isWorkflow)) - Number(Boolean(left.isWorkflow)));
+  });
+  const workflowTemplates = filteredTemplates
+    .filter((template) => template.isWorkflow)
+    .sort((left, right) => {
+      const rightTime = right.publishedAt ? Date.parse(right.publishedAt) : 0;
+      const leftTime = left.publishedAt ? Date.parse(left.publishedAt) : 0;
+      return rightTime - leftTime;
+    });
+  const standardTemplates = filteredTemplates.filter((template) => !template.isWorkflow);
   
   // Count active filters
   const activeFilterCount = [activeScene, activeModel, activeMood, activeHoliday].filter(f => f !== 'All').length;
@@ -669,18 +716,42 @@ export const Home = () => {
             <p className="text-slate-500 dark:text-slate-400">No templates found</p>
           </div>
         ) : (
-        <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 max-w-[1600px] mx-auto space-y-4">
-          {filteredTemplates.map((t) => (
-            <TemplateCardItem
-              key={t.id}
-              t={t}
-              onClick={() => handleTemplateClick(t)}
-              onAction={handleAction}
-              navigate={navigate}
-              user={user}
-              saveBrowsingState={saveBrowsingState}
-            />
-          ))}
+        <div className="max-w-[1600px] mx-auto space-y-4">
+          {workflowTemplates.length > 0 && (
+            <div className="flex items-start gap-4 overflow-x-auto pb-2 hide-scrollbar">
+              {workflowTemplates.map((t) => (
+                <div
+                  key={t.id}
+                  className="min-w-[180px] max-w-[304px] flex-none"
+                  style={{ flexBasis: 'clamp(180px, 19vw, 304px)' }}
+                >
+                  <TemplateCardItem
+                    t={t}
+                    onClick={() => handleTemplateClick(t)}
+                    onAction={handleAction}
+                    navigate={navigate}
+                    user={user}
+                    saveBrowsingState={saveBrowsingState}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+          {standardTemplates.length > 0 && (
+            <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
+              {standardTemplates.map((t) => (
+                <TemplateCardItem
+                  key={t.id}
+                  t={t}
+                  onClick={() => handleTemplateClick(t)}
+                  onAction={handleAction}
+                  navigate={navigate}
+                  user={user}
+                  saveBrowsingState={saveBrowsingState}
+                />
+              ))}
+            </div>
+          )}
         </div>
         )}
       </div>

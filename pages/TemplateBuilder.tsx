@@ -211,6 +211,7 @@ export const TemplateBuilder = () => {
   const [publishCover, setPublishCover] = useState<string | null>(null);
   const [publishCoverFile, setPublishCoverFile] = useState<File | null>(null);
   const [publishCoverType, setPublishCoverType] = useState<'image' | 'video' | null>(null);
+  const [coverAspectRatio, setCoverAspectRatio] = useState<number | null>(null);
   const [coverVideoDuration, setCoverVideoDuration] = useState<number>(0);
   const [coverVideoStartTime, setCoverVideoStartTime] = useState<number>(0);
 
@@ -266,6 +267,11 @@ export const TemplateBuilder = () => {
         setPersistedCover(draft.cover);
         setPublishCover(draft.coverUrl);
         setPublishCoverType(draft.coverType);
+        setCoverAspectRatio(
+          draft.cover?.original.width && draft.cover?.original.height
+            ? draft.cover.original.width / draft.cover.original.height
+            : null,
+        );
         setPublishCoverFile(null);
         setPersistedResults(draft.results);
         setPersistedResultPosters(draft.resultPosters);
@@ -404,6 +410,7 @@ export const TemplateBuilder = () => {
       setPersistedCover(null);
       setSaveState('idle');
       setPublishCoverType(file.type.startsWith('video/') ? 'video' : 'image');
+      setCoverAspectRatio(null);
       setCoverVideoDuration(0);
       setCoverVideoStartTime(0);
     }
@@ -1005,6 +1012,7 @@ export const TemplateBuilder = () => {
     setPublishCover(null);
     setPublishCoverFile(null);
     setPublishCoverType(null);
+    setCoverAspectRatio(null);
     setCoverVideoDuration(0);
     setCoverVideoStartTime(0);
     setSteps([createInitialStep()]);
@@ -1876,7 +1884,17 @@ export const TemplateBuilder = () => {
               {publishCover ? (
                 <div className="space-y-2">
                   <div 
-                    className="aspect-[3/4] w-full max-w-[180px] mx-auto bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700"
+                    className="w-full mx-auto bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700 transition-[max-width,aspect-ratio] duration-200"
+                    style={{
+                      aspectRatio: coverAspectRatio || 3 / 4,
+                      maxWidth: coverAspectRatio
+                        ? coverAspectRatio > 1.15
+                          ? 320
+                          : coverAspectRatio >= 0.9
+                            ? 260
+                            : 180
+                        : 180,
+                    }}
                     onClick={() => publishFileInputRef.current?.click()}
                   >
                     {publishCoverType === 'video' ? (
@@ -1888,6 +1906,11 @@ export const TemplateBuilder = () => {
                         muted 
                         onLoadedMetadata={(e) => {
                           const duration = e.currentTarget.duration;
+                          if (e.currentTarget.videoWidth && e.currentTarget.videoHeight) {
+                            setCoverAspectRatio(
+                              e.currentTarget.videoWidth / e.currentTarget.videoHeight,
+                            );
+                          }
                           const segmentStart = Math.min(
                             coverVideoStartTime,
                             Math.max(0, duration - 2),
@@ -1929,7 +1952,17 @@ export const TemplateBuilder = () => {
                         }}
                       />
                     ) : (
-                      <img src={publishCover} alt="Cover" className="w-full h-full object-cover" />
+                      <img
+                        src={publishCover}
+                        alt="Cover"
+                        className="w-full h-full object-cover"
+                        onLoad={(event) => {
+                          const image = event.currentTarget;
+                          if (image.naturalWidth && image.naturalHeight) {
+                            setCoverAspectRatio(image.naturalWidth / image.naturalHeight);
+                          }
+                        }}
+                      />
                     )}
                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <span className="text-white text-sm font-medium">Change cover</span>
