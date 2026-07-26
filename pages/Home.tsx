@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Heart, Share2, Crown, Plus, Check, Loader2, Workflow, Play } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
@@ -6,6 +6,14 @@ import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 import { fetchPublishedTemplates } from '../utils/templatePublicApi';
+
+const getHomeColumnCount = (): number => {
+  if (typeof window === 'undefined') return 5;
+  if (window.innerWidth >= 1280) return 5;
+  if (window.innerWidth >= 1024) return 4;
+  if (window.innerWidth >= 768) return 3;
+  return 2;
+};
 
 // Lazy loading image component with skeleton - 使用 aspect-ratio 防止跳动
 const LazyImage = ({ 
@@ -315,6 +323,7 @@ export const Home = () => {
   // Search Bar Interaction State
   const [showSearchBar, setShowSearchBar] = useState(true);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+  const [columnCount, setColumnCount] = useState(getHomeColumnCount);
   const lastScrollY = useRef(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
 
@@ -388,6 +397,21 @@ export const Home = () => {
     window.scrollTo(0, browsing.scrollY);
   }, []); 
 
+  useEffect(() => {
+    let animationFrame = 0;
+    const updateColumnCount = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        setColumnCount(getHomeColumnCount());
+      });
+    };
+    window.addEventListener('resize', updateColumnCount);
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      window.removeEventListener('resize', updateColumnCount);
+    };
+  }, []);
+
   // Scroll Handler for Search Bar Visibility
   useEffect(() => {
     const handleScroll = () => {
@@ -453,6 +477,13 @@ export const Home = () => {
       return rightTime - leftTime;
     });
   const standardTemplates = filteredTemplates.filter((template) => !template.isWorkflow);
+  const masonryColumns = useMemo(() => {
+    const columns = Array.from({ length: columnCount }, () => [] as Template[]);
+    [...workflowTemplates, ...standardTemplates].forEach((template, index) => {
+      columns[index % columnCount].push(template);
+    });
+    return columns;
+  }, [columnCount, standardTemplates, workflowTemplates]);
   
   // Count active filters
   const activeFilterCount = [activeScene, activeModel, activeMood, activeHoliday].filter(f => f !== 'All').length;
@@ -716,30 +747,10 @@ export const Home = () => {
             <p className="text-slate-500 dark:text-slate-400">No templates found</p>
           </div>
         ) : (
-        <div className="max-w-[1600px] mx-auto space-y-4">
-          {workflowTemplates.length > 0 && (
-            <div className="flex items-start gap-4 overflow-x-auto pb-2 hide-scrollbar">
-              {workflowTemplates.map((t) => (
-                <div
-                  key={t.id}
-                  className="min-w-[180px] max-w-[304px] flex-none"
-                  style={{ flexBasis: 'clamp(180px, 19vw, 304px)' }}
-                >
-                  <TemplateCardItem
-                    t={t}
-                    onClick={() => handleTemplateClick(t)}
-                    onAction={handleAction}
-                    navigate={navigate}
-                    user={user}
-                    saveBrowsingState={saveBrowsingState}
-                  />
-                </div>
-              ))}
-            </div>
-          )}
-          {standardTemplates.length > 0 && (
-            <div className="columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
-              {standardTemplates.map((t) => (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 items-start gap-4 max-w-[1600px] mx-auto">
+          {masonryColumns.map((column, columnIndex) => (
+            <div key={`template-column-${columnIndex}`} className="min-w-0 space-y-4">
+              {column.map((t) => (
                 <TemplateCardItem
                   key={t.id}
                   t={t}
@@ -751,7 +762,7 @@ export const Home = () => {
                 />
               ))}
             </div>
-          )}
+          ))}
         </div>
         )}
       </div>
