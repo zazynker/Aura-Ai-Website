@@ -18,7 +18,9 @@ import {
   Film,
   Mic,
   X,
-  Loader2
+  Loader2,
+  LockKeyhole,
+  Gift,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import {
@@ -29,6 +31,7 @@ import {
 import { useStore } from '../context/StoreContext';
 import {
   fetchTemplateDetail,
+  fetchPublicTemplateDetail,
   type RealTemplateDetail,
 } from '../utils/templateDetailApi';
 import { ensureTemplateResultPoster } from '../utils/templatePosterApi';
@@ -46,6 +49,16 @@ const getFeatureIcon = (featureName: string) => {
 
 const blockVideoContextMenu = (event: React.MouseEvent<HTMLVideoElement>) => {
   event.preventDefault();
+};
+
+const formatSettingLabel = (key: string) => key
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  .replace(/[_-]+/g, ' ')
+  .replace(/^./, (letter) => letter.toUpperCase());
+
+const formatSettingValue = (value: unknown) => {
+  if (typeof value === 'boolean') return value ? 'On' : 'Off';
+  return String(value);
 };
 
 const VideoPosterFrame: React.FC<{
@@ -93,7 +106,7 @@ export const TemplateDetail = () => {
   const { templateId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, saveBrowsingState, addToast } = useStore();
+  const { user, authLoading, addToast } = useStore();
   const [template, setTemplate] = useState<RealTemplateDetail | null>(null);
   const [loadingTemplate, setLoadingTemplate] = useState(true);
   const [templateError, setTemplateError] = useState<string | null>(null);
@@ -107,14 +120,19 @@ export const TemplateDetail = () => {
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
   const [startingRun, setStartingRun] = useState(false);
   const [modalVideoReady, setModalVideoReady] = useState(false);
+  const [showAuthGate, setShowAuthGate] = useState(false);
+  const [pendingGuestAction, setPendingGuestAction] = useState('');
   const startingRunRef = useRef(false);
   const startKeyRef = useRef<string | null>(null);
+  const guestVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [guestVideoPlaying, setGuestVideoPlaying] = useState(false);
 
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    if (authLoading) return;
     if (!templateId) {
       setTemplateError('No template was selected.');
       setLoadingTemplate(false);
@@ -123,13 +141,18 @@ export const TemplateDetail = () => {
 
     setLoadingTemplate(true);
     setTemplateError(null);
-    fetchTemplateDetail(templateId)
+    const detailRequest = user
+      ? fetchTemplateDetail(templateId)
+      : fetchPublicTemplateDetail(templateId);
+    detailRequest
       .then((data) => {
         if (cancelled) return;
         setTemplate(data);
         setActiveStep(data.steps[0]?.id || '');
         setModalContent(null);
         if (
+          user
+          &&
           data.finalResult.type === 'video'
           && (data.finalResult.thumbnailIsFallback || !data.finalResult.thumbnail)
         ) {
@@ -175,7 +198,11 @@ export const TemplateDetail = () => {
     return () => {
       cancelled = true;
     };
-  }, [templateId, location.key, location.search]);
+  }, [templateId, location.key, location.search, authLoading, user?.id]);
+
+  useEffect(() => {
+    if (user) setShowAuthGate(false);
+  }, [user]);
 
   useEffect(() => {
     setModalVideoReady(false);
@@ -200,7 +227,39 @@ export const TemplateDetail = () => {
     };
   }, []);
 
+  const detailDestination = `${location.pathname}${location.search}`;
+
+  const openGuestGate = (action: string) => {
+    if (user) return false;
+    setPendingGuestAction(action);
+    setShowAuthGate(true);
+    return true;
+  };
+
+  const continueToAuth = (mode: 'login' | 'signup') => {
+    sessionStorage.setItem('postAuthDestination', detailDestination);
+    sessionStorage.setItem('postAuthAction', pendingGuestAction || 'unlock-workflow');
+    sessionStorage.setItem('authEntryContext', 'template');
+    navigate(`/${mode}`, {
+      state: {
+        from: detailDestination,
+        authContext: 'template',
+      },
+    });
+  };
+
+  const toggleGuestVideo = () => {
+    const video = guestVideoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      void video.play().catch(() => setGuestVideoPlaying(false));
+    } else {
+      video.pause();
+    }
+  };
+
   const toggleAudio = (id: string, url: string) => {
+    if (openGuestGate('preview-material')) return;
     if (playingAudioId === id) {
       audioRef.current?.pause();
       setPlayingAudioId(null);
@@ -222,10 +281,7 @@ export const TemplateDetail = () => {
       return;
     }
     if (!user) {
-      saveBrowsingState({ 
-        intendedDestination: `/templates/${template.slug || template.id}`
-      });
-      navigate('/login');
+      openGuestGate('use-template');
       return;
     }
     if (startingRunRef.current) return;
@@ -325,6 +381,7 @@ export const TemplateDetail = () => {
   };
 
   const handleCopyPrompt = (prompt: string, id: string) => {
+    if (openGuestGate('copy-prompt')) return;
     navigator.clipboard.writeText(prompt);
     setCopiedPromptId(id);
     setTimeout(() => setCopiedPromptId(null), 2000);
@@ -356,13 +413,21 @@ export const TemplateDetail = () => {
         <div className="max-w-lg w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 p-8 text-center">
           <h1 className="text-xl font-bold text-slate-900 dark:text-white">Template unavailable</h1>
           <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{templateError || 'The template could not be loaded.'}</p>
-          <Button className="mt-6" variant="secondary" onClick={() => navigate('/dashboard?tab=templates')}>Back to My Templates</Button>
+          <Button
+            className="mt-6"
+            variant="secondary"
+            onClick={() => navigate(user ? '/dashboard?tab=templates' : '/')}
+          >
+            {user ? 'Back to My Templates' : 'Back to Templates'}
+          </Button>
         </div>
       </div>
     );
   }
 
-  const creatorName = template.creatorId === user?.id ? 'You' : 'Lazora creator';
+  const creatorName = template.creatorId === user?.id
+    ? 'You'
+    : template.creatorName || 'Lazora creator';
   const isPublished = template.status === 'published';
   const primaryButtonLabel = template.status === 'pending_review'
     ? 'Under review'
@@ -402,9 +467,11 @@ export const TemplateDetail = () => {
             
             {/* Display Window (3:4 ratio) */}
             <div 
-              className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden group cursor-pointer"
+              className={`relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden group ${
+                user ? 'cursor-pointer' : ''
+              }`}
               onClick={() => {
-                if (!template.finalResult.url) return;
+                if (!user || !template.finalResult.url) return;
                 setModalContent({
                   type: template.finalResult.type,
                   url: template.finalResult.url,
@@ -419,16 +486,50 @@ export const TemplateDetail = () => {
                 </div>
               ) : template.finalResult.type === 'video' ? (
                 <>
-                  <VideoPosterFrame
-                    src={template.finalResult.url}
-                    poster={template.finalResult.thumbnail}
-                    className="h-full w-full pointer-events-none"
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
-                    <div className="w-12 h-12 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 shadow-lg group-hover:scale-110 transition-transform">
-                      <Play className="w-5 h-5 text-white ml-1" fill="currentColor" />
-                    </div>
-                  </div>
+                  {user ? (
+                    <>
+                      <VideoPosterFrame
+                        src={template.finalResult.url}
+                        poster={template.finalResult.thumbnail}
+                        className="h-full w-full pointer-events-none"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
+                        <div className="w-12 h-12 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 shadow-lg group-hover:scale-110 transition-transform">
+                          <Play className="w-5 h-5 text-white ml-1" fill="currentColor" />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <video
+                        ref={guestVideoRef}
+                        src={template.finalResult.url}
+                        poster={template.finalResult.thumbnail}
+                        className="h-full w-full object-cover"
+                        playsInline
+                        preload="metadata"
+                        controlsList="nodownload noremoteplayback"
+                        disablePictureInPicture
+                        onPlay={() => setGuestVideoPlaying(true)}
+                        onPause={() => setGuestVideoPlaying(false)}
+                        onEnded={() => setGuestVideoPlaying(false)}
+                        onContextMenu={blockVideoContextMenu}
+                      />
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleGuestVideo();
+                        }}
+                        className="absolute inset-0 m-auto flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white shadow-lg backdrop-blur-sm transition-transform hover:scale-105"
+                        aria-label={guestVideoPlaying ? 'Pause final result' : 'Play final result'}
+                      >
+                        {guestVideoPlaying
+                          ? <Pause className="h-5 w-5" fill="currentColor" />
+                          : <Play className="ml-0.5 h-5 w-5" fill="currentColor" />}
+                      </button>
+                    </>
+                  )}
                 </>
               ) : (
                 <img 
@@ -439,10 +540,24 @@ export const TemplateDetail = () => {
               )}
               
               {/* Hover overlay for zoom */}
-              <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md rounded-lg px-3 py-1.5 flex items-center gap-2 border border-white/10">
-                <Maximize2 className="w-4 h-4 text-white" />
-                <span className="text-xs font-medium text-white">View larger</span>
-              </div>
+              {template.finalResult.url && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (openGuestGate('view-final-result')) return;
+                    setModalContent({
+                      type: template.finalResult.type,
+                      url: template.finalResult.url,
+                      poster: template.finalResult.thumbnail,
+                    });
+                  }}
+                  className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity bg-black/60 backdrop-blur-md rounded-lg px-3 py-1.5 flex items-center gap-2 border border-white/10"
+                >
+                  <Maximize2 className="w-4 h-4 text-white" />
+                  <span className="text-xs font-medium text-white">View larger</span>
+                </button>
+              )}
             </div>
 
             {/* Basic Info */}
@@ -454,7 +569,15 @@ export const TemplateDetail = () => {
 
               <div className="flex items-center gap-3 py-3 border-y border-slate-200 dark:border-white/10">
                 <div className="w-10 h-10 rounded-full border border-slate-200 dark:border-white/10 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 flex items-center justify-center font-semibold">
-                  {creatorName.charAt(0).toUpperCase()}
+                  {template.creatorAvatarUrl ? (
+                    <img
+                      src={template.creatorAvatarUrl}
+                      alt=""
+                      className="h-full w-full rounded-full object-cover"
+                    />
+                  ) : (
+                    creatorName.charAt(0).toUpperCase()
+                  )}
                 </div>
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Created by</p>
@@ -477,6 +600,7 @@ export const TemplateDetail = () => {
             <div className="space-y-4">
               {template.steps.map((step, index) => {
                 const isExpanded = activeStep === step.id;
+                const isGuestLockedStep = !user && (step.locked || index > 0);
                 const FeatureIcon = getFeatureIcon(step.featureName);
 
                 return (
@@ -487,7 +611,13 @@ export const TemplateDetail = () => {
                     {/* Step Header (Clickable) */}
                     <div 
                       className="p-4 flex items-center justify-between cursor-pointer select-none"
-                      onClick={() => setActiveStep(isExpanded ? '' : step.id)}
+                      onClick={() => {
+                        if (isGuestLockedStep) {
+                          openGuestGate(`view-step-${index + 1}`);
+                          return;
+                        }
+                        setActiveStep(isExpanded ? '' : step.id);
+                      }}
                     >
                       <div className="flex items-center gap-4">
                         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-semibold text-sm">
@@ -502,7 +632,11 @@ export const TemplateDetail = () => {
                         </div>
                       </div>
                       <div className="text-slate-400">
-                        {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        {isGuestLockedStep
+                          ? <LockKeyhole className="w-4 h-4 text-purple-500" />
+                          : isExpanded
+                            ? <ChevronUp className="w-5 h-5" />
+                            : <ChevronDown className="w-5 h-5" />}
                       </div>
                     </div>
 
@@ -530,6 +664,7 @@ export const TemplateDetail = () => {
                                     <div 
                                       className="w-10 h-10 rounded-md bg-slate-200 dark:bg-slate-800 flex-shrink-0 flex items-center justify-center overflow-hidden cursor-pointer border border-slate-300 dark:border-slate-700"
                                       onClick={() => {
+                                        if (openGuestGate('view-reference-material')) return;
                                         if (material.type !== 'audio' && material.url !== '#') {
                                           setModalContent({
                                             type: material.type,
@@ -575,7 +710,14 @@ export const TemplateDetail = () => {
                                         Preview only
                                       </span>
                                     ) : (
-                                      <Button variant="secondary" size="sm" className="h-8 gap-1.5 px-3">
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        className="h-8 gap-1.5 px-3"
+                                        onClick={() => {
+                                          if (openGuestGate('download-material')) return;
+                                        }}
+                                      >
                                         <Download className="w-3.5 h-3.5" />
                                         <span className="text-xs">Download</span>
                                       </Button>
@@ -609,6 +751,29 @@ export const TemplateDetail = () => {
                           </div>
                         )}
 
+                        {Object.keys(step.settings || {}).length > 0 && (
+                          <div>
+                            <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">
+                              Settings
+                            </h4>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {Object.entries(step.settings).map(([key, value]) => (
+                                <div
+                                  key={key}
+                                  className="rounded-lg border border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-slate-900/50 px-3 py-2"
+                                >
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    {formatSettingLabel(key)}
+                                  </p>
+                                  <p className="mt-0.5 text-sm font-medium text-slate-800 dark:text-slate-200">
+                                    {formatSettingValue(value)}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Results from This Step */}
                         {step.results.length > 0 && (
                           <div>
@@ -618,11 +783,14 @@ export const TemplateDetail = () => {
                                 <div 
                                   key={result.id}
                                   className="relative w-24 h-24 rounded-lg overflow-hidden border border-slate-200 dark:border-white/10 cursor-pointer group"
-                                  onClick={() => setModalContent({
-                                    type: result.type,
-                                    url: result.url,
-                                    poster: result.thumbnail,
-                                  })}
+                                  onClick={() => {
+                                    if (openGuestGate('view-step-result')) return;
+                                    setModalContent({
+                                      type: result.type,
+                                      url: result.url,
+                                      poster: result.thumbnail,
+                                    });
+                                  }}
                                 >
                                   {result.type === 'video' ? (
                                     <>
@@ -658,6 +826,70 @@ export const TemplateDetail = () => {
           </div>
         </div>
       </div>
+
+      {showAuthGate && !user && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/65 px-4 backdrop-blur-sm animate-in fade-in duration-200"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workflow-auth-title"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setShowAuthGate(false);
+          }}
+        >
+          <div className="relative w-full max-w-md rounded-3xl border border-white/20 bg-white p-7 shadow-2xl dark:bg-slate-900">
+            <button
+              type="button"
+              onClick={() => setShowAuthGate(false)}
+              className="absolute right-4 top-4 rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white"
+              aria-label="Close sign up prompt"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/25">
+              <LockKeyhole className="h-6 w-6" />
+            </div>
+            <h2 id="workflow-auth-title" className="pr-8 text-2xl font-bold text-slate-900 dark:text-white">
+              Sign up to unlock the complete workflow
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              View every step, prompt and reference — and get 120 free credits.
+            </p>
+            <div className="mt-5 rounded-2xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-800/50 dark:bg-purple-950/30">
+              <div className="flex items-start gap-3">
+                <Gift className="mt-0.5 h-5 w-5 flex-none text-purple-600 dark:text-purple-400" />
+                <div>
+                  <p className="font-semibold text-purple-900 dark:text-purple-100">
+                    Get 120 free credits when you sign up
+                  </p>
+                  <p className="mt-1 text-xs text-purple-700 dark:text-purple-300">
+                    No credit card required.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+              Create an account to unlock the full workflow and continue recreating this result.
+            </p>
+            <div className="mt-6 grid gap-3">
+              <Button
+                variant="gradient"
+                className="w-full"
+                onClick={() => continueToAuth('signup')}
+              >
+                Sign up — Get 120 Credits
+              </Button>
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => continueToAuth('login')}
+              >
+                Log in
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Full-screen media viewer overlay */}
       {modalContent && (

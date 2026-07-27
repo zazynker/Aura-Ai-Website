@@ -40,6 +40,12 @@ function isAllowedEmail(email: string): boolean {
 export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   const navigate = useNavigate();
   const location = useLocation();
+  const authRouteState = (location.state || {}) as {
+    from?: string;
+    authContext?: string;
+  };
+  const isTemplateContext = authRouteState.authContext === 'template'
+    || sessionStorage.getItem('authEntryContext') === 'template';
   const { browsing, saveBrowsingState, addToast } = useStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -53,6 +59,9 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
     setError('');
+    if (authRouteState.from?.startsWith('/') && !authRouteState.from.startsWith('//')) {
+      sessionStorage.setItem('postAuthDestination', authRouteState.from);
+    }
     
     try {
       const { error } = await supabase.auth.signInWithOAuth({
@@ -75,6 +84,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
     const authDestination = routeDestination || storedDestination;
     if (authDestination?.startsWith('/') && !authDestination.startsWith('//')) {
       sessionStorage.removeItem('postAuthDestination');
+      sessionStorage.removeItem('authEntryContext');
       navigate(authDestination, { replace: true });
       return;
     }
@@ -184,7 +194,22 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
                     <Sparkles className="w-6 h-6 text-white" />
                 </div>
                 <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">{isSignup ? 'Create Account' : 'Welcome Back'}</h2>
-                <p className="text-slate-600 dark:text-slate-400 text-sm">Create AI Images & Videos. Share How They’re Made.</p>
+                <p className="text-slate-600 dark:text-slate-400 text-sm">
+                  {isTemplateContext
+                    ? 'Create an account to unlock the full workflow and continue recreating this result.'
+                    : 'Create AI Images & Videos. Share How They’re Made.'}
+                </p>
+            </div>
+
+            <div className="mb-6 rounded-2xl border border-purple-200 bg-purple-50 px-4 py-3 text-center dark:border-purple-800/50 dark:bg-purple-950/30">
+              <p className="font-semibold text-purple-900 dark:text-purple-100">
+                {isSignup
+                  ? 'Sign up and get 120 free credits'
+                  : 'Get 120 free credits when you sign up'}
+              </p>
+              <p className="mt-1 text-xs text-purple-700 dark:text-purple-300">
+                No credit card required.
+              </p>
             </div>
 
             {/* Google Login Button - 放在表单前面，更醒目 */}
@@ -286,14 +311,20 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
                 {error && <p className="text-red-500 dark:text-red-400 text-xs text-center">{error}</p>}
 
                 <Button variant="gradient" className="w-full py-3" isLoading={loading}>
-                    {isSignup ? 'Sign Up' : 'Log In'} <ArrowRight className="w-4 h-4 ml-2" />
+                    {isSignup ? 'Sign up — Get 120 Credits' : 'Log In'} <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
             </form>
 
             <div className="mt-6 text-center">
                 <p className="text-sm text-text-slate-600 dark:text-slate-400">
                     {isSignup ? "Already have an account?" : "Don't have an account?"}
-                    <button onClick={() => navigate(isSignup ? '/login' : '/signup')} className="text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300 font-medium ml-1">
+                    <button
+                      onClick={() => navigate(
+                        isSignup ? '/login' : '/signup',
+                        { state: authRouteState },
+                      )}
+                      className="text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300 font-medium ml-1"
+                    >
                         {isSignup ? 'Log in' : 'Sign up'}
                     </button>
                 </p>
@@ -302,4 +333,3 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
     </div>
   );
 };
-

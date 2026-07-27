@@ -154,6 +154,7 @@ const AppContent = () => {
     const destination = sessionStorage.getItem('postAuthDestination');
     if (!destination) return;
     sessionStorage.removeItem('postAuthDestination');
+    sessionStorage.removeItem('authEntryContext');
     if (destination.startsWith('/') && !destination.startsWith('//') && location.pathname !== destination) {
       navigate(destination, { replace: true });
     }
@@ -205,11 +206,7 @@ const AppContent = () => {
           />
           <Route
             path="/templates/:templateId"
-            element={
-              <RequireAuth>
-                <TemplateDetail />
-              </RequireAuth>
-            }
+            element={<TemplateDetail />}
           />
           <Route path="/modify" element={<Modify />} />
           <Route

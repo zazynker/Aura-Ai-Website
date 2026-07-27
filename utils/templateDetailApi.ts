@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { fetchPublicProfiles } from './profileApi';
 
 export interface TemplateDetailMaterial {
   id: string;
@@ -22,7 +23,9 @@ export interface TemplateDetailStep {
   featureName: string;
   materials: TemplateDetailMaterial[];
   prompt: string;
+  settings: Record<string, unknown>;
   results: TemplateDetailResult[];
+  locked?: boolean;
 }
 
 export interface RealTemplateDetail {
@@ -32,6 +35,8 @@ export interface RealTemplateDetail {
   name: string;
   status: 'draft' | 'pending_review' | 'published' | 'rejected' | 'archived';
   creatorId: string | null;
+  creatorName?: string;
+  creatorAvatarUrl?: string | null;
   usageCount: number;
   description: string;
   finalResult: TemplateDetailResult;
@@ -61,6 +66,36 @@ const FEATURE_NAMES: Record<string, string> = {
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const VIDEO_URL_PATTERN = /\.(mp4|webm|mov|m4v)(?:$|[?#])/i;
+
+function displaySettings(parameters: Record<string, unknown> | undefined) {
+  if (!parameters) return {};
+  return Object.fromEntries(
+    Object.entries(parameters).filter(([key, value]) => (
+      key !== 'prompt'
+      && (typeof value === 'string'
+        || typeof value === 'number'
+        || typeof value === 'boolean')
+    )),
+  );
+}
+
+export async function fetchPublicTemplateDetail(
+  idOrSlug: string,
+): Promise<RealTemplateDetail> {
+  const response = await fetch(`/api/public-template-detail?id=${encodeURIComponent(idOrSlug)}`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+  });
+  const payload = await response.json().catch(() => ({})) as {
+    success?: boolean;
+    template?: RealTemplateDetail;
+    error?: string;
+  };
+  if (!response.ok || !payload.success || !payload.template) {
+    throw new Error(payload.error || 'This published template could not be loaded.');
+  }
+  return payload.template;
+}
 
 async function createReadableUrls(assets: AssetRow[]): Promise<Map<string, string>> {
   const urls = new Map<string, string>();
@@ -234,6 +269,7 @@ export async function fetchTemplateDetail(
       featureName: FEATURE_NAMES[step.capability] || step.capability,
       materials,
       prompt,
+      settings: displaySettings(step.parameters),
       results,
     };
   });
@@ -269,6 +305,12 @@ export async function fetchTemplateDetail(
   const fallbackType = coverOriginalAsset?.asset_type === 'video' || template.cover_type === 'video'
     ? 'video'
     : 'image';
+  const creatorProfiles = await fetchPublicProfiles(
+    template.creator_id ? [template.creator_id] : [],
+  );
+  const creatorProfile = template.creator_id
+    ? creatorProfiles.get(template.creator_id)
+    : undefined;
 
   return {
     id: template.id,
@@ -277,6 +319,8 @@ export async function fetchTemplateDetail(
     name: template.display_name || template.name,
     status: template.status,
     creatorId: template.creator_id,
+    creatorName: creatorProfile?.username,
+    creatorAvatarUrl: creatorProfile?.avatarUrl || null,
     usageCount: Number(template.use_count || 0),
     description: template.description || '',
     finalResult: manualFinalResult || finalStepResult || {
