@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Layers,
   Wand2,
@@ -19,8 +20,8 @@ import {
   Mic,
   X,
   Loader2,
-  LockKeyhole,
   Gift,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import {
@@ -633,7 +634,7 @@ export const TemplateDetail = () => {
                       </div>
                       <div className="text-slate-400">
                         {isGuestLockedStep
-                          ? <LockKeyhole className="w-4 h-4 text-purple-500" />
+                          ? <ChevronRight className="w-5 h-5 text-slate-400" />
                           : isExpanded
                             ? <ChevronUp className="w-5 h-5" />
                             : <ChevronDown className="w-5 h-5" />}
@@ -829,7 +830,7 @@ export const TemplateDetail = () => {
 
       {showAuthGate && !user && (
         <div
-          className="fixed inset-0 z-[110] flex items-center justify-center bg-slate-950/65 px-4 backdrop-blur-sm animate-in fade-in duration-200"
+          className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 px-4 py-4 backdrop-blur-sm animate-in fade-in duration-200 sm:px-6"
           role="dialog"
           aria-modal="true"
           aria-labelledby="workflow-auth-title"
@@ -837,47 +838,52 @@ export const TemplateDetail = () => {
             if (event.currentTarget === event.target) setShowAuthGate(false);
           }}
         >
-          <div className="relative w-full max-w-md rounded-3xl border border-white/20 bg-white p-7 shadow-2xl dark:bg-slate-900">
+          <div className="relative my-auto w-full max-w-[460px] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-[28px] border border-white/70 bg-white px-6 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:border-white/10 dark:bg-slate-900 sm:px-8 sm:py-7">
             <button
               type="button"
               onClick={() => setShowAuthGate(false)}
               className="absolute right-4 top-4 rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white"
-              aria-label="Close sign up prompt"
+              aria-label="Close welcome offer"
             >
               <X className="h-5 w-5" />
             </button>
-            <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 text-white shadow-lg shadow-purple-500/25">
-              <LockKeyhole className="h-6 w-6" />
+            <div className="relative mb-5 flex h-20 w-20 items-center justify-center rounded-[26px] bg-gradient-to-br from-purple-500 via-fuchsia-500 to-pink-500 shadow-xl shadow-purple-500/25">
+              <div className="absolute inset-1 rounded-[22px] bg-white/15" />
+              <Gift className="relative h-10 w-10 text-white" strokeWidth={1.8} />
+              <Sparkles className="absolute -right-5 top-1 h-5 w-5 text-fuchsia-400 opacity-80 animate-pulse" strokeWidth={1.8} />
+              <span className="absolute -bottom-2 -left-4 text-lg text-pink-400 opacity-75 animate-pulse">✦</span>
             </div>
             <h2 id="workflow-auth-title" className="pr-8 text-2xl font-bold text-slate-900 dark:text-white">
-              Sign up to unlock the complete workflow
+              See the complete workflow
             </h2>
             <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-              View every step, prompt and reference — and get 120 free credits.
+              Create a free account to view every step, prompt and reference.
             </p>
-            <div className="mt-5 rounded-2xl border border-purple-200 bg-purple-50 p-4 dark:border-purple-800/50 dark:bg-purple-950/30">
-              <div className="flex items-start gap-3">
-                <Gift className="mt-0.5 h-5 w-5 flex-none text-purple-600 dark:text-purple-400" />
-                <div>
-                  <p className="font-semibold text-purple-900 dark:text-purple-100">
-                    Get 120 free credits when you sign up
-                  </p>
-                  <p className="mt-1 text-xs text-purple-700 dark:text-purple-300">
-                    No credit card required.
-                  </p>
-                </div>
+            <div className="mt-5 grid grid-cols-[132px_minmax(0,1fr)] gap-4 rounded-2xl border border-purple-200/90 bg-gradient-to-br from-purple-50 via-white to-pink-50 p-4 dark:border-purple-700/50 dark:from-purple-950/40 dark:via-slate-900 dark:to-pink-950/25">
+              <div className="border-r border-purple-200/80 pr-4 dark:border-purple-700/50">
+                <p className="bg-gradient-to-r from-violet-600 via-fuchsia-500 to-pink-500 bg-clip-text text-5xl font-black leading-none tracking-tight text-transparent">
+                  120
+                </p>
+                <p className="mt-1 text-xs font-bold tracking-[0.15em] text-purple-700 dark:text-purple-300">
+                  FREE CREDITS
+                </p>
+              </div>
+              <div className="flex flex-col justify-center">
+                <p className="text-sm font-semibold leading-5 text-purple-900 dark:text-purple-100">
+                  A welcome gift when you sign up
+                </p>
+                <p className="mt-1 text-xs leading-5 text-purple-700 dark:text-purple-300">
+                  No credit card required.
+                </p>
               </div>
             </div>
-            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
-              Create an account to unlock the full workflow and continue recreating this result.
-            </p>
-            <div className="mt-6 grid gap-3">
+            <div className="mt-5 grid gap-3">
               <Button
                 variant="gradient"
                 className="w-full"
                 onClick={() => continueToAuth('signup')}
               >
-                Sign up — Get 120 Credits
+                Create account — Get 120 Credits
               </Button>
               <Button
                 variant="secondary"
@@ -887,6 +893,9 @@ export const TemplateDetail = () => {
                 Log in
               </Button>
             </div>
+            <p className="mt-4 text-center text-xs text-slate-500 dark:text-slate-400">
+              You’ll return to this workflow after signing in.
+            </p>
           </div>
         </div>
       )}
