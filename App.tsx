@@ -187,9 +187,16 @@ const AppContent = () => {
       />
       <Analytics
         beforeSend={(event) => {
-          const hash = window.location.hash;
-          const path = hash ? hash.replace('#', '') : '/';
-          return { ...event, url: path };
+          // HashRouter routes are not part of location.pathname. Keep the
+          // route visible to Web Analytics while preserving the absolute URL
+          // shape that Vercel emits by default.
+          const hashPath = window.location.hash.replace(/^#/, '');
+          const route = hashPath || window.location.pathname || '/';
+          const safeRoute = route.startsWith('/') && !route.startsWith('//') ? route : '/';
+          return {
+            ...event,
+            url: new URL(safeRoute, window.location.origin).toString(),
+          };
         }}
       />
       <Suspense fallback={<PageLoader />}>
