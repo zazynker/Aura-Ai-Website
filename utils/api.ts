@@ -135,6 +135,7 @@ interface DbGeneration {
   credits_used: number;
   created_at: string;
   media_type?: string;
+  thumbnail_url?: string;
   video_url?: string;
   video_duration?: number;
   video_aspect_ratio?: string;
@@ -142,6 +143,7 @@ interface DbGeneration {
   capability?: string;
   input_assets?: import('../types').GenerationInputAssetSnapshot[] | null;
   generation_parameters?: import('../workflows/types').JsonObject | null;
+  request_id?: string | null;
 }
 
 // 数据库格式 -> 前端格式
@@ -155,6 +157,7 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   creditsUsed: db.credits_used,
   createdAt: new Date(db.created_at).getTime(),
   mediaType: (db.media_type as 'image' | 'video') || 'image',
+  thumbnailUrl: db.thumbnail_url || undefined,
   videoUrl: db.video_url || undefined,
   videoDuration: db.video_duration || undefined,
   videoAspectRatio: db.video_aspect_ratio || undefined,
@@ -162,6 +165,7 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   capability: db.capability as import('../workflows/types').WorkflowCapabilityKey | undefined,
   inputAssets: db.input_assets || undefined,
   generationParameters: db.generation_parameters || undefined,
+  requestId: db.request_id || undefined,
 });
 
 /**
@@ -314,6 +318,31 @@ export async function saveGenerationToDb(
   userPlan: Plan = 'Free'
 ): Promise<{ data: import('../types').Generation | null; error: string | null; deletedOldCount?: number }> {
   try {
+    const isIdempotentVideo =
+      generation.mediaType === 'video' && Boolean(generation.requestId);
+
+    // A completed video may be reported by the foreground poll, automatic resume,
+    // and a remounted page at nearly the same time. Reuse the server request row
+    // before enforcing history limits or attempting another insert.
+    if (isIdempotentVideo) {
+      const { data: existing, error: existingError } = await supabase
+        .from('generations')
+        .select('*')
+        .eq('user_id', generation.userId)
+        .eq('request_id', generation.requestId as string)
+        .eq('media_type', 'video')
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        return { data: dbToGeneration(existing as DbGeneration), error: null, deletedOldCount: 0 };
+      }
+      if (existingError) {
+        console.warn('[SaveGeneration] Video idempotency preflight failed; insert constraint remains authoritative:', existingError);
+      }
+    }
+
     // 先清理超限的旧记录
     const { deletedCount, error: limitError } = await enforceGenerationLimit(userPlan, 1);
     if (limitError) {
@@ -336,7 +365,9 @@ export async function saveGenerationToDb(
       capability: generation.capability || null,
       input_assets: generation.inputAssets || [],
       generation_parameters: generation.generationParameters || {},
+      request_id: generation.requestId || null,
     };
+    if (generation.thumbnailUrl) dbData.thumbnail_url = generation.thumbnailUrl;
 
     const { data, error } = await supabase
       .from('generations')
@@ -345,6 +376,23 @@ export async function saveGenerationToDb(
       .single();
 
     if (error) {
+      // The partial unique index is the cross-tab/concurrent-callback authority.
+      // If another caller won the race, return that row as a successful idempotent save.
+      if (isIdempotentVideo && error.code === '23505') {
+        const { data: existing, error: recoveryError } = await supabase
+          .from('generations')
+          .select('*')
+          .eq('user_id', generation.userId)
+          .eq('request_id', generation.requestId as string)
+          .eq('media_type', 'video')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (existing) {
+          return { data: dbToGeneration(existing as DbGeneration), error: null, deletedOldCount: deletedCount };
+        }
+        console.error('[SaveGeneration] Duplicate video existed but could not be recovered:', recoveryError);
+      }
       console.error('Error saving generation:', error);
       return { data: null, error: error.message };
     }
@@ -386,6 +434,8 @@ export async function saveGenerationsToDb(
       capability: gen.capability || null,
       input_assets: gen.inputAssets || [],
       generation_parameters: gen.generationParameters || {},
+      request_id: gen.requestId || null,
+      ...(gen.thumbnailUrl ? { thumbnail_url: gen.thumbnailUrl } : {}),
     }));
 
     const { data, error } = await supabase

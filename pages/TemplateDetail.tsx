@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Share,
   Play,
@@ -12,126 +12,202 @@ import {
   Copy,
   Check,
   ChevronDown,
+  ChevronRight,
   ChevronUp,
   Layers,
   Wand2,
   Film,
   Mic,
-  X
+  X,
+  Loader2,
+  Gift,
+  Sparkles,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { Modal } from '../components/ui/Modal';
-import { startWorkflow } from '../components/workflow/workflowManager';
+import {
+  getWorkflowTargetRoute,
+  queueWorkflowHandoff,
+  startWorkflow,
+} from '../components/workflow/workflowManager';
 import { useStore } from '../context/StoreContext';
+import {
+  fetchTemplateDetail,
+  fetchPublicTemplateDetail,
+  type RealTemplateDetail,
+} from '../utils/templateDetailApi';
+import { ensureTemplateResultPoster } from '../utils/templatePosterApi';
+import {
+  createRunIdempotencyKey,
+  startTemplateRun,
+} from '../utils/templateRunApi';
 
-// Mock Data
-const MOCK_TEMPLATE = {
-  id: 'template-1',
-  name: 'Minimal Product Story',
-  usageCount: 128,
-  author: {
-    name: 'Alex Design',
-    avatar: 'https://i.pravatar.cc/150?u=alex',
-  },
-  description: 'Turn a simple product photo into a polished promotional story with consistent scenes and motion.',
-  finalResult: {
-    type: 'video',
-    url: 'https://www.w3schools.com/html/mov_bbb.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&q=80',
-  },
-  steps: [
-    {
-      id: 'step-1',
-      name: 'Main Object Preparation',
-      featureUsed: {
-        name: 'Replace Product',
-        icon: Layers,
-      },
-      materials: [
-        {
-          id: 'm1',
-          name: 'Original Product',
-          type: 'image',
-          permission: 'preview',
-          url: 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=800&q=80',
-        },
-      ],
-      prompt: 'A modern minimalist product shot, clean background, soft studio lighting, high resolution.',
-      results: [
-        {
-          id: 'r1',
-          type: 'image',
-          url: 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&q=80',
-        }
-      ]
-    },
-    {
-      id: 'step-2',
-      name: 'Background Generation',
-      featureUsed: {
-        name: 'Image to Image',
-        icon: Wand2,
-      },
-      materials: [],
-      prompt: 'A clean bright room with natural sunlight, minimalist aesthetic, subtle plant shadows on the wall.',
-      results: [
-        {
-          id: 'r2',
-          type: 'image',
-          url: 'https://images.unsplash.com/photo-1497366216548-37526070297c?w=800&q=80',
-        }
-      ]
-    },
-    {
-      id: 'step-3',
-      name: 'Motion Application',
-      featureUsed: {
-        name: 'Motion Control',
-        icon: Film,
-      },
-      materials: [],
-      prompt: 'Smooth slow pan from left to right, focusing on the product, cinematic depth of field.',
-      results: [
-        {
-          id: 'r3',
-          type: 'video',
-          url: 'https://www.w3schools.com/html/mov_bbb.mp4',
-          thumbnail: 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&q=80',
-        }
-      ]
-    },
-    {
-      id: 'step-4',
-      name: 'Voiceover & Lip Sync',
-      featureUsed: {
-        name: 'Lip Sync',
-        icon: Mic,
-      },
-      materials: [
-        {
-          id: 'm2',
-          name: 'Promotional_Voiceover.mp3',
-          type: 'audio',
-          permission: 'download',
-          url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-        }
-      ],
-      prompt: '',
-      results: []
+const getFeatureIcon = (featureName: string) => {
+  if (featureName.includes('Lip Sync')) return Mic;
+  if (featureName.includes('Video') || featureName.includes('Motion')) return Film;
+  if (featureName.includes('Modify')) return Wand2;
+  return Layers;
+};
+
+const blockVideoContextMenu = (event: React.MouseEvent<HTMLVideoElement>) => {
+  event.preventDefault();
+};
+
+const formatSettingLabel = (key: string) => key
+  .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+  .replace(/[_-]+/g, ' ')
+  .replace(/^./, (letter) => letter.toUpperCase());
+
+const formatSettingValue = (value: unknown) => {
+  if (typeof value === 'boolean') return value ? 'On' : 'Off';
+  return String(value);
+};
+
+const VideoPosterFrame: React.FC<{
+  src: string;
+  poster?: string;
+  className?: string;
+}> = ({ src, poster, className }) => {
+  useEffect(() => {
+    let origin: string;
+    try {
+      origin = new URL(src, window.location.href).origin;
+    } catch {
+      return;
     }
-  ]
+    if (origin === window.location.origin) return;
+    const selector = `link[data-template-video-origin="${CSS.escape(origin)}"]`;
+    if (document.head.querySelector(selector)) return;
+    const link = document.createElement('link');
+    link.rel = 'preconnect';
+    link.href = origin;
+    link.crossOrigin = 'anonymous';
+    link.dataset.templateVideoOrigin = origin;
+    document.head.appendChild(link);
+    return () => link.remove();
+  }, [src]);
+
+  return (
+    <div className={`relative overflow-hidden ${className || ''}`}>
+      {poster ? (
+        <img
+          src={poster}
+          alt="Video preview"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-slate-800 to-black text-slate-300">
+          <VideoIcon className="h-10 w-10" />
+        </div>
+      )}
+    </div>
+  );
 };
 
 export const TemplateDetail = () => {
   const { templateId } = useParams();
   const navigate = useNavigate();
-  const { user, saveBrowsingState } = useStore();
-  const [activeStep, setActiveStep] = useState<string>(MOCK_TEMPLATE.steps[0].id);
-  const [modalContent, setModalContent] = useState<{ type: string; url: string } | null>(null);
+  const location = useLocation();
+  const { user, authLoading, addToast } = useStore();
+  const [template, setTemplate] = useState<RealTemplateDetail | null>(null);
+  const [loadingTemplate, setLoadingTemplate] = useState(true);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [activeStep, setActiveStep] = useState<string>('');
+  const [modalContent, setModalContent] = useState<{
+    type: string;
+    url: string;
+    poster?: string;
+    allowDownload?: boolean;
+  } | null>(null);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
+  const [startingRun, setStartingRun] = useState(false);
+  const [modalVideoReady, setModalVideoReady] = useState(false);
+  const [showAuthGate, setShowAuthGate] = useState(false);
+  const [pendingGuestAction, setPendingGuestAction] = useState('');
+  const startingRunRef = useRef(false);
+  const startKeyRef = useRef<string | null>(null);
+  const guestVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [guestVideoPlaying, setGuestVideoPlaying] = useState(false);
 
   const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (authLoading) return;
+    if (!templateId) {
+      setTemplateError('No template was selected.');
+      setLoadingTemplate(false);
+      return;
+    }
+
+    setLoadingTemplate(true);
+    setTemplateError(null);
+    const detailRequest = user
+      ? fetchTemplateDetail(templateId)
+      : fetchPublicTemplateDetail(templateId);
+    detailRequest
+      .then((data) => {
+        if (cancelled) return;
+        setTemplate(data);
+        setActiveStep(data.steps[0]?.id || '');
+        setModalContent(null);
+        if (
+          user
+          &&
+          data.finalResult.type === 'video'
+          && (data.finalResult.thumbnailIsFallback || !data.finalResult.thumbnail)
+        ) {
+          void ensureTemplateResultPoster(data.id, data.versionId).then((thumbnail) => {
+            if (cancelled || !thumbnail) return;
+            setTemplate((current) => {
+              if (
+                !current
+                || current.id !== data.id
+                || current.versionId !== data.versionId
+              ) {
+                return current;
+              }
+              const finalResultId = current.finalResult.id;
+              return {
+                ...current,
+                finalResult: {
+                  ...current.finalResult,
+                  thumbnail,
+                  thumbnailIsFallback: false,
+                },
+                steps: current.steps.map((step) => ({
+                  ...step,
+                  results: step.results.map((result) => (
+                    result.id === finalResultId
+                      ? { ...result, thumbnail, thumbnailIsFallback: false }
+                      : result
+                  )),
+                })),
+              };
+            });
+          });
+        }
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setTemplateError(error instanceof Error ? error.message : 'The template could not be loaded.');
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingTemplate(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [templateId, location.key, location.search, authLoading, user?.id]);
+
+  useEffect(() => {
+    if (user) setShowAuthGate(false);
+  }, [user]);
+
+  useEffect(() => {
+    setModalVideoReady(false);
+  }, [modalContent?.url]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -152,7 +228,39 @@ export const TemplateDetail = () => {
     };
   }, []);
 
+  const detailDestination = `${location.pathname}${location.search}`;
+
+  const openGuestGate = (action: string) => {
+    if (user) return false;
+    setPendingGuestAction(action);
+    setShowAuthGate(true);
+    return true;
+  };
+
+  const continueToAuth = (mode: 'login' | 'signup') => {
+    sessionStorage.setItem('postAuthDestination', detailDestination);
+    sessionStorage.setItem('postAuthAction', pendingGuestAction || 'unlock-workflow');
+    sessionStorage.setItem('authEntryContext', 'template');
+    navigate(`/${mode}`, {
+      state: {
+        from: detailDestination,
+        authContext: 'template',
+      },
+    });
+  };
+
+  const toggleGuestVideo = () => {
+    const video = guestVideoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      void video.play().catch(() => setGuestVideoPlaying(false));
+    } else {
+      video.pause();
+    }
+  };
+
   const toggleAudio = (id: string, url: string) => {
+    if (openGuestGate('preview-material')) return;
     if (playingAudioId === id) {
       audioRef.current?.pause();
       setPlayingAudioId(null);
@@ -168,18 +276,113 @@ export const TemplateDetail = () => {
     }
   };
 
-  const handleUseTemplate = () => {
-    if (!user) {
-      saveBrowsingState({ 
-        intendedDestination: '/'
-      });
-      navigate('/login');
+  const handleUseTemplate = async () => {
+    if (!template || template.status !== 'published') {
+      addToast('info', 'This template is not published yet.');
       return;
     }
-    startWorkflow();
+    if (!user) {
+      openGuestGate('use-template');
+      return;
+    }
+    if (startingRunRef.current) return;
+
+    startingRunRef.current = true;
+    setStartingRun(true);
+    const idempotencyKey = startKeyRef.current || createRunIdempotencyKey(template.id);
+    startKeyRef.current = idempotencyKey;
+    try {
+      const run = await startTemplateRun(template.id, idempotencyKey);
+      const workflowSteps = run.steps.map((runStep, index) => {
+        const savedStep = run.workflow.steps.find((step) => step.id === runStep.stepId)
+          || run.workflow.steps[index];
+        const detailStep = template.steps.find((step) => step.id === runStep.stepId)
+          || template.steps[index];
+        const referenceResult = detailStep?.results[0]
+          || (index === run.steps.length - 1 ? template.finalResult : undefined);
+        const reusableStepMaterials = (detailStep?.materials || [])
+          .filter((material) => material.permission === 'download')
+          .map((material) => {
+            const matchingInput = savedStep?.inputs?.find(
+              (input) => input.templateAssetId === material.id,
+            );
+            const sameTypeInputs = savedStep?.inputs?.filter(
+              (input) => input.assetType === material.type && input.source === 'template_asset',
+            ) || [];
+            const sameTypeMaterialIndex = (detailStep?.materials || [])
+              .filter((item) => item.permission === 'download' && item.type === material.type)
+              .findIndex((item) => item.id === material.id);
+            return {
+              id: material.id,
+              name: material.name,
+              type: material.type,
+              url: material.url,
+              slot: typeof matchingInput?.slot === 'string'
+                ? matchingInput.slot
+                : typeof sameTypeInputs[sameTypeMaterialIndex]?.slot === 'string'
+                  ? sameTypeInputs[sameTypeMaterialIndex].slot
+                  : undefined,
+            };
+          });
+        return {
+          id: runStep.stepId,
+          runStepId: runStep.id,
+          stepNumber: runStep.stepOrder,
+          capability: runStep.capability,
+          feature: detailStep?.featureName || savedStep?.title || runStep.capability,
+          targetRoute: getWorkflowTargetRoute(runStep.capability),
+          reusableMaterials: reusableStepMaterials.length > 0,
+          materials: reusableStepMaterials,
+          prompt: detailStep?.prompt || savedStep?.instruction || '',
+          settings: savedStep?.parameters || {},
+          status: runStep.status,
+          result: referenceResult?.url
+            ? {
+                type: referenceResult.type,
+                url: referenceResult.url,
+                thumbnail: referenceResult.thumbnail,
+              }
+            : undefined,
+        };
+      });
+
+      startWorkflow({
+        runId: run.id,
+        templateId: run.templateId,
+        templateVersionId: run.templateVersionId,
+        status: run.status,
+        steps: workflowSteps,
+      });
+      const firstStep = workflowSteps[0];
+      if (!firstStep) throw new Error('This template has no executable steps.');
+      const handoff = await queueWorkflowHandoff(firstStep, 'all');
+      startKeyRef.current = null;
+      addToast('success', 'Workflow started. Your progress is now saved.');
+      const separator = firstStep.targetRoute.includes('?') ? '&' : '?';
+      navigate(`${firstStep.targetRoute}${separator}workflowAction=all&workflowNonce=${encodeURIComponent(handoff.nonce)}`);
+    } catch (error) {
+      startingRunRef.current = false;
+      setStartingRun(false);
+      addToast(
+        'error',
+        error instanceof Error ? error.message : 'Could not start this workflow.',
+      );
+    }
+  };
+
+  const handleShare = async () => {
+    if (!template || template.status !== 'published') return;
+    const shareUrl = `${window.location.origin}/#/templates/${template.slug || template.id}`;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      addToast('success', 'Template link copied.');
+    } catch {
+      addToast('error', 'Could not copy the template link.');
+    }
   };
 
   const handleCopyPrompt = (prompt: string, id: string) => {
+    if (openGuestGate('copy-prompt')) return;
     navigator.clipboard.writeText(prompt);
     setCopiedPromptId(id);
     setTimeout(() => setCopiedPromptId(null), 2000);
@@ -194,6 +397,45 @@ export const TemplateDetail = () => {
     }
   };
 
+  if (loadingTemplate) {
+    return (
+      <div className="min-h-screen pt-28 flex items-start justify-center">
+        <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span>Loading template…</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (templateError || !template) {
+    return (
+      <div className="min-h-screen pt-28 px-4 flex items-start justify-center">
+        <div className="max-w-lg w-full rounded-2xl border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-900 p-8 text-center">
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white">Template unavailable</h1>
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">{templateError || 'The template could not be loaded.'}</p>
+          <Button
+            className="mt-6"
+            variant="secondary"
+            onClick={() => navigate(user ? '/dashboard?tab=templates' : '/')}
+          >
+            {user ? 'Back to My Templates' : 'Back to Templates'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const creatorName = template.creatorId === user?.id
+    ? 'You'
+    : template.creatorName || 'Lazora creator';
+  const isPublished = template.status === 'published';
+  const primaryButtonLabel = template.status === 'pending_review'
+    ? 'Under review'
+    : isPublished
+      ? 'Use this template'
+      : 'Preview only';
+
   return (
     <div className="min-h-screen pt-20 pb-12 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto">
       {/* Header Area */}
@@ -203,12 +445,17 @@ export const TemplateDetail = () => {
           <p className="text-slate-500 dark:text-slate-400 mt-1">Review the workflow and materials</p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="secondary" className="gap-2">
+          <Button variant="secondary" className="gap-2" onClick={handleShare} disabled={!isPublished}>
             <Share className="w-4 h-4" />
             Share
           </Button>
-          <Button variant="gradient" onClick={handleUseTemplate}>
-            Use this template
+          <Button
+            variant="gradient"
+            onClick={() => void handleUseTemplate()}
+            disabled={!isPublished || startingRun}
+          >
+            {startingRun && <Loader2 className="w-4 h-4 animate-spin" />}
+            {startingRun ? 'Starting…' : primaryButtonLabel}
           </Button>
         </div>
       </div>
@@ -221,89 +468,126 @@ export const TemplateDetail = () => {
             
             {/* Display Window (3:4 ratio) */}
             <div 
-              className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden group cursor-pointer"
-              onClick={(e) => {
-                if (MOCK_TEMPLATE.finalResult.type === 'video') {
-                  const videoEl = e.currentTarget.querySelector('video');
-                  if (videoEl) {
-                    // Reset to beginning, unmute (if it was muted for preview)
-                    videoEl.currentTime = 0;
-                    videoEl.muted = false;
-                    videoEl.play();
-                    
-                    if (videoEl.requestFullscreen) {
-                      videoEl.requestFullscreen();
-                    } else if ((videoEl as any).webkitRequestFullscreen) {
-                      (videoEl as any).webkitRequestFullscreen();
-                    } else if ((videoEl as any).msRequestFullscreen) {
-                      (videoEl as any).msRequestFullscreen();
-                    }
-                  }
-                } else {
-                  setModalContent({ type: MOCK_TEMPLATE.finalResult.type, url: MOCK_TEMPLATE.finalResult.url });
-                }
+              className={`relative aspect-[3/4] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden group ${
+                user ? 'cursor-pointer' : ''
+              }`}
+              onClick={() => {
+                if (!user || !template.finalResult.url) return;
+                setModalContent({
+                  type: template.finalResult.type,
+                  url: template.finalResult.url,
+                  poster: template.finalResult.thumbnail,
+                });
               }}
             >
-              {MOCK_TEMPLATE.finalResult.type === 'video' ? (
+              {!template.finalResult.url ? (
+                <div className="w-full h-full flex flex-col items-center justify-center gap-3 text-slate-400">
+                  <ImageIcon className="w-10 h-10" />
+                  <span className="text-sm">No result preview</span>
+                </div>
+              ) : template.finalResult.type === 'video' ? (
                 <>
-                  <video 
-                    src={MOCK_TEMPLATE.finalResult.url} 
-                    className="w-full h-full object-cover"
-                    autoPlay 
-                    muted 
-                    loop 
-                    playsInline
-                    onFullscreenChange={(e) => {
-                      const videoEl = e.target as HTMLVideoElement;
-                      if (!document.fullscreenElement && !(document as any).webkitIsFullScreen) {
-                        videoEl.pause();
-                        videoEl.muted = true;
-                        videoEl.play(); // resume muted preview
-                      }
-                    }}
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
-                    <div className="w-12 h-12 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 shadow-lg group-hover:scale-110 transition-transform">
-                      <Play className="w-5 h-5 text-white ml-1" fill="currentColor" />
-                    </div>
-                  </div>
+                  {user ? (
+                    <>
+                      <VideoPosterFrame
+                        src={template.finalResult.url}
+                        poster={template.finalResult.thumbnail}
+                        className="h-full w-full pointer-events-none"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
+                        <div className="w-12 h-12 rounded-full bg-black/50 backdrop-blur-sm flex items-center justify-center border border-white/20 shadow-lg group-hover:scale-110 transition-transform">
+                          <Play className="w-5 h-5 text-white ml-1" fill="currentColor" />
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <video
+                        ref={guestVideoRef}
+                        src={template.finalResult.url}
+                        poster={template.finalResult.thumbnail}
+                        className="h-full w-full object-cover"
+                        playsInline
+                        preload="metadata"
+                        controlsList="nodownload noremoteplayback"
+                        disablePictureInPicture
+                        onPlay={() => setGuestVideoPlaying(true)}
+                        onPause={() => setGuestVideoPlaying(false)}
+                        onEnded={() => setGuestVideoPlaying(false)}
+                        onContextMenu={blockVideoContextMenu}
+                      />
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggleGuestVideo();
+                        }}
+                        className="absolute inset-0 m-auto flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white shadow-lg backdrop-blur-sm transition-transform hover:scale-105"
+                        aria-label={guestVideoPlaying ? 'Pause final result' : 'Play final result'}
+                      >
+                        {guestVideoPlaying
+                          ? <Pause className="h-5 w-5" fill="currentColor" />
+                          : <Play className="ml-0.5 h-5 w-5" fill="currentColor" />}
+                      </button>
+                    </>
+                  )}
                 </>
               ) : (
                 <img 
-                  src={MOCK_TEMPLATE.finalResult.url} 
+                  src={template.finalResult.url}
                   alt="Final Result" 
                   className="w-full h-full object-cover"
                 />
               )}
               
               {/* Hover overlay for zoom */}
-              <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity bg-black/60 backdrop-blur-md rounded-lg px-3 py-1.5 flex items-center gap-2 border border-white/10">
-                <Maximize2 className="w-4 h-4 text-white" />
-                <span className="text-xs font-medium text-white">View larger</span>
-              </div>
+              {template.finalResult.url && (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    if (openGuestGate('view-final-result')) return;
+                    setModalContent({
+                      type: template.finalResult.type,
+                      url: template.finalResult.url,
+                      poster: template.finalResult.thumbnail,
+                    });
+                  }}
+                  className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity bg-black/60 backdrop-blur-md rounded-lg px-3 py-1.5 flex items-center gap-2 border border-white/10"
+                >
+                  <Maximize2 className="w-4 h-4 text-white" />
+                  <span className="text-xs font-medium text-white">View larger</span>
+                </button>
+              )}
             </div>
 
             {/* Basic Info */}
             <div className="mt-6 space-y-4">
               <div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white">{MOCK_TEMPLATE.name}</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Used {MOCK_TEMPLATE.usageCount} times</p>
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white">{template.name}</h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Used {template.usageCount} times</p>
               </div>
 
               <div className="flex items-center gap-3 py-3 border-y border-slate-200 dark:border-white/10">
-                <img 
-                  src={MOCK_TEMPLATE.author.avatar} 
-                  alt={MOCK_TEMPLATE.author.name}
-                  className="w-10 h-10 rounded-full border border-slate-200 dark:border-white/10"
-                />
+                <div className="w-10 h-10 rounded-full border border-slate-200 dark:border-white/10 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 flex items-center justify-center font-semibold">
+                  {template.creatorAvatarUrl ? (
+                    <img
+                      src={template.creatorAvatarUrl}
+                      alt=""
+                      className="h-full w-full rounded-full object-cover"
+                    />
+                  ) : (
+                    creatorName.charAt(0).toUpperCase()
+                  )}
+                </div>
                 <div>
                   <p className="text-xs text-slate-500 dark:text-slate-400">Created by</p>
-                  <p className="text-sm font-medium text-slate-900 dark:text-white">{MOCK_TEMPLATE.author.name}</p>
+                  <p className="text-sm font-medium text-slate-900 dark:text-white">{creatorName}</p>
                 </div>
               </div>
 
               <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed line-clamp-3">
-                {MOCK_TEMPLATE.description}
+                {template.description || 'No description provided.'}
               </p>
             </div>
           </div>
@@ -315,9 +599,10 @@ export const TemplateDetail = () => {
             <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-6">How this template was made</h2>
             
             <div className="space-y-4">
-              {MOCK_TEMPLATE.steps.map((step, index) => {
+              {template.steps.map((step, index) => {
                 const isExpanded = activeStep === step.id;
-                const FeatureIcon = step.featureUsed.icon;
+                const isGuestLockedStep = !user && (step.locked || index > 0);
+                const FeatureIcon = getFeatureIcon(step.featureName);
 
                 return (
                   <div 
@@ -327,7 +612,13 @@ export const TemplateDetail = () => {
                     {/* Step Header (Clickable) */}
                     <div 
                       className="p-4 flex items-center justify-between cursor-pointer select-none"
-                      onClick={() => setActiveStep(isExpanded ? '' : step.id)}
+                      onClick={() => {
+                        if (isGuestLockedStep) {
+                          openGuestGate(`view-step-${index + 1}`);
+                          return;
+                        }
+                        setActiveStep(isExpanded ? '' : step.id);
+                      }}
                     >
                       <div className="flex items-center gap-4">
                         <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-semibold text-sm">
@@ -337,12 +628,16 @@ export const TemplateDetail = () => {
                           <h3 className="font-medium text-slate-900 dark:text-white">{step.name}</h3>
                           <div className="flex items-center gap-1.5 mt-1 text-xs text-slate-500 dark:text-slate-400">
                             <FeatureIcon className="w-3.5 h-3.5" />
-                            <span>{step.featureUsed.name}</span>
+                            <span>{step.featureName}</span>
                           </div>
                         </div>
                       </div>
                       <div className="text-slate-400">
-                        {isExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        {isGuestLockedStep
+                          ? <ChevronRight className="w-5 h-5 text-slate-400" />
+                          : isExpanded
+                            ? <ChevronUp className="w-5 h-5" />
+                            : <ChevronDown className="w-5 h-5" />}
                       </div>
                     </div>
 
@@ -355,7 +650,7 @@ export const TemplateDetail = () => {
                           <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Feature I Used</h4>
                           <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 rounded-lg text-sm font-medium border border-purple-100 dark:border-purple-800/30">
                             <FeatureIcon className="w-4 h-4" />
-                            {step.featureUsed.name}
+                            {step.featureName}
                           </div>
                         </div>
 
@@ -370,8 +665,13 @@ export const TemplateDetail = () => {
                                     <div 
                                       className="w-10 h-10 rounded-md bg-slate-200 dark:bg-slate-800 flex-shrink-0 flex items-center justify-center overflow-hidden cursor-pointer border border-slate-300 dark:border-slate-700"
                                       onClick={() => {
+                                        if (openGuestGate('view-reference-material')) return;
                                         if (material.type !== 'audio' && material.url !== '#') {
-                                          setModalContent({ type: material.type, url: material.url });
+                                          setModalContent({
+                                            type: material.type,
+                                            url: material.url,
+                                            allowDownload: material.permission === 'download',
+                                          });
                                         }
                                       }}
                                     >
@@ -387,11 +687,7 @@ export const TemplateDetail = () => {
                                     </div>
                                   </div>
                                   <div className="flex-shrink-0 ml-3">
-                                    {material.permission === 'preview' ? (
-                                      <span className="text-xs font-medium px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-md">
-                                        Preview only
-                                      </span>
-                                    ) : material.type === 'audio' ? (
+                                    {material.type === 'audio' ? (
                                       <Button 
                                         variant="secondary" 
                                         size="sm" 
@@ -410,8 +706,19 @@ export const TemplateDetail = () => {
                                           {playingAudioId === material.id ? 'Pause' : 'Play'}
                                         </span>
                                       </Button>
+                                    ) : material.permission === 'preview' ? (
+                                      <span className="text-xs font-medium px-2 py-1 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-md">
+                                        Preview only
+                                      </span>
                                     ) : (
-                                      <Button variant="secondary" size="sm" className="h-8 gap-1.5 px-3">
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
+                                        className="h-8 gap-1.5 px-3"
+                                        onClick={() => {
+                                          if (openGuestGate('download-material')) return;
+                                        }}
+                                      >
                                         <Download className="w-3.5 h-3.5" />
                                         <span className="text-xs">Download</span>
                                       </Button>
@@ -445,6 +752,29 @@ export const TemplateDetail = () => {
                           </div>
                         )}
 
+                        {Object.keys(step.settings || {}).length > 0 && (
+                          <div>
+                            <h4 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3">
+                              Settings
+                            </h4>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {Object.entries(step.settings).map(([key, value]) => (
+                                <div
+                                  key={key}
+                                  className="rounded-lg border border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-slate-900/50 px-3 py-2"
+                                >
+                                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    {formatSettingLabel(key)}
+                                  </p>
+                                  <p className="mt-0.5 text-sm font-medium text-slate-800 dark:text-slate-200">
+                                    {formatSettingValue(value)}
+                                  </p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                         {/* Results from This Step */}
                         {step.results.length > 0 && (
                           <div>
@@ -454,11 +784,24 @@ export const TemplateDetail = () => {
                                 <div 
                                   key={result.id}
                                   className="relative w-24 h-24 rounded-lg overflow-hidden border border-slate-200 dark:border-white/10 cursor-pointer group"
-                                  onClick={() => setModalContent({ type: result.type, url: result.url })}
+                                  onClick={() => {
+                                    if (openGuestGate('view-step-result')) return;
+                                    setModalContent({
+                                      type: result.type,
+                                      url: result.url,
+                                      poster: result.thumbnail,
+                                    });
+                                  }}
                                 >
                                   {result.type === 'video' ? (
                                     <>
-                                      <img src={result.thumbnail || result.url} alt="Result" className="w-full h-full object-cover" />
+                                      {result.thumbnail ? (
+                                        <img src={result.thumbnail} alt="Result" className="w-full h-full object-cover" />
+                                      ) : (
+                                        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-slate-200 to-slate-300 text-slate-500 dark:from-slate-800 dark:to-slate-900 dark:text-slate-400">
+                                          <VideoIcon className="h-7 w-7" />
+                                        </div>
+                                      )}
                                       <div className="absolute inset-0 bg-black/30 flex items-center justify-center">
                                         <Play className="w-6 h-6 text-white ml-0.5" fill="currentColor" />
                                       </div>
@@ -485,6 +828,78 @@ export const TemplateDetail = () => {
         </div>
       </div>
 
+      {showAuthGate && !user && (
+        <div
+          className="fixed inset-0 z-[110] flex items-center justify-center overflow-y-auto bg-slate-950/65 px-4 py-4 backdrop-blur-sm animate-in fade-in duration-200 sm:px-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="workflow-auth-title"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) setShowAuthGate(false);
+          }}
+        >
+          <div className="relative my-auto w-full max-w-[460px] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-[28px] border border-white/70 bg-white px-6 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:border-white/10 dark:bg-slate-900 sm:px-8 sm:py-7">
+            <button
+              type="button"
+              onClick={() => setShowAuthGate(false)}
+              className="absolute right-4 top-4 rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-white"
+              aria-label="Close welcome offer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="relative mb-5 flex h-20 w-20 items-center justify-center rounded-[26px] bg-gradient-to-br from-purple-500 via-fuchsia-500 to-pink-500 shadow-xl shadow-purple-500/25">
+              <div className="absolute inset-1 rounded-[22px] bg-white/15" />
+              <Gift className="relative h-10 w-10 text-white" strokeWidth={1.8} />
+              <Sparkles className="absolute -right-5 top-1 h-5 w-5 text-fuchsia-400 opacity-80 animate-pulse" strokeWidth={1.8} />
+              <span className="absolute -bottom-2 -left-4 text-lg text-pink-400 opacity-75 animate-pulse">✦</span>
+            </div>
+            <h2 id="workflow-auth-title" className="pr-8 text-2xl font-bold text-slate-900 dark:text-white">
+              See the complete workflow
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+              Create a free account to view every step, prompt and reference.
+            </p>
+            <div className="mt-5 grid grid-cols-[132px_minmax(0,1fr)] gap-4 rounded-2xl border border-purple-200/90 bg-gradient-to-br from-purple-50 via-white to-pink-50 p-4 dark:border-purple-700/50 dark:from-purple-950/40 dark:via-slate-900 dark:to-pink-950/25">
+              <div className="border-r border-purple-200/80 pr-4 dark:border-purple-700/50">
+                <p className="bg-gradient-to-r from-violet-600 via-fuchsia-500 to-pink-500 bg-clip-text text-5xl font-black leading-none tracking-tight text-transparent">
+                  120
+                </p>
+                <p className="mt-1 text-xs font-bold tracking-[0.15em] text-purple-700 dark:text-purple-300">
+                  FREE CREDITS
+                </p>
+              </div>
+              <div className="flex flex-col justify-center">
+                <p className="text-sm font-semibold leading-5 text-purple-900 dark:text-purple-100">
+                  A welcome gift when you sign up
+                </p>
+                <p className="mt-1 text-xs leading-5 text-purple-700 dark:text-purple-300">
+                  No credit card required.
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 grid gap-3">
+              <Button
+                variant="gradient"
+                className="w-full"
+                onClick={() => continueToAuth('signup')}
+              >
+                Create account — Get 120 Credits
+              </Button>
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => continueToAuth('login')}
+              >
+                Log in
+              </Button>
+            </div>
+            <p className="mt-4 text-center text-xs text-slate-500 dark:text-slate-400">
+              You’ll return to this workflow after signing in.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Full-screen media viewer overlay */}
       {modalContent && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-sm animate-in fade-in duration-200">
@@ -498,24 +913,40 @@ export const TemplateDetail = () => {
           
           <div className="w-full h-full flex items-center justify-center p-4">
             {modalContent.type === 'video' ? (
-              <video 
-                src={modalContent.url} 
-                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                controls 
-                autoPlay
-                ref={(el) => {
-                  if (el && !document.fullscreenElement) {
-                    el.play().catch(console.error);
-                    if (el.requestFullscreen) {
-                      el.requestFullscreen().catch(console.error);
-                    } else if ((el as any).webkitRequestFullscreen) {
-                      (el as any).webkitRequestFullscreen();
-                    } else if ((el as any).msRequestFullscreen) {
-                      (el as any).msRequestFullscreen();
-                    }
-                  }
-                }}
-              />
+              <div className="relative flex h-full w-full items-center justify-center">
+                {!modalVideoReady && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    {modalContent.poster && (
+                      <img
+                        src={modalContent.poster}
+                        alt=""
+                        className="absolute inset-0 h-full w-full object-contain opacity-60"
+                      />
+                    )}
+                    <div className="relative z-10 flex items-center gap-2 rounded-full bg-black/65 px-4 py-2 text-sm text-white backdrop-blur">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading video...
+                    </div>
+                  </div>
+                )}
+                <video
+                  src={modalContent.url}
+                  poster={modalContent.poster}
+                  className={`max-h-full max-w-full rounded-lg object-contain shadow-2xl transition-opacity ${
+                    modalVideoReady ? 'opacity-100' : 'opacity-0'
+                  }`}
+                  controls
+                  autoPlay
+                  playsInline
+                  preload="auto"
+                  controlsList={modalContent.allowDownload
+                    ? 'noremoteplayback'
+                    : 'nodownload noremoteplayback'}
+                  disablePictureInPicture
+                  onCanPlay={() => setModalVideoReady(true)}
+                  onContextMenu={modalContent.allowDownload ? undefined : blockVideoContextMenu}
+                />
+              </div>
             ) : modalContent.type === 'image' ? (
               <img 
                 src={modalContent.url} 
@@ -526,7 +957,7 @@ export const TemplateDetail = () => {
           </div>
         </div>
       )}
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 pt-4 select-all">Build: 2026-07-18-M5-8</p>
     </div>
   );
 };
-

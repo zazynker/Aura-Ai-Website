@@ -2,19 +2,37 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Sparkles, Heart } from 'lucide-react';
 import { Button } from './ui/Button';
 import { useNavigate } from 'react-router-dom';
+import type { CreatorRewardCelebration } from '../types';
 
 interface RewardCelebrationModalProps {
-  isOpen: boolean;
+  celebration: CreatorRewardCelebration | null;
   onClose: () => void;
 }
 
-export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ isOpen, onClose }) => {
+const describeTemplates = (celebration: CreatorRewardCelebration): string => {
+  const names = celebration.templates.slice(0, 2).map((template) => `“${template.templateName}”`);
+  if (celebration.templateCount <= 1) return `${names[0] || 'your template'}`;
+  const remaining = Math.max(celebration.templateCount - names.length, 0);
+  return remaining > 0 ? `${names.join(', ')} and ${remaining} more` : names.join(' and ');
+};
+
+const describePeople = (celebration: CreatorRewardCelebration): string => {
+  const names = celebration.usernames.slice(0, 2);
+  if (names.length === 0) {
+    return celebration.userCount === 1 ? 'Someone' : `${celebration.userCount} people`;
+  }
+  if (celebration.userCount <= 1) return names[0];
+  const remaining = Math.max(celebration.userCount - names.length, 0);
+  return remaining > 0 ? `${names.join(', ')} and ${remaining} more people` : names.join(' and ');
+};
+
+export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ celebration, onClose }) => {
   const navigate = useNavigate();
   const [showParticles, setShowParticles] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
-  
-  // Respect prefers-reduced-motion
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isOpen = celebration !== null;
+  const prefersReducedMotion = typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   useEffect(() => {
     if (isOpen) {
@@ -31,7 +49,23 @@ export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ 
     }
   }, [isOpen, prefersReducedMotion]);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isOpen, onClose]);
+
+  if (!celebration) return null;
+
+  const personLabel = describePeople(celebration);
+  const templateDescription = describeTemplates(celebration);
+  const activityDescription = celebration.templateCount === 1
+    ? `${personLabel} used your ${templateDescription} template.`
+    : `${personLabel} used ${celebration.templateCount} of your templates, including ${templateDescription}.`;
+  const canOpenSingleTemplate = celebration.templateCount === 1 && Boolean(celebration.primaryTemplateId);
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center pointer-events-auto">
@@ -44,6 +78,9 @@ export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ 
 
       <div 
         ref={modalRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="reward-celebration-title"
         className="relative w-full max-w-sm mx-4 bg-white dark:bg-slate-900 rounded-3xl shadow-2xl border border-slate-200 dark:border-white/10 p-8 text-center animate-in zoom-in-95 fade-in duration-300 pointer-events-auto"
         style={{
           animation: prefersReducedMotion ? 'none' : 'modal-pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
@@ -55,13 +92,13 @@ export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ 
 
         <div className="mt-8 space-y-4">
           <div>
-            <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Your template is getting noticed!</h2>
-            <p className="text-sm font-medium text-purple-600 dark:text-purple-400 mt-1 uppercase tracking-wider">You're amazing!</p>
+            <h2 id="reward-celebration-title" className="text-xl font-extrabold text-slate-900 dark:text-white">Your templates earned rewards!</h2>
+            <p className="text-sm font-medium text-purple-600 dark:text-purple-400 mt-1 uppercase tracking-wider">Creator reward received</p>
           </div>
           
           <div className="bg-slate-50 dark:bg-slate-800/50 rounded-2xl p-4 border border-slate-100 dark:border-white/5">
             <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-              <span className="font-semibold text-slate-900 dark:text-white">User13134</span> and <span className="font-semibold text-slate-900 dark:text-white">3 others</span> used your <span className="font-semibold text-slate-900 dark:text-white">“Minimal Product Story”</span> template.
+              {activityDescription}
             </p>
           </div>
 
@@ -69,7 +106,7 @@ export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ 
             <span className="text-slate-500 dark:text-slate-400 text-sm font-medium">You earned</span>
             <div className="flex items-center justify-center gap-2 mt-1">
               <Sparkles className="w-6 h-6 text-amber-500" />
-              <span className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-500 to-orange-500">24</span>
+              <span className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-500 to-orange-500">{celebration.creditsEarned}</span>
               <span className="text-xl font-bold text-amber-500">credits!</span>
             </div>
           </div>
@@ -81,10 +118,12 @@ export const RewardCelebrationModal: React.FC<RewardCelebrationModalProps> = ({ 
             className="flex-1"
             onClick={() => {
               onClose();
-              navigate('/templates/t-minimal-product');
+              navigate(canOpenSingleTemplate
+                ? `/templates/${celebration.primaryTemplateId}`
+                : '/dashboard?tab=templates');
             }}
           >
-            View template
+            {canOpenSingleTemplate ? 'View template' : 'View templates'}
           </Button>
           <Button 
             className="flex-1 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white shadow-lg shadow-pink-500/25"

@@ -15,7 +15,7 @@ export const AuthCallback = () => {
       if (error) {
         console.log('OAuth cancelled or error:', error, errorDescription);
         // 用户取消了授权，返回登录页
-        navigate('/#/login', { replace: true });
+        navigate('/login', { replace: true });
         return;
       }
 
@@ -24,14 +24,21 @@ export const AuthCallback = () => {
       
       if (sessionError) {
         console.error('Auth callback error:', sessionError);
-        navigate('/#/login', { replace: true });
+        navigate('/login', { replace: true });
         return;
       }
 
       if (session) {
-        navigate('/#/dashboard', { replace: true });
+        const destination = sessionStorage.getItem('postAuthDestination');
+        if (destination?.startsWith('/') && !destination.startsWith('//')) {
+          sessionStorage.removeItem('postAuthDestination');
+          sessionStorage.removeItem('authEntryContext');
+          navigate(destination, { replace: true });
+        } else {
+          navigate('/dashboard', { replace: true });
+        }
       } else {
-        navigate('/#/login', { replace: true });
+        navigate('/login', { replace: true });
       }
     };
 

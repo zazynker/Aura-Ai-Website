@@ -10,16 +10,20 @@ import {
   Pause,
   GripVertical,
   Sparkles,
+  Maximize2,
 } from 'lucide-react';
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
 import { estimateVideoCredits } from '../../context/StoreContext';
+import type { WorkflowHandoff } from '../workflow/workflowManager';
+import { MediaLightbox } from './MediaLightbox';
 
 interface LipSyncProps {
   onGenerate: (result: VideoResult) => void;
   onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
+  workflowHandoff?: WorkflowHandoff | null;
   userCredits: number;
   onInsufficientCredits: (requiredCredits: number) => void;
 }
@@ -45,12 +49,13 @@ const formatTime = (timeInSeconds: number) => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
-export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits }) => {
+export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits }) => {
   const [selectedMedia, setSelectedMedia] = useState<MediaState | null>(
     initialImage ? { url: initialImage, type: 'image' } : null
   );
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioDisplayName, setAudioDisplayName] = useState('');
   const [audioDuration, setAudioDuration] = useState<number>(0);
   const [videoDuration, setVideoDuration] = useState<number>(0);
 
@@ -84,10 +89,55 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   const audioPreviewTimerRef = useRef<number | null>(null);
   const timelineAudioRef = useRef<HTMLAudioElement | null>(null);
   const [isAudioPreviewPlaying, setIsAudioPreviewPlaying] = useState(false);
+  const [previewMedia, setPreviewMedia] = useState<MediaState | null>(null);
+  const audioLabel = audioFile?.name || audioDisplayName || 'Template audio';
+
+  useEffect(() => {
+    if (!workflowHandoff || !workflowHandoff.capability.startsWith('video.lip_sync_')) return;
+    if (workflowHandoff.action === 'materials' || workflowHandoff.action === 'all') {
+      const media = workflowHandoff.materials.find((item) => item.slot === 'portrait_image' || item.slot === 'source_video')
+        || workflowHandoff.materials.find((item) => item.type === 'image' || item.type === 'video');
+      const audio = workflowHandoff.materials.find((item) => item.slot === 'audio')
+        || workflowHandoff.materials.find((item) => item.type === 'audio');
+      const willOverwrite = Boolean(
+        (media && selectedMedia && selectedMedia.url !== media.url)
+        || (audio && audioUrl && audioUrl !== audio.url),
+      );
+      if (workflowHandoff.action === 'materials' && willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
+      if (media) setSelectedMedia({ url: media.url, type: media.type === 'video' ? 'video' : 'image' });
+      if (audio) {
+        setAudioUrl(audio.url);
+        setAudioFile(null);
+        setAudioDisplayName(audio.name || 'Template audio');
+        const probe = new Audio(audio.url);
+        probe.preload = 'metadata';
+        probe.onloadedmetadata = () => {
+          const duration = Number.isFinite(probe.duration) ? probe.duration : 0;
+          setAudioDuration(duration);
+          setAudioTrimStart(0);
+          setAudioTrimEnd(duration);
+        };
+      }
+      if (workflowHandoff.action === 'materials') return;
+    }
+    const nextPrompt = workflowHandoff.prompt
+      || (typeof workflowHandoff.settings.prompt === 'string' ? workflowHandoff.settings.prompt : '');
+    if (workflowHandoff.action === 'prompt' && prompt.trim() && prompt !== nextPrompt
+      && !window.confirm('Replace the prompt currently entered on this page?')) return;
+    setPrompt(nextPrompt);
+  }, [workflowHandoff?.nonce]);
 
   const timelineDuration = Math.max(videoDuration || 0, selectedMedia?.type === 'video' ? 3 : 0);
   const minAudioClipLength = Math.min(2, Math.max(0.2, audioDuration || 0.2));
   const effectiveAudioLength = Math.max(0, audioTrimEnd - audioTrimStart);
+  const resultDuration = Math.ceil(
+    selectedMedia?.type === 'video' ? timelineDuration || effectiveAudioLength || 5 : audioDuration || 5
+  );
+  const estimatedCredits = estimateVideoCredits({
+    mode: 'lip_sync',
+    duration: resultDuration,
+    lipSyncInput: selectedMedia?.type || 'video',
+  });
   const basePixelsPerSecond = 56;
   const naturalTimelineWidth = Math.max(1, timelineDuration * basePixelsPerSecond * timelineZoom);
   const timelineContentWidth = Math.max(timelineViewportWidth || 0, naturalTimelineWidth);
@@ -101,7 +151,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
         const b = Math.sin(i * 0.47 + 1.3) * 0.5 + 0.5;
         return Math.round(22 + (a * 0.65 + b * 0.35) * 58);
       }),
-    [audioFile?.name]
+    [audioLabel]
   );
 
   useEffect(() => {
@@ -129,13 +179,16 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     } else if (existing.inputVideoUrl) {
       setSelectedMedia({ url: existing.inputVideoUrl, type: 'video' });
     }
-    if (existing.audioUrl) setAudioUrl(existing.audioUrl);
+    if (existing.audioUrl) {
+      setAudioUrl(existing.audioUrl);
+      setAudioDisplayName('Restored audio');
+    }
     if (existing.prompt) setPrompt(existing.prompt);
 
     onGenerate({
       id: existing.clientJobId,
       type: 'Lip Sync',
-      model: existing.startImageUrl ? 'Kling AI Avatar' : 'Kling Lip Sync',
+      model: 'Lip Sync',
       resolution: '720p',
       prompt: existing.prompt || 'Lip sync generation',
       duration: formatTime(existing.duration || 0),
@@ -147,8 +200,12 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       audioUrl: existing.audioUrl,
       status: 'pending',
       requestId: existing.requestId,
+      creditsUsed: existing.creditsUsed,
       mode: 'lip_sync',
-      error: 'This lip sync job was already submitted. Click Resume to check the same Fal job.',
+      templateRunId: existing.templateRunId,
+      templateStepId: existing.templateStepId,
+      templateCapability: existing.templateCapability,
+      error: 'This lip sync job was already submitted. Click Resume to check the same job.',
     });
   }, [onGenerate]);
 
@@ -179,12 +236,12 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   }, [audioDuration, timelineDuration]);
 
   useEffect(() => {
-    if (!timelineDuration || !audioFile) return;
+    if (!timelineDuration || !audioUrl) return;
 
     const maxStart = Math.max(0, timelineDuration - effectiveAudioLength);
     setAudioStartTime((value) => clamp(value, 0, maxStart));
     setCurrentTime((value) => clamp(value, 0, timelineDuration));
-  }, [timelineDuration, effectiveAudioLength, audioFile]);
+  }, [timelineDuration, effectiveAudioLength, audioUrl]);
 
   useEffect(() => {
     if (selectedMedia?.type !== 'video') {
@@ -274,6 +331,10 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
         timestamp: 'Just now',
         error: undefined,
         requestId: result.requestId,
+        creditsUsed: result.creditsUsed,
+        templateRunId: result.templateRunId,
+        templateStepId: result.templateStepId,
+        templateCapability: result.templateCapability,
       });
       return;
     }
@@ -284,6 +345,9 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
         status: 'pending',
         error: result.error || 'Lip sync was submitted. Status check failed. Click Resume instead of Generate.',
         requestId: result.requestId || result.pendingJob?.requestId,
+        templateRunId: result.templateRunId || result.pendingJob?.templateRunId,
+        templateStepId: result.templateStepId || result.pendingJob?.templateStepId,
+        templateCapability: result.templateCapability || result.pendingJob?.templateCapability,
       });
       alert(result.error || 'Lip sync was submitted. Please click Resume instead of generating again.');
       return;
@@ -295,6 +359,9 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       error: result.error || 'Lip sync generation failed.',
       timestamp: 'Failed',
       requestId: result.requestId,
+      templateRunId: result.templateRunId,
+      templateStepId: result.templateStepId,
+      templateCapability: result.templateCapability,
     });
     alert(result.error || 'Lip sync generation failed. Please try again.');
   };
@@ -336,14 +403,10 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       alert('Please upload a character image or video.');
       return;
     }
-    if (!audioFile || !audioUrl) {
+    if (!audioUrl) {
       alert('Please upload an audio track.');
       return;
     }
-
-    const resultDuration = Math.ceil(
-      selectedMedia.type === 'video' ? timelineDuration || effectiveAudioLength || 5 : audioDuration || 5
-    );
 
     const requiredCredits = estimateVideoCredits({
       mode: 'lip_sync',
@@ -358,15 +421,15 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     const placeholderId = `lip-${Date.now()}`;
     const promptText =
       selectedMedia.type === 'video'
-        ? `Audio Sync: ${audioFile.name} • audio ${formatTime(audioStartTime)}-${formatTime(
+        ? `Audio Sync: ${audioLabel} • audio ${formatTime(audioStartTime)}-${formatTime(
             audioStartTime + effectiveAudioLength
           )}`
-        : `AI Avatar: ${audioFile.name} • ${prompt}`;
+        : `AI Avatar: ${audioLabel} • ${prompt}`;
 
     onGenerate({
       id: placeholderId,
       type: 'Lip Sync',
-      model: selectedMedia.type === 'image' ? 'Kling AI Avatar' : 'Kling Lip Sync',
+      model: 'Lip Sync',
       resolution: '720p',
       prompt: promptText,
       duration: formatTime(resultDuration),
@@ -410,6 +473,10 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
           onUpdate?.(placeholderId, {
             status: 'pending',
             requestId: job.requestId,
+            creditsUsed: job.creditsUsed,
+            templateRunId: job.templateRunId,
+            templateStepId: job.templateStepId,
+            templateCapability: job.templateCapability,
           });
         },
       });
@@ -516,6 +583,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
 
     setAudioFile(file);
     setAudioUrl(url);
+    setAudioDisplayName(file.name);
     setAudioDuration(0);
     setAudioStartTime(0);
     setAudioTrimStart(0);
@@ -548,6 +616,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     pauseTimelineAudio();
     setAudioFile(null);
     setAudioUrl(null);
+    setAudioDisplayName('');
     setAudioDuration(0);
     setAudioStartTime(0);
     setAudioTrimStart(0);
@@ -560,7 +629,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   };
 
   const getTimelineAudioTime = (videoTime: number): number | null => {
-    if (!audioUrl || !audioFile || !audioDuration || !effectiveAudioLength) return null;
+    if (!audioUrl || !audioDuration || !effectiveAudioLength) return null;
 
     const clipStart = audioStartTime;
     const clipEnd = audioStartTime + effectiveAudioLength;
@@ -570,7 +639,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   };
 
   const syncTimelineAudioToVideo = async (videoTime: number, shouldPlay: boolean) => {
-    if (!audioUrl || !audioFile) {
+    if (!audioUrl) {
       pauseTimelineAudio();
       return;
     }
@@ -700,7 +769,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
         return;
       }
 
-      if (!audioFile || !timelineDuration || !audioDuration) return;
+      if (!audioUrl || !timelineDuration || !audioDuration) return;
 
       const startLength = session.startAudioTrimEnd - session.startAudioTrimStart;
 
@@ -759,7 +828,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
     };
   }, [
     audioDuration,
-    audioFile,
+    audioUrl,
     audioTrimStart,
     audioTrimEnd,
     audioStartTime,
@@ -810,11 +879,29 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
               }}
             />
           ) : (
-            <img src={selectedMedia.url} alt="Character" className="h-full w-full object-contain" />
+            <button
+              type="button"
+              className="h-full w-full cursor-zoom-in"
+              onClick={() => setPreviewMedia(selectedMedia)}
+              aria-label="Preview character image"
+            >
+              <img src={selectedMedia.url} alt="Character" className="h-full w-full object-contain" />
+            </button>
           )}
         </div>
 
-        <div className="absolute right-2 top-2 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="absolute right-2 top-2 z-20 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPreviewMedia(selectedMedia);
+            }}
+            className="rounded-lg bg-black/60 p-2 text-white transition-colors hover:bg-black"
+            title={`Preview ${selectedMedia.type}`}
+          >
+            <Maximize2 className="h-4 w-4" />
+          </button>
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -963,7 +1050,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                 className="relative mt-2 h-14 overflow-hidden rounded-md border border-dashed border-slate-300 bg-white/60 dark:border-slate-600 dark:bg-slate-900/40"
                 onPointerDown={(event) => startDrag('playhead', event)}
               >
-                {audioFile && audioDuration && audioUrl ? (
+                {audioUrl && audioDuration ? (
                   <>
                     {/* Full source audio waveform ghost. This shows what has been trimmed away instead of compressing the waveform. */}
                     <div
@@ -989,7 +1076,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                       </div>
 
                       <div className="pointer-events-none absolute left-5 top-1 rounded bg-emerald-600/90 px-1.5 py-0.5 text-[9px] font-medium text-white">
-                        {audioFile.name.length > 16 ? `${audioFile.name.slice(0, 16)}…` : audioFile.name}
+                        {audioLabel.length > 16 ? `${audioLabel.slice(0, 16)}…` : audioLabel}
                       </div>
 
                       <div
@@ -1078,7 +1165,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                 {renderTimeline()}
 
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-[11px] leading-relaxed text-amber-700 dark:border-amber-800/60 dark:bg-amber-900/20 dark:text-amber-300">
-                  For reliable lip sync, upload a single-face video. The current Fal Kling lip-sync endpoints do not expose a target-face selection parameter, so multi-person videos may sync the wrong face.
+                  For reliable lip sync, upload a single-face video. Target-face selection is not available, so multi-person videos may sync the wrong face.
                 </div>
               </>
             )}
@@ -1091,13 +1178,13 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
             </label>
             <div
               className={`group relative flex h-32 w-full flex-col items-center justify-center overflow-hidden rounded-xl border-2 transition-all ${
-                audioFile
+                audioUrl
                   ? 'border-solid border-emerald-500 bg-emerald-50/50 dark:bg-emerald-900/20'
                   : 'cursor-pointer border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800'
               }`}
-              onClick={() => !audioFile && audioInputRef.current?.click()}
+              onClick={() => !audioUrl && audioInputRef.current?.click()}
             >
-              {audioFile ? (
+              {audioUrl ? (
                 <>
                   <div className="flex w-full items-center gap-3 px-4">
                     <div className="rounded-full bg-emerald-100 p-2 dark:bg-emerald-900/50">
@@ -1105,10 +1192,11 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
                     </div>
                     <div className="flex-1 overflow-hidden text-left">
                       <div className="truncate text-sm font-semibold text-slate-700 dark:text-slate-200">
-                        {audioFile.name}
+                        {audioLabel}
                       </div>
                       <div className="text-xs text-slate-500">
-                        {(audioFile.size / 1024 / 1024).toFixed(2)} MB • {formatTime(audioDuration || effectiveAudioLength || 0)}
+                        {audioFile ? `${(audioFile.size / 1024 / 1024).toFixed(2)} MB • ` : 'Reusable material • '}
+                        {formatTime(audioDuration || effectiveAudioLength || 0)}
                       </div>
                     </div>
                     <button
@@ -1199,7 +1287,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
 
       {pendingJob && (
         <div className="mx-5 mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-          A Fal lip sync job is already submitted. Use Resume to check the same job. Do not generate again.
+          A lip sync job is already submitted. Use Resume to check the same job. Do not generate again.
         </div>
       )}
 
@@ -1207,7 +1295,7 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
       <div className="relative w-full shrink-0 border-t border-slate-200 bg-white/95 p-4 shadow-[0_-4px_24px_rgba(0,0,0,0.05)] backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]">
         <button
           onClick={handleGenerate}
-          disabled={isGenerating || (!pendingJob && (!selectedMedia || !audioFile))}
+          disabled={isGenerating || (!pendingJob && (!selectedMedia || !audioUrl))}
           className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-4 text-sm font-semibold text-white shadow-md transition-all hover:from-emerald-600 hover:to-teal-600 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-slate-900"
         >
           {isGenerating ? (
@@ -1218,11 +1306,17 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
           ) : (
             <>
               <Sparkles className="h-4 w-4 text-white" />
-              <span>{pendingJob ? 'Resume' : '36 Generate'}</span>
+              <span>{pendingJob ? 'Resume' : `${estimatedCredits} Generate`}</span>
             </>
           )}
         </button>
       </div>
+      <MediaLightbox
+        url={previewMedia?.url || null}
+        type={previewMedia?.type || 'image'}
+        alt="Lip sync source preview"
+        onClose={() => setPreviewMedia(null)}
+      />
     </>
   );
 };

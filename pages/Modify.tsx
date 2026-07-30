@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download, Video } from 'lucide-react';
-import { useStore, estimateCredits, Resolution } from '../context/StoreContext';
+import { useStore, estimateCredits, estimateFalImageCredits, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -11,6 +11,7 @@ import { generateImages } from '../utils/generateService';
 import { uploadUserImage, validateFile } from '../utils/uploadService';
 import { logVideoInterest } from '../utils/api';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
+import { consumeWorkflowHandoff } from '../components/workflow/workflowManager';
 
 // === Admin Fake Generation Queue ===
 interface FakeQueueItem {
@@ -46,6 +47,14 @@ const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => 
         }
     });
     return result;
+};
+
+const allocateCreditsAcrossOutputs = (totalCredits: number, outputCount: number): number[] => {
+  const safeTotal = Math.max(0, Math.floor(totalCredits));
+  const safeCount = Math.max(1, Math.floor(outputCount));
+  const base = Math.floor(safeTotal / safeCount);
+  const remainder = safeTotal % safeCount;
+  return Array.from({ length: safeCount }, (_, index) => base + (index < remainder ? 1 : 0));
 };
 
 export const Modify = () => {
@@ -104,7 +113,6 @@ export const Modify = () => {
 
   // Generation Configuration - DEFAULT TO 4
   const [outputCount, setOutputCount] = useState(1);
-  const [quality, setQuality] = useState<'Standard' | 'High' | 'Ultra'>('Standard');
   
   // Generation Process State
   const [isGenerating, setIsGenerating] = useState(false);
@@ -282,6 +290,76 @@ export const Modify = () => {
           window.history.replaceState({}, document.title);
       }
   }, []); // Run only once on mount
+
+  useEffect(() => {
+    const handoff = consumeWorkflowHandoff();
+    if (!handoff || !handoff.capability.startsWith('image.')) return;
+
+    if (handoff.action === 'materials' || handoff.action === 'all') {
+      const preferredSlots: Record<string, string[]> = {
+        'image.replace_product': ['scene_image'],
+        'image.modify': ['source_image', 'reference_image'],
+        'image.change_ratio': ['source_image'],
+        'image.enhance': ['source_image'],
+        'image.upscale': ['source_image'],
+        'image.text_to_image': ['reference_images'],
+      };
+      const material = handoff.materials.find(
+        (item) => item.type === 'image' && preferredSlots[handoff.capability]?.includes(item.slot || ''),
+      ) || handoff.materials.find((item) => item.type === 'image');
+      if (material) {
+        const hasUserImage = currentImage !== DEFAULT_TEMPLATE_URL
+          && currentImage !== material.url;
+        if (handoff.action === 'materials' && hasUserImage && !window.confirm('Replace the image currently selected on this page with the template material?')) return;
+        setCurrentImage(material.url);
+        setOriginalUploadedImage(material.url);
+        setCurrentImageSource({ templateId: `workflow:${handoff.stepId}`, templateName: 'Workflow material' });
+        setHasSelectedImage(true);
+        setUploadedFile(null);
+      }
+      if (handoff.action === 'materials') return;
+    }
+
+    const settings = handoff.settings;
+    const nextPrompt = handoff.prompt || (typeof settings.prompt === 'string' ? settings.prompt : '');
+    const capabilityTool: Record<string, string> = {
+      'image.text_to_image': 'text2img',
+      'image.replace_product': 'replace',
+      'image.modify': 'modify',
+      'image.change_ratio': 'ratio',
+      'image.enhance': 'enhance',
+      'image.upscale': 'enhance',
+    };
+    const existingPrompt = handoff.capability === 'image.text_to_image'
+      ? t2iPrompt
+      : handoff.capability === 'image.modify'
+        ? modifyPrompt
+        : handoff.capability === 'image.change_ratio'
+          ? ratioPrompt
+          : prompt;
+    if (handoff.action === 'prompt' && existingPrompt.trim() && existingPrompt !== nextPrompt
+      && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
+
+    setActiveTool(capabilityTool[handoff.capability] || 'replace');
+    if (handoff.capability === 'image.text_to_image') {
+      setT2iPrompt(nextPrompt);
+      if (typeof settings.ratio === 'string') setT2iRatio(settings.ratio);
+      if (typeof settings.resolution === 'string') setT2iSize(settings.resolution);
+      if (typeof settings.outputCount === 'number') setT2iOutputCount(settings.outputCount);
+    } else if (handoff.capability === 'image.modify') {
+      setModifyPrompt(nextPrompt);
+    } else if (handoff.capability === 'image.change_ratio') {
+      setRatioPrompt(nextPrompt);
+      if (typeof settings.ratio === 'string') setSelectedRatio(settings.ratio);
+      if (typeof settings.outputCount === 'number') setOutputCount(settings.outputCount);
+    } else {
+      setPrompt(nextPrompt);
+      if (typeof settings.extraBlend === 'boolean') setExtraBlend(settings.extraBlend);
+      if (typeof settings.productSizePercent === 'number') setProductSizePercent(String(settings.productSizePercent));
+      if (typeof settings.outputCount === 'number') setOutputCount(settings.outputCount);
+      if (typeof settings.resolution === 'string') setSelectedResolution(settings.resolution);
+    }
+  }, [location.search]);
 
   // 🔧 CHANGED: Persist fake queue to sessionStorage
   useEffect(() => {
@@ -467,7 +545,7 @@ export const Modify = () => {
     }
   };
 
-  // --- Logic: Generation (Using Real Gemini API) ---
+  // --- Logic: Generation (Fal GPT Image 2 for Text/Replace/Modify Content) ---
   const saveDescribeToHistory = (text: string) => {
     if (!text.trim()) return;
     const newHistory = [text, ...describeHistory.filter(h => h !== text)].slice(0, 3);
@@ -488,7 +566,17 @@ export const Modify = () => {
     }
     
     // Pre-check: estimate credits needed (actual amount will be based on real token usage)
-    const estimatedCredits = estimateCredits(resolution, outputCount);
+    const usesFalGptImage2Edit = toolName === 'Replace' || toolName === 'Modify';
+    const estimatedCredits = usesFalGptImage2Edit
+      ? estimateFalImageCredits({
+          mode: 'edit',
+          resolution: '1K',
+          aspectRatio: 'auto',
+          imageCount: outputCount,
+          quality: 'medium',
+          inputImageCount: toolName === 'Replace' || modifyReferenceFile ? 2 : 1,
+        })
+      : estimateCredits(resolution, outputCount);
     if (user.credits < estimatedCredits) { 
       handleInsufficientCredits();
       return; 
@@ -756,14 +844,19 @@ export const Modify = () => {
         console.log('Ratio tool - Target ratio:', targetAspectRatio);
       }
       
-      // Call the real Gemini API with the selected number of images
+      // Modify Content explicitly selects Fal without changing other image.modify callers.
+      const capability = MODIFY_CAPABILITY_BY_TOOL[toolName] || 'image.modify';
+      const usesFalGptImage2Edit = toolName === 'Replace' || toolName === 'Modify';
       const result = await generateImages({
         prompt: fullPrompt,
+        capability,
+        provider: toolName === 'Modify' ? 'fal-gpt-image-2-edit' : undefined,
         imageUrl: baseImageUrl,           // The scene/model image
         productImageUrl: productImageUrl, // The product to insert (for Replace)
         numberOfImages: outputCount,      // Generate multiple images in parallel
         imageSize: targetImageSize,       // Resolution setting
         aspectRatio: targetAspectRatio,   // Target aspect ratio
+        quality: usesFalGptImage2Edit ? 'medium' : undefined,
       });
 
       clearInterval(progressInterval);
@@ -804,14 +897,13 @@ export const Modify = () => {
 
       // Calculate credits based on ACTUAL token consumption from API
       const totalCreditsUsed = result.creditsUsed ?? result.creditsDeducted ?? 0;
-      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
+      const creditAllocations = allocateCreditsAcrossOutputs(totalCreditsUsed, newImages.length);
       
       console.log('=== Credit Calculation ===');
       console.log('Token breakdown:', result.tokenBreakdown);
       console.log('Total credits:', totalCreditsUsed);
-      console.log('Credits per image:', creditsPerImage);
+      console.log('Credit allocations:', creditAllocations);
 
-      const capability = MODIFY_CAPABILITY_BY_TOOL[toolName] || 'image.modify';
       const inputAssets: GenerationInputAssetSnapshot[] = [];
       if (baseImageUrl) {
         inputAssets.push({
@@ -828,14 +920,17 @@ export const Modify = () => {
         });
       }
 
-      const newGenerations = newImages.map(imgUrl => ({
+      const newGenerations = newImages.map((imgUrl, imageIndex) => ({
         userId: user?.id || '',
         templateId: currentImageSource.templateId,
         templateName: currentImageSource.templateName,
         imageUrl: imgUrl,
-        creditsUsed: creditsPerImage,
+        creditsUsed: creditAllocations[imageIndex] || 0,
         prompt: displayPrompt,
         capability,
+        templateRunId: result.templateRunId,
+        templateStepId: result.templateStepId,
+        templateCapability: result.templateCapability,
         inputAssets,
         generationParameters: {
           prompt: displayPrompt,
@@ -844,6 +939,8 @@ export const Modify = () => {
           ratio: targetAspectRatio,
           extraBlend,
           productSizePercent: Number(productSizePercent || 100),
+          provider: result.provider || (usesFalGptImage2Edit ? 'fal-gpt-image-2-edit' : 'gemini'),
+          quality: usesFalGptImage2Edit ? 'medium' : undefined,
         },
     }));
 
@@ -875,7 +972,14 @@ export const Modify = () => {
    
     // Pre-check: estimate credits needed
     const t2iResolution = t2iSize as Resolution;
-    const estimatedCredits = estimateCredits(t2iResolution, t2iOutputCount);
+    const estimatedCredits = estimateFalImageCredits({
+      mode: t2iFiles.length > 0 ? 'edit' : 'text',
+      resolution: t2iResolution,
+      aspectRatio: t2iRatio,
+      imageCount: t2iOutputCount,
+      quality: 'medium',
+      inputImageCount: t2iFiles.length,
+    });
     if (user.credits < estimatedCredits) { 
       handleInsufficientCredits();
       return; 
@@ -961,11 +1065,13 @@ export const Modify = () => {
       // Call API - for T2I, we pass reference images as the base image if available
       const result = await generateImages({
         prompt: fullPrompt,
+        capability: 'image.text_to_image',
         imageUrl: referenceImageUrls[0], // First reference as base
         productImageUrl: referenceImageUrls[1], // Second reference if available
         numberOfImages: t2iOutputCount,
         imageSize: t2iSize as '1K' | '2K' | '4K',
         aspectRatio: t2iRatio,
+        quality: 'medium',
       });
 
       clearInterval(progressInterval);
@@ -993,12 +1099,12 @@ export const Modify = () => {
 
       // Calculate credits based on ACTUAL token consumption from API
       const totalCreditsUsed = result.creditsUsed ?? result.creditsDeducted ?? 0;
-      const creditsPerImage = newImages.length > 0 ? Math.ceil(totalCreditsUsed / newImages.length) : 0;
+      const creditAllocations = allocateCreditsAcrossOutputs(totalCreditsUsed, newImages.length);
       
       console.log('=== T2I Credit Calculation ===');
       console.log('Token breakdown:', result.tokenBreakdown);
       console.log('Total credits:', totalCreditsUsed);
-      console.log('Credits per image:', creditsPerImage);
+      console.log('Credit allocations:', creditAllocations);
 
       // Create Generation records
       const inputAssets: GenerationInputAssetSnapshot[] = referenceImageUrls.map(
@@ -1009,20 +1115,25 @@ export const Modify = () => {
         }),
       );
 
-      const newGenerations = newImages.map(imgUrl => ({
+      const newGenerations = newImages.map((imgUrl, imageIndex) => ({
         userId: user?.id || '',
         templateId: sourceId,
         templateName: sourceName,
         imageUrl: imgUrl,
-        creditsUsed: creditsPerImage,
+        creditsUsed: creditAllocations[imageIndex] || 0,
         prompt: t2iPrompt || 'Text to Image',
         capability: 'image.text_to_image' as const,
+        templateRunId: result.templateRunId,
+        templateStepId: result.templateStepId,
+        templateCapability: result.templateCapability,
         inputAssets,
         generationParameters: {
           prompt: t2iPrompt,
           ratio: t2iRatio,
           resolution: t2iSize,
           outputCount: t2iOutputCount,
+          provider: referenceImageUrls.length > 0 ? 'fal-gpt-image-2-edit' : 'fal-gpt-image-2',
+          quality: 'medium',
         },
     }));
 
@@ -1705,7 +1816,7 @@ export const Modify = () => {
                                                 disabled={isGenerating || isUploading || !t2iPrompt.trim()}
                                             >
                                                 {isGenerating || isUploading ? <Loader2 className="w-5 h-5 animate-spin"/> : <ArrowUp className="w-5 h-5" />}
-                                                <span>~{estimateCredits(t2iSize as Resolution, t2iOutputCount)} credits</span>
+                                                <span>~{estimateFalImageCredits({ mode: t2iFiles.length > 0 ? 'edit' : 'text', resolution: t2iSize as Resolution, aspectRatio: t2iRatio, imageCount: t2iOutputCount, quality: 'medium', inputImageCount: t2iFiles.length })} credits</span>
                                             </button>
                                         </div>
                                     </div>
@@ -2059,7 +2170,7 @@ export const Modify = () => {
                                 ) : (
                                     <Sparkles className="w-4 h-4 mr-2" />
                                 )}
-                                {isUploading ? 'Uploading...' : uploadedFile ? `Generate Magic · ~${estimateCredits('1K', outputCount)} credits` : 'Upload product first'}
+                                {isUploading ? 'Uploading...' : uploadedFile ? `Generate Magic · ~${estimateFalImageCredits({ mode: 'edit', resolution: '1K', aspectRatio: 'auto', imageCount: outputCount, quality: 'medium', inputImageCount: 2 })} credits` : 'Upload product first'}
                             </Button>
 
                             {/* More Control CTA - Only show when Advanced options is open */}
@@ -2196,7 +2307,14 @@ export const Modify = () => {
                             <ImageCountSelector />
                             <Button size="sm" variant="gradient" className="w-full" disabled={isGenerating || isUploading || !modifyPrompt.trim()} onClick={() => runGeneration('Modify', modifyPrompt)}>
                                 {isGenerating || isUploading ? <Loader2 className="w-4 h-4 animate-spin mr-2"/> : <Sparkles className="w-4 h-4 mr-2" />}
-                                {isUploading ? 'Uploading...' : `Generate Changes · ~${estimateCredits('1K', outputCount)} credits`}
+                                {isUploading ? 'Uploading...' : `Generate Changes · ~${estimateFalImageCredits({
+                                  mode: 'edit',
+                                  resolution: '1K',
+                                  aspectRatio: 'auto',
+                                  imageCount: outputCount,
+                                  quality: 'medium',
+                                  inputImageCount: modifyReferenceFile ? 2 : 1,
+                                })} credits`}
                             </Button>
                         </div>
                     )}

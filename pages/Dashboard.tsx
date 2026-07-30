@@ -7,6 +7,12 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Collection, Template } from '../types';
 import { supabase } from '../utils/supabase';
+import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
+import {
+  deleteCreatorTemplate,
+  fetchCreatorTemplates,
+  type CreatorTemplateCard,
+} from '../utils/templateDashboardApi';
 
 // 将同一批生成的图片分组
 
@@ -79,52 +85,74 @@ export const Dashboard = () => {
   }, [location.search]);
   const [selectedImage, setSelectedImage] = useState<Generation | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
+  const [generatedThumbnails, setGeneratedThumbnails] = useState<Record<string, string>>({});
+  const generatedThumbnailsRef = useRef<Record<string, string>>({});
+  const attemptedThumbnailsRef = useRef<Set<string>>(new Set());
+  const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
 
-  // My Templates Mock Data
-  const [myTemplates, setMyTemplates] = useState([
-    {
-      id: 't-1',
-      name: 'Cyberpunk Portrait',
-      coverUrl: 'https://images.unsplash.com/photo-1535295972055-1c762f4483e5?w=500&q=80',
-      coverType: 'image',
-      status: 'Published' as const,
-      updatedAt: '2026-07-10T10:00:00Z',
-      stepsCount: 4,
-      uses: 128,
-      creditsEarned: 24
-    },
-    {
-      id: 't-2',
-      name: 'Watercolor Landscape',
-      coverUrl: 'https://images.unsplash.com/photo-1541701494587-cb58502866ab?w=500&q=80',
-      coverType: 'image',
-      status: 'Draft' as const,
-      updatedAt: '2026-07-14T15:30:00Z',
-      stepsCount: 2
-    },
-    {
-      id: 't-3',
-      name: 'Dynamic Lip Sync',
-      coverUrl: 'https://cdn.pixabay.com/video/2023/10/22/186001-876939988_tiny.mp4',
-      coverType: 'video',
-      status: 'In review' as const,
-      updatedAt: '2026-07-15T09:15:00Z',
-      stepsCount: 3
-    },
-    {
-      id: 't-4',
-      name: 'Anime Style Avatar',
-      coverUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
-      coverType: 'image',
-      status: 'Changes requested' as const,
-      updatedAt: '2026-07-12T11:20:00Z',
-      stepsCount: 5,
-      feedback: 'Please use a clearer cover and explain what users should upload in Step 2.'
-    }
-  ]);
+  useEffect(() => {
+    let cancelled = false;
+    const queue = generations.filter((generation) => (
+      !generation.thumbnailUrl &&
+      !generatedThumbnailsRef.current[generation.id] &&
+      !attemptedThumbnailsRef.current.has(generation.id) &&
+      !generation.id.startsWith('session_')
+    ));
+    let cursor = 0;
+    const worker = async () => {
+      while (!cancelled && cursor < queue.length) {
+        const generation = queue[cursor++];
+        attemptedThumbnailsRef.current.add(generation.id);
+        const thumbnailUrl = await ensureGenerationThumbnail(generation);
+        if (cancelled) continue;
+        if (!thumbnailUrl) {
+          setFailedThumbnails((current) => {
+            const next = new Set(current);
+            next.add(generation.id);
+            return next;
+          });
+          continue;
+        }
+        generatedThumbnailsRef.current[generation.id] = thumbnailUrl;
+        setGeneratedThumbnails((current) => ({ ...current, [generation.id]: thumbnailUrl }));
+      }
+    };
+    void Promise.all([worker(), worker(), worker()]);
+    return () => {
+      cancelled = true;
+    };
+  }, [generations]);
+
+  const [myTemplates, setMyTemplates] = useState<CreatorTemplateCard[]>([]);
+  const [loadingMyTemplates, setLoadingMyTemplates] = useState(false);
+  const [myTemplatesError, setMyTemplatesError] = useState<string | null>(null);
+  const [failedTemplateCovers, setFailedTemplateCovers] = useState<Set<string>>(new Set());
   const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
   const [currentFeedback, setCurrentFeedback] = useState('');
-  const [deleteDraftId, setDeleteDraftId] = useState<string | null>(null);
+  const [currentFeedbackTemplateId, setCurrentFeedbackTemplateId] = useState<string | null>(null);
+  const [templateToDelete, setTemplateToDelete] = useState<CreatorTemplateCard | null>(null);
+  const [deletingTemplate, setDeletingTemplate] = useState(false);
+
+  const loadMyTemplates = useCallback(async () => {
+    if (!user) return;
+    setLoadingMyTemplates(true);
+    setMyTemplatesError(null);
+    try {
+      setMyTemplates(await fetchCreatorTemplates(user.id));
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'Could not load your templates.';
+      setMyTemplatesError(message);
+      addToast('error', message);
+    } finally {
+      setLoadingMyTemplates(false);
+    }
+  }, [user, addToast]);
+
+  useEffect(() => {
+    if (activeTab === 'templates' && user) void loadMyTemplates();
+  }, [activeTab, user, loadMyTemplates]);
 
   // Filter and Search State
   const [sourceFilter, setSourceFilter] = useState<'all' | 'templates' | 'modify' | 'generated' | 'video'>('all');
@@ -350,8 +378,33 @@ useEffect(() => {
     });
   };
 
-  const renderGenerationMedia = (gen: Generation, className: string, controls = false) => {
+  const renderGenerationMedia = (
+    gen: Generation,
+    className: string,
+    controls = false,
+    fullResolution = false,
+  ) => {
+    const thumbnailUrl = generatedThumbnails[gen.id] || gen.thumbnailUrl || '';
     if (isVideoGeneration(gen) && gen.videoUrl) {
+      if (!controls) {
+        return thumbnailUrl ? (
+          <img
+            src={thumbnailUrl}
+            className={className}
+            loading="lazy"
+            decoding="async"
+            alt={getGenerationDisplayName(gen)}
+          />
+        ) : (
+          <div className={`${className} flex items-center justify-center bg-slate-100 dark:bg-slate-800`}>
+            {failedThumbnails.has(gen.id) ? (
+              <Film className="w-8 h-8 text-slate-400 dark:text-slate-500" />
+            ) : (
+              <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
+            )}
+          </div>
+        );
+      }
       return (
         <video
           src={gen.videoUrl}
@@ -360,16 +413,29 @@ useEffect(() => {
           muted={!controls}
           playsInline
           preload="metadata"
-          poster={gen.imageUrl && gen.imageUrl !== gen.videoUrl ? gen.imageUrl : undefined}
+          poster={thumbnailUrl || (gen.imageUrl && gen.imageUrl !== gen.videoUrl ? gen.imageUrl : undefined)}
         />
       );
     }
 
+    const displayUrl = fullResolution ? gen.imageUrl : (thumbnailUrl || gen.imageUrl);
+    if (!displayUrl) {
+      return (
+        <div className={`${className} flex items-center justify-center bg-slate-100 dark:bg-slate-800`}>
+          {failedThumbnails.has(gen.id) ? (
+            <ImageIcon className="w-8 h-8 text-slate-400 dark:text-slate-500" />
+          ) : (
+            <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
+          )}
+        </div>
+      );
+    }
     return (
       <img
-        src={gen.imageUrl}
+        src={displayUrl}
         className={className}
         loading="lazy"
+        decoding="async"
         alt={getGenerationDisplayName(gen)}
       />
     );
@@ -872,7 +938,19 @@ useEffect(() => {
               </Button>
             </div>
 
-            {myTemplates.length === 0 ? (
+            {loadingMyTemplates ? (
+              <div className="flex min-h-[280px] items-center justify-center rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-800">
+                <div className="text-center text-sm text-slate-500 dark:text-slate-400">
+                  <Loader2 className="mx-auto mb-3 h-7 w-7 animate-spin text-purple-500" />
+                  Loading your templates...
+                </div>
+              </div>
+            ) : myTemplatesError ? (
+              <div className="text-center py-16 glass-panel rounded-2xl border border-red-200 dark:border-red-500/20 bg-white dark:bg-slate-900/20">
+                <p className="mb-4 text-sm text-red-600 dark:text-red-400">{myTemplatesError}</p>
+                <Button variant="secondary" onClick={() => void loadMyTemplates()}>Try again</Button>
+              </div>
+            ) : myTemplates.length === 0 ? (
               <div className="text-center py-20 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20 bg-white dark:bg-slate-900/20">
                 <div className="w-16 h-16 rounded-full bg-purple-100 dark:bg-purple-500/10 flex items-center justify-center mx-auto mb-4">
                   <Layers className="w-8 h-8 text-purple-600 dark:text-purple-400" />
@@ -888,25 +966,37 @@ useEffect(() => {
                 {myTemplates.map(template => (
                   <div key={template.id} className="glass-panel border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col group hover:shadow-xl hover:-translate-y-1 transition-all bg-white dark:bg-slate-800" onClick={() => navigate(`/templates/${template.id}`)}>
                     <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-900">
-                      {template.coverType === 'video' ? (
+                      {!template.coverUrl || failedTemplateCovers.has(template.id) ? (
+                        <div className="flex h-full w-full items-center justify-center text-slate-400 dark:text-slate-600">
+                          <ImageIcon className="h-10 w-10" />
+                        </div>
+                      ) : template.coverType === 'video' ? (
                         <video 
                           src={template.coverUrl} 
+                          poster={template.coverPosterUrl}
                           className="w-full h-full object-cover"
+                          autoPlay
                           muted
                           loop
                           playsInline
-                          onMouseEnter={(e) => { e.currentTarget.play().catch(()=>{}); }}
-                          onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0; }}
+                          onError={() => setFailedTemplateCovers((current) => new Set(current).add(template.id))}
                         />
                       ) : (
-                        <img src={template.coverUrl} className="w-full h-full object-cover" alt={template.name} />
+                        <img
+                          src={template.coverUrl}
+                          className="w-full h-full object-cover"
+                          alt={template.name}
+                          onError={() => setFailedTemplateCovers((current) => new Set(current).add(template.id))}
+                        />
                       )}
                       
                       {/* Status Tag */}
-                      <div className="absolute top-3 left-3 z-10">
+                      <div className="absolute top-3 left-3 z-10 flex flex-wrap gap-1.5">
                         {template.status === 'Draft' && <span className="bg-slate-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Draft</span>}
                         {template.status === 'In review' && <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">In review</span>}
                         {template.status === 'Published' && <span className="bg-emerald-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Published</span>}
+                        {template.updateStatus === 'draft' && <span className="bg-purple-600/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Update draft</span>}
+                        {template.updateStatus === 'in_review' && <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Update in review</span>}
                         {template.status === 'Changes requested' && <span className="bg-red-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">Changes requested</span>}
                       </div>
 
@@ -934,19 +1024,33 @@ useEffect(() => {
                         </div>
                       )}
 
-                      <div className="mt-auto flex gap-2">
+                      <div className={`mt-auto gap-2 ${template.status === 'Published' ? 'grid grid-cols-2' : 'flex'}`}>
                         {template.status === 'Draft' && (
                           <>
-                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate('/templates/create'); }}>Edit</Button>
-                            <Button variant="secondary" size="sm" className="flex-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10" onClick={(e) => { e.stopPropagation(); setDeleteDraftId(template.id); }}>Delete</Button>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit</Button>
+                            <Button variant="secondary" size="sm" className="flex-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10" onClick={(e) => { e.stopPropagation(); setTemplateToDelete(template); }}>Delete</Button>
                           </>
                         )}
                         {template.status === 'In review' && (
-                          <Button variant="secondary" size="sm" className="w-full" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                          <>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit</Button>
+                          </>
                         )}
                         {template.status === 'Published' && (
                           <>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="flex-1"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/templates/create?templateId=${template.id}`);
+                              }}
+                            >
+                              Edit
+                            </Button>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { 
                               e.stopPropagation(); 
                               if (navigator.clipboard) {
@@ -956,12 +1060,23 @@ useEffect(() => {
                                 addToast('success', 'Link copied (fallback)');
                               }
                             }}>Share</Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="flex-1 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setTemplateToDelete(template);
+                              }}
+                            >
+                              Delete
+                            </Button>
                           </>
                         )}
                         {template.status === 'Changes requested' && (
                           <>
-                            <Button variant="secondary" size="sm" className="flex-1 border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400" onClick={(e) => { e.stopPropagation(); setCurrentFeedback(template.feedback || ''); setFeedbackModalOpen(true); }}>View feedback</Button>
-                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate('/templates/create'); }}>Edit</Button>
+                            <Button variant="secondary" size="sm" className="flex-1 border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-400" onClick={(e) => { e.stopPropagation(); setCurrentFeedback(template.feedback || ''); setCurrentFeedbackTemplateId(template.id); setFeedbackModalOpen(true); }}>View feedback</Button>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit</Button>
                           </>
                         )}
                       </div>
@@ -1030,27 +1145,84 @@ useEffect(() => {
           </div>
       </Modal>
 
-      {/* Delete Draft Modal */}
-      <Modal isOpen={!!deleteDraftId} onClose={() => setDeleteDraftId(null)} title="Delete this draft?">
+      {/* Delete Template Modal */}
+      <Modal
+        isOpen={!!templateToDelete}
+        onClose={() => {
+          if (!deletingTemplate) setTemplateToDelete(null);
+        }}
+        title={templateToDelete?.status === 'Published' ? 'Delete this published template?' : 'Delete this draft?'}
+      >
         <div className="space-y-6">
-          <p className="text-slate-600 dark:text-slate-400 text-sm">
-            This action cannot be undone.
-          </p>
+          <div className="space-y-2">
+            <p className="text-sm font-semibold text-slate-900 dark:text-white">
+              {templateToDelete?.name}
+            </p>
+            {templateToDelete?.status === 'Published' ? (
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
+                The template will be removed from the public marketplace and from My Templates immediately. Existing usage, reward, notification, and accounting history will be preserved.
+              </p>
+            ) : (
+              <p className="text-slate-600 dark:text-slate-400 text-sm">
+                This draft and its unused uploaded files will be permanently deleted. This action cannot be undone.
+              </p>
+            )}
+          </div>
           <div className="flex gap-3">
-            <Button variant="secondary" className="flex-1" onClick={() => setDeleteDraftId(null)}>Cancel</Button>
-            <Button variant="danger" className="flex-1" onClick={() => {
-              if (deleteDraftId) {
-                setMyTemplates(prev => prev.filter(t => t.id !== deleteDraftId));
-                addToast('success', 'Draft deleted');
-                setDeleteDraftId(null);
-              }
-            }}>Delete</Button>
+            <Button
+              variant="secondary"
+              className="flex-1"
+              onClick={() => setTemplateToDelete(null)}
+              disabled={deletingTemplate}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              disabled={deletingTemplate}
+              onClick={async () => {
+                if (!templateToDelete || !user) return;
+                const target = templateToDelete;
+                setDeletingTemplate(true);
+                try {
+                  const result = await deleteCreatorTemplate(
+                    target.id,
+                    user.id,
+                    target.status,
+                  );
+                  setMyTemplates((current) => current.filter((template) => template.id !== target.id));
+                  setFailedTemplateCovers((current) => {
+                    const next = new Set(current);
+                    next.delete(target.id);
+                    return next;
+                  });
+                  addToast(
+                    'success',
+                    result.mode === 'archived'
+                      ? 'Published template removed from the marketplace.'
+                      : 'Draft deleted.',
+                  );
+                  setTemplateToDelete(null);
+                } catch (error) {
+                  addToast(
+                    'error',
+                    error instanceof Error ? error.message : 'Could not delete the template.',
+                  );
+                } finally {
+                  setDeletingTemplate(false);
+                }
+              }}
+            >
+              {deletingTemplate ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Delete
+            </Button>
           </div>
         </div>
       </Modal>
 
       {/* View Feedback Modal */}
-      <Modal isOpen={feedbackModalOpen} onClose={() => { setFeedbackModalOpen(false); setCurrentFeedback(''); }} title="Template Feedback">
+      <Modal isOpen={feedbackModalOpen} onClose={() => { setFeedbackModalOpen(false); setCurrentFeedback(''); setCurrentFeedbackTemplateId(null); }} title="Template Feedback">
         <div className="space-y-6">
           <div className="bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 p-4 rounded-xl">
             <h4 className="text-sm font-bold text-red-800 dark:text-red-400 mb-2">Admin Feedback:</h4>
@@ -1059,8 +1231,15 @@ useEffect(() => {
             </p>
           </div>
           <div className="flex gap-3">
-            <Button variant="secondary" className="flex-1" onClick={() => { setFeedbackModalOpen(false); setCurrentFeedback(''); }}>Close</Button>
-            <Button variant="gradient" className="flex-1" onClick={() => { setFeedbackModalOpen(false); setCurrentFeedback(''); navigate('/templates/create'); }}>Edit template</Button>
+            <Button variant="secondary" className="flex-1" onClick={() => { setFeedbackModalOpen(false); setCurrentFeedback(''); setCurrentFeedbackTemplateId(null); }}>Close</Button>
+            <Button variant="gradient" className="flex-1" disabled={!currentFeedbackTemplateId} onClick={() => {
+              if (!currentFeedbackTemplateId) return;
+              const templateId = currentFeedbackTemplateId;
+              setFeedbackModalOpen(false);
+              setCurrentFeedback('');
+              setCurrentFeedbackTemplateId(null);
+              navigate(`/templates/create?templateId=${templateId}`);
+            }}>Edit template</Button>
           </div>
         </div>
       </Modal>
@@ -1090,7 +1269,7 @@ useEffect(() => {
            
            <div className="max-w-6xl w-full p-4 flex flex-col md:flex-row gap-8 items-center justify-center" onClick={e => e.stopPropagation()}>
                <div className="relative flex-1 flex flex-col items-center justify-center max-h-[80vh]">
-                    {renderGenerationMedia(selectedImage, 'max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl', isVideoGeneration(selectedImage))}
+                    {renderGenerationMedia(selectedImage, 'max-w-full max-h-[70vh] object-contain rounded-lg shadow-2xl', isVideoGeneration(selectedImage), true)}
                     
                     {/* Group thumbnails */}
                     {selectedGroup && selectedGroup.length > 1 && (

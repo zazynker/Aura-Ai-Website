@@ -1,52 +1,95 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
-import { User as UserIcon, LogOut, LayoutDashboard, CreditCard, Sparkles, Sun, Moon, Bell, Check, AlertCircle, Sparkles as SparklesOutline } from 'lucide-react';
+import { User as UserIcon, LogOut, LayoutDashboard, CreditCard, Sparkles, Sun, Moon, Bell, Check, AlertCircle, Sparkles as SparklesOutline, Pencil } from 'lucide-react';
 import { Button } from './ui/Button';
+import { ProfileSettingsModal } from './ProfileSettingsModal';
+import {
+  fetchMyNotifications,
+  markAllNotificationsRead,
+  markNotificationRead,
+  CREATOR_REWARD_AVAILABLE_EVENT,
+  type UserNotification,
+} from '../utils/notificationsApi';
 
-// Mock Notifications Data
-const MOCK_NOTIFICATIONS = [
-  {
-    id: 'n1',
-    type: 'approved',
-    title: 'Template approved',
-    content: 'Your template "Minimal Product Story" is now live.',
-    time: '5m ago',
-    read: false,
-    link: '/templates/t-minimal-product'
-  },
-  {
-    id: 'n2',
-    type: 'changes',
-    title: 'Changes requested',
-    content: 'Your template needs a few changes before it can be published.',
-    time: '2h ago',
-    read: false,
-    link: '/dashboard?tab=templates'
-  },
-  {
-    id: 'n3',
-    type: 'credits',
-    title: 'Credits earned',
-    content: 'You earned 24 credits from people using "Minimal Product Story".',
-    time: '1d ago',
-    read: true,
-    link: '/dashboard?tab=templates'
+const formatRelativeTime = (createdAt: string): string => {
+  const elapsedSeconds = Math.max(0, Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000));
+  if (elapsedSeconds < 60) return 'Just now';
+  const minutes = Math.floor(elapsedSeconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(createdAt).toLocaleDateString();
+};
+
+const getNotificationLink = (notification: UserNotification): string => {
+  const metadataLink = notification.metadata.link;
+  const baseLink = typeof metadataLink === 'string' && metadataLink.startsWith('/')
+    ? metadataLink
+    : notification.type === 'template_approved' && notification.templateId
+      ? `/templates/${notification.templateId}`
+      : '/dashboard?tab=templates';
+  const approvedVersionId = notification.type === 'template_approved'
+    && typeof notification.metadata.version_id === 'string'
+      ? notification.metadata.version_id
+      : null;
+  if (approvedVersionId && baseLink.startsWith('/templates/')) {
+    const separator = baseLink.includes('?') ? '&' : '?';
+    return `${baseLink}${separator}version=${encodeURIComponent(approvedVersionId)}`;
   }
-];
+  return baseLink;
+};
 
 export const Navbar = () => {
-  const { user, logout, theme, toggleTheme } = useStore();
+  const { user, logout, theme, toggleTheme, addToast } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [showDropdown, setShowDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [notifications, setNotifications] = useState(MOCK_NOTIFICATIONS);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [notifications, setNotifications] = useState<UserNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
   
   const isHome = location.pathname === '/';
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = notifications.filter(n => !n.readAt).length;
 
   const notifRef = useRef<HTMLDivElement>(null);
+
+  const refreshNotifications = useCallback(async () => {
+    if (!user) {
+      setNotifications([]);
+      setNotificationsError(null);
+      return;
+    }
+    setNotificationsLoading(true);
+    try {
+      setNotifications(await fetchMyNotifications());
+      setNotificationsError(null);
+    } catch (error) {
+      setNotificationsError(error instanceof Error ? error.message : 'Could not load notifications.');
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    void refreshNotifications();
+    if (!user) return;
+    const intervalId = window.setInterval(() => void refreshNotifications(), 60_000);
+    const handleCreatorReward = () => void refreshNotifications();
+    window.addEventListener(CREATOR_REWARD_AVAILABLE_EVENT, handleCreatorReward);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener(CREATOR_REWARD_AVAILABLE_EVENT, handleCreatorReward);
+    };
+  }, [refreshNotifications, user?.id]);
+
+  useEffect(() => {
+    if (showNotifications) void refreshNotifications();
+  }, [showNotifications, refreshNotifications]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -68,28 +111,48 @@ export const Navbar = () => {
     };
   }, [showNotifications]);
 
-  const handleNotificationClick = (notif: typeof MOCK_NOTIFICATIONS[number]) => {
-    setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, read: true } : n));
+  const handleNotificationClick = async (notif: UserNotification) => {
+    if (!notif.readAt) {
+      const readAt = new Date().toISOString();
+      setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, readAt } : n));
+      try {
+        await markNotificationRead(notif.id);
+      } catch (error) {
+        setNotifications(prev => prev.map(n => n.id === notif.id ? { ...n, readAt: null } : n));
+        addToast('error', error instanceof Error ? error.message : 'Could not mark this notification as read.');
+      }
+    }
     setShowNotifications(false);
-    navigate(notif.link);
+    navigate(getNotificationLink(notif));
   };
 
-  const markAllAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+  const markAllAsRead = async () => {
+    const previous = notifications;
+    const readAt = new Date().toISOString();
+    setNotifications(prev => prev.map(n => n.readAt ? n : { ...n, readAt }));
+    try {
+      await markAllNotificationsRead();
+    } catch (error) {
+      setNotifications(previous);
+      addToast('error', error instanceof Error ? error.message : 'Could not mark notifications as read.');
+    }
   };
 
   const getNotifIcon = (type: string) => {
     switch (type) {
-      case 'approved': return <Check className="w-4 h-4 text-emerald-500" />;
-      case 'changes': return <AlertCircle className="w-4 h-4 text-red-500" />;
-      case 'credits': return <SparklesOutline className="w-4 h-4 text-amber-500" />;
+      case 'template_approved': return <Check className="w-4 h-4 text-emerald-500" />;
+      case 'template_changes_requested': return <AlertCircle className="w-4 h-4 text-red-500" />;
+      case 'creator_credits_earned':
+      case 'platform_creator_bonus':
+        return <SparklesOutline className="w-4 h-4 text-amber-500" />;
       default: return <Bell className="w-4 h-4 text-purple-500" />;
     }
   };
 
   return (
-    <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isHome ? 'bg-white/80 dark:bg-slate-900/80' : 'bg-white dark:bg-slate-900'} backdrop-blur-md border-b border-slate-200 dark:border-white/5`}>
-      <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+    <>
+      <nav className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${isHome ? 'bg-white/80 dark:bg-slate-900/80' : 'bg-white dark:bg-slate-900'} backdrop-blur-md border-b border-slate-200 dark:border-white/5`}>
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
         {/* Left - Logo */}
         <Link to="/" className="flex items-center gap-2 group">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center group-hover:scale-105 transition-transform shadow-lg shadow-purple-500/20">
@@ -101,7 +164,7 @@ export const Navbar = () => {
         {/* Center */}
         <div className="hidden md:flex items-center gap-8">
           <Link to="/" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Templates</Link>
-          <Link to="/modify" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/modify' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Modify</Link>
+          <Link to="/modify" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/modify' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Image</Link>
           <Link to="/video" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/video' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Video</Link>
           <Link to="/templates/create" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/templates/create' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Builder</Link>
           <Link to="/pricing" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/pricing' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Plans</Link>
@@ -150,7 +213,18 @@ export const Navbar = () => {
                       )}
                     </div>
                     <div className="max-h-[400px] overflow-y-auto">
-                      {notifications.length === 0 ? (
+                      {notificationsLoading && notifications.length === 0 ? (
+                        <div className="py-12 px-4 text-center text-sm text-slate-500 dark:text-slate-400">
+                          Loading notifications...
+                        </div>
+                      ) : notificationsError && notifications.length === 0 ? (
+                        <div className="py-10 px-4 text-center">
+                          <p className="text-sm text-red-600 dark:text-red-400">{notificationsError}</p>
+                          <button onClick={() => void refreshNotifications()} className="mt-3 text-xs font-medium text-purple-600 dark:text-purple-400">
+                            Try again
+                          </button>
+                        </div>
+                      ) : notifications.length === 0 ? (
                         <div className="py-12 px-4 text-center">
                           <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-3">
                             <Bell className="w-5 h-5 text-slate-400" />
@@ -164,14 +238,14 @@ export const Navbar = () => {
                             <button
                               key={notif.id}
                               onClick={() => handleNotificationClick(notif)}
-                              className={`w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors flex items-start gap-3 relative ${!notif.read ? 'bg-slate-50/50 dark:bg-slate-800/50' : ''}`}
+                              className={`w-full text-left p-4 hover:bg-slate-50 dark:hover:bg-white/5 transition-colors flex items-start gap-3 relative ${!notif.readAt ? 'bg-slate-50/50 dark:bg-slate-800/50' : ''}`}
                             >
-                              {!notif.read && (
+                              {!notif.readAt && (
                                 <span className="absolute left-2 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full bg-purple-500" />
                               )}
                               <div className={`mt-0.5 p-2 rounded-full flex-shrink-0 ${
-                                notif.type === 'approved' ? 'bg-emerald-100 dark:bg-emerald-500/20' :
-                                notif.type === 'changes' ? 'bg-red-100 dark:bg-red-500/20' :
+                                notif.type === 'template_approved' ? 'bg-emerald-100 dark:bg-emerald-500/20' :
+                                notif.type === 'template_changes_requested' ? 'bg-red-100 dark:bg-red-500/20' :
                                 'bg-amber-100 dark:bg-amber-500/20'
                               }`}>
                                 {getNotifIcon(notif.type)}
@@ -179,9 +253,9 @@ export const Navbar = () => {
                               <div className="flex-1 pr-4">
                                 <h4 className="text-sm font-semibold text-slate-900 dark:text-white">{notif.title}</h4>
                                 <p className="text-xs text-slate-600 dark:text-slate-400 mt-0.5 line-clamp-2 leading-relaxed">
-                                  {notif.content}
+                                  {notif.body}
                                 </p>
-                                <span className="text-[10px] text-slate-400 font-medium block mt-1.5">{notif.time}</span>
+                                <span className="text-[10px] text-slate-400 font-medium block mt-1.5">{formatRelativeTime(notif.createdAt)}</span>
                               </div>
                             </button>
                           ))}
@@ -215,10 +289,27 @@ export const Navbar = () => {
                   <>
                     <div className="fixed inset-0 z-10" onClick={() => setShowDropdown(false)} />
                     <div className="absolute right-0 mt-2 w-56 py-2 bg-white dark:bg-slate-900/90 backdrop-blur-2xl border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl z-20 animate-in slide-in-from-top-2 ring-1 ring-black/5 dark:ring-white/5">
-                      <div className="px-4 py-3 border-b border-slate-100 dark:border-white/10 mb-2">
-                        <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{user.name}</p>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{user.email}</p>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowDropdown(false);
+                          setShowProfileSettings(true);
+                        }}
+                        className="mb-2 flex w-full items-center gap-3 border-b border-slate-100 px-4 py-3 text-left transition hover:bg-slate-50 dark:border-white/10 dark:hover:bg-white/5"
+                      >
+                        <span className="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200 dark:bg-slate-800 dark:ring-white/10">
+                          {user.avatarUrl || user.avatar ? (
+                            <img src={user.avatarUrl || user.avatar} alt={user.name} className="h-full w-full object-cover" />
+                          ) : (
+                            <UserIcon className="m-2.5 h-5 w-5 text-slate-500" />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-slate-900 dark:text-white">{user.name}</span>
+                          <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{user.email}</span>
+                        </span>
+                        <Pencil className="h-4 w-4 shrink-0 text-slate-400" />
+                      </button>
                       <Link to="/dashboard" onClick={() => setShowDropdown(false)} className="flex items-center gap-2 px-4 py-2.5 text-sm text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-white hover:bg-slate-50 dark:hover:bg-white/5 transition-colors">
                         <LayoutDashboard className="w-4 h-4" /> Dashboard
                       </Link> 
@@ -239,8 +330,13 @@ export const Navbar = () => {
               <Button variant="gradient" size="sm" onClick={() => navigate('/signup')}>Sign Up</Button>
             </div>
           )}
+          </div>
         </div>
-      </div>
-    </nav>
+      </nav>
+      <ProfileSettingsModal
+        isOpen={showProfileSettings}
+        onClose={() => setShowProfileSettings(false)}
+      />
+    </>
   );
 };

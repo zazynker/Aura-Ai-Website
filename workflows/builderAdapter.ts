@@ -14,7 +14,10 @@ export type BuilderFeatureType =
   | 'Text to Image'
   | 'Replace Product'
   | 'Modify Image'
-  | 'Image to Video';
+  | 'Image to Video'
+  | 'Motion Control'
+  | 'Image Lip Sync'
+  | 'Video Lip Sync';
 
 export interface BuilderMaterial {
   id: string;
@@ -39,6 +42,8 @@ export interface BuilderDraftStep {
   id: string;
   feature: BuilderFeatureType;
   resultUrl: string | null;
+  resultType?: 'image' | 'video';
+  resultThumbnailUrl?: string;
   materials: BuilderMaterial[];
   prompt: string;
   resultGenerationId?: string;
@@ -46,6 +51,10 @@ export interface BuilderDraftStep {
     duration: string;
     resolution: string;
     generateAudio?: boolean;
+  };
+  imageParams?: {
+    ratio: string;
+    resolution: string;
   };
   inputBindings?: BuilderInputSelection[];
 }
@@ -63,6 +72,9 @@ export const BUILDER_FEATURE_TO_CAPABILITY: Record<
   'Replace Product': 'image.replace_product',
   'Modify Image': 'image.modify',
   'Image to Video': 'video.image_to_video',
+  'Motion Control': 'video.motion_control',
+  'Image Lip Sync': 'video.lip_sync_image',
+  'Video Lip Sync': 'video.lip_sync_video',
 };
 
 function buildDefaultParameters(
@@ -94,12 +106,18 @@ function buildParameters(
   }
 
   if (capabilityKey === 'video.image_to_video') {
-    parameters.duration = parseDuration(
+    parameters.duration = Math.min(15, Math.max(3, parseDuration(
       step.videoParams?.duration,
       Number(parameters.duration ?? 3),
-    );
+    )));
     parameters.resolution = step.videoParams?.resolution || '720p';
     parameters.generateAudio = step.videoParams?.generateAudio ?? true;
+    parameters.outputCount = 1;
+  }
+
+  if (capabilityKey === 'image.text_to_image') {
+    parameters.ratio = step.imageParams?.ratio || '1:1';
+    parameters.resolution = step.imageParams?.resolution || '1K';
     parameters.outputCount = 1;
   }
 

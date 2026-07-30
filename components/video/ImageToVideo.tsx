@@ -1,24 +1,29 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   Settings, ChevronDown, ArrowRightLeft, ImagePlus, 
-  Image as ImageIcon, RefreshCw, Sparkles 
+  Image as ImageIcon, RefreshCw, Sparkles, Trash2, Maximize2,
 } from 'lucide-react';
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
 import { estimateVideoCredits } from '../../context/StoreContext';
+import type { WorkflowHandoff } from '../workflow/workflowManager';
+import { MediaLightbox } from './MediaLightbox';
 
 interface ImageToVideoProps {
   onGenerate: (result: VideoResult) => void;
   onUpdate?: (id: string, updates: Partial<VideoResult>) => void;
   initialImage: string | null;
+  workflowHandoff?: WorkflowHandoff | null;
   userCredits: number;
   onInsufficientCredits: (requiredCredits: number) => void;
+  isPro: boolean;
+  onProRequired: () => void;
 }
 
 const formatDuration = (seconds?: number) => `00:${String(seconds || 3).padStart(2, '0')}`;
 
-export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate, initialImage, userCredits, onInsufficientCredits }) => {
+export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
   const [prompt, setPrompt] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedEndImage, setSelectedEndImage] = useState<string | null>(null);
@@ -35,12 +40,39 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
   const restoredPendingRef = useRef(false);
   const [startImageFile, setStartImageFile] = useState<File | null>(null);
   const [endImageFile, setEndImageFile] = useState<File | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; alt: string } | null>(null);
 
   useEffect(() => {
     if (initialImage) {
       setSelectedImage(initialImage);
     }
   }, [initialImage]);
+
+  useEffect(() => {
+    if (!workflowHandoff || workflowHandoff.capability !== 'video.image_to_video') return;
+    if (workflowHandoff.action === 'materials' || workflowHandoff.action === 'all') {
+      const start = workflowHandoff.materials.find((item) => item.slot === 'start_image')
+        || workflowHandoff.materials.find((item) => item.type === 'image');
+      const end = workflowHandoff.materials.find((item) => item.slot === 'end_image');
+      const willOverwrite = Boolean(
+        (start && selectedImage && selectedImage !== start.url)
+        || (end && selectedEndImage && selectedEndImage !== end.url),
+      );
+      if (workflowHandoff.action === 'materials' && willOverwrite && !window.confirm('Replace the media currently selected on this page with the template materials?')) return;
+      if (start) { setSelectedImage(start.url); setStartImageFile(null); }
+      if (end) { setSelectedEndImage(end.url); setEndImageFile(null); }
+      if (workflowHandoff.action === 'materials') return;
+    }
+    const next = workflowHandoff.settings;
+    const nextPrompt = workflowHandoff.prompt || (typeof next.prompt === 'string' ? next.prompt : '');
+    const willOverwrite = Boolean(prompt.trim() && prompt !== nextPrompt);
+    if (workflowHandoff.action === 'prompt' && willOverwrite && !window.confirm('Replace the prompt and settings currently entered on this page?')) return;
+    setPrompt(nextPrompt);
+    if (next.resolution === '720p' || next.resolution === '1080p') setResolution(next.resolution);
+    if (typeof next.duration === 'number') setDuration(next.duration);
+    if (typeof next.outputCount === 'number') setGenerationCount(next.outputCount);
+    if (typeof next.generateAudio === 'boolean') setGenerateAudio(next.generateAudio);
+  }, [workflowHandoff?.nonce]);
 
   useEffect(() => {
     const existing = getPendingVideoJob();
@@ -53,12 +85,13 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     setSelectedEndImage(existing.endImageUrl || null);
     setDuration(existing.duration || 3);
     setResolution(existing.resolution || '720p');
+    setGenerationCount(existing.requestedOutputCount || 1);
     setGenerateAudio(existing.generateAudio !== false);
 
     onGenerate({
       id: existing.clientJobId,
       type: 'Image to Video',
-      model: 'Kling 3.0',
+      model: existing.resolution === '1080p' ? 'Pro' : 'Standard',
       resolution: existing.resolution || '720p',
       prompt: existing.prompt || '',
       duration: formatDuration(existing.duration),
@@ -68,7 +101,12 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       sourceImage: existing.startImageUrl,
       status: 'pending',
       requestId: existing.requestId,
-      error: 'This video was already submitted. Click Resume to check the same Fal job.',
+      creditsUsed: existing.creditsUsed,
+      templateRunId: existing.templateRunId,
+      templateStepId: existing.templateStepId,
+      templateCapability: existing.templateCapability,
+      generateAudio: existing.generateAudio !== false,
+      error: 'This video was already submitted. Click Resume to check the same job.',
     });
   }, [onGenerate]);
 
@@ -109,6 +147,10 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         timestamp: 'Just now',
         error: undefined,
         requestId: result.requestId,
+        creditsUsed: result.creditsUsed,
+        templateRunId: result.templateRunId,
+        templateStepId: result.templateStepId,
+        templateCapability: result.templateCapability,
       });
       return;
     }
@@ -119,6 +161,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         status: 'pending',
         error: result.error || 'Video submitted. Status check failed. Click Resume instead of Generate.',
         requestId: result.requestId || result.pendingJob?.requestId,
+        templateRunId: result.templateRunId || result.pendingJob?.templateRunId,
+        templateStepId: result.templateStepId || result.pendingJob?.templateStepId,
+        templateCapability: result.templateCapability || result.pendingJob?.templateCapability,
       });
       alert(result.error || 'Video submitted. Status check failed. Please click Resume instead of generating again.');
       return;
@@ -130,6 +175,9 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       error: result.error || 'Video generation failed.',
       timestamp: 'Failed',
       requestId: result.requestId,
+      templateRunId: result.templateRunId,
+      templateStepId: result.templateStepId,
+      templateCapability: result.templateCapability,
     });
     alert(result.error || 'Video generation failed. Please try again.');
   };
@@ -171,40 +219,49 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
       alert('Please upload a first frame image.');
       return;
     }
+    if (!isPro && (resolution === '1080p' || generationCount > 1)) {
+      onProRequired();
+      return;
+    }
     const requiredCredits = estimateVideoCredits({
-      mode: 'image_to_video', duration, generationCount, generateAudio,
+      mode: 'image_to_video', duration, resolution, generationCount, generateAudio,
     });
     if (userCredits < requiredCredits) {
       onInsufficientCredits(requiredCredits);
       return;
     }
     
-    const placeholderId = `video-${Date.now()}`;
-    const pendingResult: VideoResult = {
-      id: placeholderId,
-      type: 'Image to Video',
-      model: 'Kling 3.0',
-      resolution,
-      prompt,
-      duration: formatDuration(duration),
-      aspectRatio: '16:9',
-      timestamp: 'Uploading',
-      bgColor: 'bg-slate-900/50',
-      sourceImage: selectedImage,
-      status: 'pending',
-    };
-
-    onGenerate(pendingResult);
+    const batchTimestamp = Date.now();
+    const placeholderIds = Array.from(
+      { length: generationCount },
+      (_, index) => `video-${batchTimestamp}-${index + 1}`,
+    );
+    placeholderIds.forEach((placeholderId, index) => {
+      onGenerate({
+        id: placeholderId,
+        type: 'Image to Video',
+        model: resolution === '1080p' ? 'Pro' : 'Standard',
+        resolution,
+        prompt,
+        duration: formatDuration(duration),
+        aspectRatio: '16:9',
+        timestamp: index === 0 ? 'Uploading' : 'Queued',
+        bgColor: 'bg-slate-900/50',
+        sourceImage: selectedImage,
+        generateAudio,
+        status: 'pending',
+      });
+    });
     setIsGenerating(true);
     
     try {
       const startImageUrl = await uploadImageIfNeeded(selectedImage, startImageFile, 'start');
       if (!startImageUrl) throw new Error('Please upload a first frame image.');
 
-      onUpdate?.(placeholderId, {
+      placeholderIds.forEach((placeholderId) => onUpdate?.(placeholderId, {
         sourceImage: startImageUrl,
-        timestamp: 'Generating',
-      });
+        timestamp: 'Submitting',
+      }));
 
       let endImageUrl: string | undefined;
       if (selectedEndImage && endImageFile) {
@@ -215,33 +272,43 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
         }
       }
 
-      const result = await generateVideo({
-        mode: 'image_to_video',
-        prompt,
-        startImageUrl,
-        endImageUrl,
-        duration,
-        resolution,
-        generationCount,
-        generateAudio,
-        clientJobId: placeholderId,
-        onJobSubmitted: (job) => {
-          setPendingJob(job);
-          onUpdate?.(placeholderId, {
-            status: 'pending',
-            requestId: job.requestId,
+      await Promise.all(
+        placeholderIds.map(async (placeholderId) => {
+          const result = await generateVideo({
+            mode: 'image_to_video',
+            prompt,
+            startImageUrl,
+            endImageUrl,
+            duration,
+            resolution,
+            generationCount: 1,
+            requestedOutputCount: generationCount,
+            generateAudio,
+            allowConcurrent: generationCount > 1,
+            clientJobId: placeholderId,
+            onJobSubmitted: (job) => {
+              setPendingJob(job);
+              onUpdate?.(placeholderId, {
+                status: 'pending',
+                timestamp: 'Generating',
+                requestId: job.requestId,
+                creditsUsed: job.creditsUsed,
+                templateRunId: job.templateRunId,
+                templateStepId: job.templateStepId,
+                templateCapability: job.templateCapability,
+              });
+            },
           });
-        },
-      });
-
-      applyResult(placeholderId, result);
+          applyResult(placeholderId, result);
+        }),
+      );
     } catch (error) {
       console.error('Video generation error:', error);
-      onUpdate?.(placeholderId, {
+      placeholderIds.forEach((placeholderId) => onUpdate?.(placeholderId, {
         status: 'failed',
         error: error instanceof Error ? error.message : 'Video generation failed. Please try again.',
         timestamp: 'Failed',
-      });
+      }));
       alert(error instanceof Error ? error.message : 'Video generation failed. Please try again.');
     } finally {
       setIsGenerating(false);
@@ -265,6 +332,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
   const estimatedCredits = estimateVideoCredits({
     mode: 'image_to_video',
     duration,
+    resolution,
     generationCount,
     generateAudio,
   });
@@ -279,17 +347,57 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
           </div>
           
           <div className="flex items-center gap-3">
-            <div 
-              className="group relative flex h-32 flex-1 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800 transition-all"
-              onClick={() => fileInputRef.current?.click()}
-            >
+            <div className="group relative flex aspect-square flex-1 flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-all hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800">
               {selectedImage ? (
-                <img src={selectedImage} alt="First frame" className="h-full w-full object-cover" />
-              ) : (
                 <>
+                  <button
+                    type="button"
+                    className="absolute inset-0 z-10 cursor-zoom-in"
+                    onClick={() => setPreviewImage({ url: selectedImage, alt: 'First frame' })}
+                    aria-label="Preview first frame"
+                  >
+                    <img src={selectedImage} alt="First frame" className="h-full w-full object-contain" />
+                  </button>
+                  <div className="absolute right-2 top-2 z-20 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage({ url: selectedImage, alt: 'First frame' })}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                      title="Preview image"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                      title="Replace image"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedImage(null);
+                        setStartImageFile(null);
+                        if (fileInputRef.current) fileInputRef.current.value = '';
+                      }}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-red-500"
+                      title="Delete image"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="flex h-full w-full cursor-pointer flex-col items-center justify-center"
+                  onClick={() => fileInputRef.current?.click()}
+                >
                   <ImagePlus className="mb-2 h-6 w-6 text-slate-400 group-hover:text-purple-500 transition-colors" />
                   <span className="text-xs font-medium text-slate-500">First frame</span>
-                </>
+                </button>
               )}
               <input 
                 type="file" 
@@ -304,17 +412,57 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
               <ArrowRightLeft className="h-4 w-4 text-slate-400" />
             </div>
 
-            <div 
-              className="group relative flex h-32 flex-1 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800 transition-all"
-              onClick={() => endFileInputRef.current?.click()}
-            >
+            <div className="group relative flex aspect-square flex-1 flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition-all hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800">
               {selectedEndImage ? (
-                <img src={selectedEndImage} alt="End frame" className="h-full w-full object-cover" />
-              ) : (
                 <>
+                  <button
+                    type="button"
+                    className="absolute inset-0 z-10 cursor-zoom-in"
+                    onClick={() => setPreviewImage({ url: selectedEndImage, alt: 'End frame' })}
+                    aria-label="Preview end frame"
+                  >
+                    <img src={selectedEndImage} alt="End frame" className="h-full w-full object-contain" />
+                  </button>
+                  <div className="absolute right-2 top-2 z-20 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => setPreviewImage({ url: selectedEndImage, alt: 'End frame' })}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                      title="Preview image"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => endFileInputRef.current?.click()}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-black"
+                      title="Replace image"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedEndImage(null);
+                        setEndImageFile(null);
+                        if (endFileInputRef.current) endFileInputRef.current.value = '';
+                      }}
+                      className="rounded-md bg-black/60 p-1.5 text-white transition-colors hover:bg-red-500"
+                      title="Delete image"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="flex h-full w-full cursor-pointer flex-col items-center justify-center"
+                  onClick={() => endFileInputRef.current?.click()}
+                >
                   <ImageIcon className="mb-2 h-6 w-6 text-slate-400 group-hover:text-purple-500 transition-colors" />
                   <span className="text-xs font-medium text-slate-500">End frame (opt)</span>
-                </>
+                </button>
               )}
               <input 
                 type="file" 
@@ -341,7 +489,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
 
         {pendingJob && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900/50 dark:bg-amber-900/20 dark:text-amber-200">
-            A Fal job is already submitted. Use Resume to check the same job. Do not generate again.
+            A job is already submitted. Use Resume to check the same job. Do not generate again.
           </div>
         )}
       </div>
@@ -356,7 +504,13 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                   {['720p', '1080p'].map((res) => (
                     <button
                       key={res}
-                      onClick={() => setResolution(res as any)}
+                      onClick={() => {
+                        if (res === '1080p' && !isPro) {
+                          onProRequired();
+                          return;
+                        }
+                        setResolution(res as '720p' | '1080p');
+                      }}
                       className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                         resolution === res 
                           ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100' 
@@ -365,7 +519,7 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                     >
                       {res}
                       {res !== '720p' && (
-                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-pink-400 to-purple-500 px-1 text-[8px] font-bold text-white shadow-sm">PRO</span>
+                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-purple-500 to-pink-500 px-1 text-[8px] font-bold text-white shadow-sm">PRO</span>
                       )}
                     </button>
                   ))}
@@ -407,10 +561,16 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
               <div>
                 <label className="mb-2 block text-xs font-semibold tracking-wider text-slate-500 dark:text-slate-400 uppercase">Generation Count</label>
                 <div className="flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 p-0.5 dark:bg-slate-800/50">
-                  {[1].map((count) => (
+                  {[1, 2, 3, 4].map((count) => (
                     <button
                       key={count}
-                      onClick={() => setGenerationCount(count)}
+                      onClick={() => {
+                        if (count > 1 && !isPro) {
+                          onProRequired();
+                          return;
+                        }
+                        setGenerationCount(count);
+                      }}
                       className={`relative flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-all ${
                         generationCount === count 
                           ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100' 
@@ -419,11 +579,14 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
                     >
                       {count}
                       {count > 1 && (
-                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-pink-400 to-purple-500 px-1 text-[8px] font-bold text-white shadow-sm">PRO</span>
+                        <span className="absolute -top-1.5 -right-1.5 rounded bg-gradient-to-r from-purple-500 to-pink-500 px-1 text-[8px] font-bold text-white shadow-sm">PRO</span>
                       )}
                     </button>
                   ))}
                 </div>
+                <p className="mt-1.5 text-[10px] leading-relaxed text-slate-400">
+                  Creates separate variations in parallel. Total credits equal the single-video cost × count.
+                </p>
               </div>
             </div>
           </div>
@@ -459,6 +622,12 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
           </button>
         </div>
       </div>
+      <MediaLightbox
+        url={previewImage?.url || null}
+        type="image"
+        alt={previewImage?.alt}
+        onClose={() => setPreviewImage(null)}
+      />
     </>
   );
 };

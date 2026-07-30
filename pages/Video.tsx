@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import {
   Copy,
-  Edit2,
   RefreshCw,
   Download,
   ImagePlus,
@@ -18,7 +17,7 @@ import {
   removeCachedVideoResult,
   dedupeVideoResults,
 } from '../utils/video';
-import { clearPendingVideoJob, getPendingVideoJob, pollPendingVideoJob } from '../utils/generateService';
+import { clearPendingVideoJob, getPendingVideoJobs, pollPendingVideoJob } from '../utils/generateService';
 import { FeatureSwitcher, FeatureType } from '../components/video/FeatureSwitcher';
 import { ImageToVideo } from '../components/video/ImageToVideo';
 import { MotionControl } from '../components/video/MotionControl';
@@ -30,6 +29,7 @@ import { Button } from '../components/ui/Button';
 import { Generation, VideoMode, type GenerationInputAssetSnapshot } from '../types';
 import type { WorkflowCapabilityKey } from '../workflows/types';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
+import { consumeWorkflowHandoff, type WorkflowHandoff } from '../components/workflow/workflowManager';
 
 const parseDurationSeconds = (duration: string): number | undefined => {
   if (!duration) return undefined;
@@ -46,6 +46,11 @@ const formatDuration = (seconds?: number | null) => {
   const secs = safe % 60;
   return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 };
+
+const getUserFacingError = (error?: string) =>
+  error
+    ?.replace(/Fal/gi, 'generation service')
+    .replace(/Kling/gi, 'generation service');
 
 const getVideoMode = (type: string): VideoMode | undefined => {
   const normalized = type.toLowerCase();
@@ -69,7 +74,7 @@ const generationToVideoResult = (generation: Generation): VideoResult | null => 
   return {
     id: generation.id,
     type: getTypeFromMode(mode),
-    model: mode === 'lip_sync' ? 'Kling Lip Sync' : mode === 'motion_control' ? 'Kling Motion Control' : 'Kling 3.0',
+    model: 'Standard',
     resolution: 'Saved',
     prompt: generation.prompt || '',
     duration: formatDuration(generation.videoDuration),
@@ -81,6 +86,14 @@ const generationToVideoResult = (generation: Generation): VideoResult | null => 
     status: generation.videoUrl ? 'completed' : 'pending',
     mode,
     createdAt: generation.createdAt,
+    requestId: generation.requestId,
+    templateRunId: generation.templateRunId,
+    templateStepId: generation.templateStepId,
+    templateCapability: generation.templateCapability,
+    generateAudio:
+      typeof generation.generationParameters?.generateAudio === 'boolean'
+        ? generation.generationParameters.generateAudio
+        : undefined,
   };
 };
 
@@ -133,14 +146,13 @@ const getInputAssetsFromVideoResult = (
   return assets;
 };
 
-const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
-  const job = getPendingVideoJob();
-  if (!job || (userId && job.userId !== userId)) return null;
-
-  return {
+const pendingJobsToVideoResults = (userId?: string): VideoResult[] =>
+  getPendingVideoJobs()
+    .filter((job) => !userId || job.userId === userId)
+    .map((job) => ({
     id: job.clientJobId,
     type: getTypeFromMode(job.mode),
-    model: job.mode === 'lip_sync' ? 'Kling Lip Sync' : job.mode === 'motion_control' ? 'Kling Motion Control' : 'Kling 3.0',
+    model: job.resolution === '1080p' ? 'Pro' : 'Standard',
     resolution: job.resolution || '720p',
     prompt: job.prompt || '',
     duration: formatDuration(job.duration || 0),
@@ -150,27 +162,49 @@ const pendingJobToVideoResult = (userId?: string): VideoResult | null => {
     sourceImage: job.startImageUrl,
     sourceVideo: job.inputVideoUrl,
     audioUrl: job.audioUrl,
+    generateAudio: job.generateAudio,
     status: 'pending',
     requestId: job.requestId,
     mode: job.mode,
+    creditsUsed: job.creditsUsed,
     createdAt: job.createdAt,
-    error: 'This Fal job was already submitted. Use Resume to check the same request instead of generating again.',
-  };
+    templateRunId: job.templateRunId,
+    templateStepId: job.templateStepId,
+    templateCapability: job.templateCapability,
+    error: 'This job was already submitted. Use Resume to check the same request instead of generating again.',
+  }));
+
+const getFeatureFromSearch = (search: string): FeatureType => {
+  const requestedMode = new URLSearchParams(search).get('mode');
+  if (requestedMode === 'motion-control') return 'motion-control';
+  if (requestedMode === 'lip-sync') return 'lip-sync';
+  if (requestedMode === 'free-mode') return 'free-mode';
+  return 'image-to-video';
 };
 
 export const Video: React.FC = () => {
   const location = useLocation();
   const navigationState = location.state as { initialImage?: string } | null;
   const [initialImage] = useState<string | null>(navigationState?.initialImage || null);
+  const [workflowHandoff, setWorkflowHandoff] = useState<WorkflowHandoff | null>(null);
 
   const [results, setResults] = useState<VideoResult[]>([]);
   const resultsRef = useRef<VideoResult[]>([]);
-  const [activeFeature, setActiveFeature] = useState<FeatureType>('image-to-video');
+  const [activeFeature, setActiveFeature] = useState<FeatureType>(() =>
+    getFeatureFromSearch(location.search),
+  );
   const [videoToDelete, setVideoToDelete] = useState<string | null>(null);
   const [showWelcomeGift, setShowWelcomeGift] = useState(false);
+  const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
   const { addGeneration, user, generations } = useStore();
   const savedVideoKeysRef = useRef<Set<string>>(new Set());
   const autoResumedRequestIdsRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    setActiveFeature(getFeatureFromSearch(location.search));
+    const handoff = consumeWorkflowHandoff();
+    if (handoff) setWorkflowHandoff(handoff);
+  }, [location.search]);
 
   const handleInsufficientCredits = () => {
     if (user?.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
@@ -178,6 +212,46 @@ export const Video: React.FC = () => {
       return;
     }
     window.location.hash = '#/pricing';
+  };
+
+  const handleProRequired = () => {
+    window.location.hash = '#/pricing';
+  };
+
+  const hasProAccess = user?.plan === 'Pro' || Boolean(user?.isWhitelisted);
+
+  const handleCopyPrompt = async (prompt: string) => {
+    try {
+      await navigator.clipboard.writeText(prompt || '');
+    } catch {
+      alert('Unable to copy the prompt. Please select and copy it manually.');
+    }
+  };
+
+  const handleDownloadVideo = async (result: VideoResult) => {
+    if (!result.videoUrl || downloadingVideoId) return;
+    setDownloadingVideoId(result.id);
+
+    try {
+      const response = await fetch(result.videoUrl);
+      if (!response.ok) throw new Error(`Download failed (${response.status})`);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const safeType = result.type.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+      link.href = objectUrl;
+      link.download = `${safeType || 'video'}-${Date.now()}.mp4`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (error) {
+      console.error('[Video] Download failed:', error);
+      window.open(result.videoUrl, '_blank', 'noopener,noreferrer');
+      alert('Direct download was blocked by the video host. The video was opened in a new tab so you can save it from there.');
+    } finally {
+      setDownloadingVideoId(null);
+    }
   };
 
   const setResultsAndCache = (next: VideoResult[] | ((prev: VideoResult[]) => VideoResult[])) => {
@@ -208,7 +282,8 @@ export const Video: React.FC = () => {
       videoAspectRatio: result.aspectRatio === 'Auto' ? undefined : result.aspectRatio,
       videoMode: result.mode || getVideoMode(result.type),
       prompt: result.prompt,
-      creditsUsed: 36,
+      creditsUsed: result.creditsUsed ?? 0,
+      requestId: result.requestId,
       capability: getCapabilityFromVideoResult(result),
       inputAssets: getInputAssetsFromVideoResult(result),
       generationParameters: {
@@ -216,7 +291,13 @@ export const Video: React.FC = () => {
         resolution: result.resolution,
         duration: parseDurationSeconds(result.duration) || 0,
         aspectRatio: result.aspectRatio,
+        ...(result.mode === 'image_to_video' || getVideoMode(result.type) === 'image_to_video'
+          ? { generateAudio: result.generateAudio !== false }
+          : {}),
       },
+      templateRunId: result.templateRunId,
+      templateStepId: result.templateStepId,
+      templateCapability: result.templateCapability,
     });
   };
 
@@ -244,9 +325,9 @@ export const Video: React.FC = () => {
     }
 
     const cached = getCachedVideoResults(user.id);
-    const pending = pendingJobToVideoResult(user.id);
+    const pending = pendingJobsToVideoResults(user.id);
     const combined = dedupeVideoResults([
-      ...(pending ? [pending] : []),
+      ...pending,
       ...cached,
       ...dbVideos,
     ]);
@@ -259,9 +340,8 @@ export const Video: React.FC = () => {
   const handleDeleteConfirm = () => {
     if (videoToDelete) {
       const deleting = resultsRef.current.find(v => v.id === videoToDelete);
-      if (deleting && isMatchingPendingCard(deleting)) {
-        clearPendingVideoJob();
-      }
+      const pending = deleting ? findMatchingPendingJob(deleting) : undefined;
+      if (pending) clearPendingVideoJob(pending.requestId);
       setResultsAndCache(prev => prev.filter(v => v.id !== videoToDelete));
       if (user?.id) removeCachedVideoResult(user.id, videoToDelete);
       savedVideoKeysRef.current.delete(videoToDelete);
@@ -312,17 +392,18 @@ export const Video: React.FC = () => {
   };
 
 
-  const isMatchingPendingCard = (gen: VideoResult) => {
-    const pending = getPendingVideoJob();
-    if (!pending) return false;
-    return pending.clientJobId === gen.id || Boolean(gen.requestId && pending.requestId === gen.requestId);
-  };
+  const findMatchingPendingJob = (gen: VideoResult) =>
+    getPendingVideoJobs().find((job) =>
+      job.clientJobId === gen.id || Boolean(gen.requestId && job.requestId === gen.requestId)
+    );
+
+  const isMatchingPendingCard = (gen: VideoResult) => Boolean(findMatchingPendingJob(gen));
 
   const handleResumeCard = async (gen: VideoResult) => {
     if (gen.status !== 'pending') return;
 
-    const pending = getPendingVideoJob();
-    if (!pending || !isMatchingPendingCard(gen)) {
+    const pending = findMatchingPendingJob(gen);
+    if (!pending) {
       handleUpdateResult(gen.id, {
         status: 'failed',
         timestamp: 'Failed',
@@ -333,11 +414,11 @@ export const Video: React.FC = () => {
 
     handleUpdateResult(gen.id, {
       status: 'pending',
-      error: 'Checking the existing Fal request. Do not submit a new generation.',
+      error: 'Checking the existing request. Do not submit a new generation.',
     });
 
     try {
-      const result = await pollPendingVideoJob();
+      const result = await pollPendingVideoJob(pending.requestId);
 
       if (result.success && result.videoUrl) {
         handleUpdateResult(gen.id, {
@@ -345,6 +426,9 @@ export const Video: React.FC = () => {
           videoUrl: result.videoUrl,
           timestamp: 'Just now',
           requestId: result.requestId || gen.requestId,
+          templateRunId: result.templateRunId || gen.templateRunId,
+          templateStepId: result.templateStepId || gen.templateStepId,
+          templateCapability: result.templateCapability || gen.templateCapability,
           error: undefined,
         });
         return;
@@ -354,7 +438,10 @@ export const Video: React.FC = () => {
         handleUpdateResult(gen.id, {
           status: 'pending',
           requestId: result.requestId || gen.requestId,
-          error: result.error || 'Fal is still processing this request. Check again later.',
+          templateRunId: result.templateRunId || gen.templateRunId,
+          templateStepId: result.templateStepId || gen.templateStepId,
+          templateCapability: result.templateCapability || gen.templateCapability,
+          error: result.error || 'The generation service is still processing this request. Check again later.',
         });
         return;
       }
@@ -363,7 +450,10 @@ export const Video: React.FC = () => {
         status: 'failed',
         timestamp: 'Failed',
         requestId: result.requestId || gen.requestId,
-        error: result.error || 'Fal request failed or was not found. You can clear this card and generate again.',
+        templateRunId: result.templateRunId || gen.templateRunId,
+        templateStepId: result.templateStepId || gen.templateStepId,
+        templateCapability: result.templateCapability || gen.templateCapability,
+        error: result.error || 'The request failed or was not found. You can clear this card and generate again.',
       });
     } catch (error) {
       handleUpdateResult(gen.id, {
@@ -374,26 +464,24 @@ export const Video: React.FC = () => {
   };
 
   const handleClearPendingCard = (gen: VideoResult) => {
-    if (isMatchingPendingCard(gen)) {
-      clearPendingVideoJob();
-    }
+    const pending = findMatchingPendingJob(gen);
+    if (pending) clearPendingVideoJob(pending.requestId);
 
     setResultsAndCache(prev => prev.filter(item => item.id !== gen.id));
     if (user?.id) removeCachedVideoResult(user.id, gen.id);
   };
 
 
-  // If the page is refreshed while a Fal job is still pending, restore the pending card and
-  // automatically resume polling once. This prevents a restored card from spinning forever
-  // until the user manually clicks Check status.
+  // Restore and resume every unfinished job once after a page refresh.
   useEffect(() => {
-    const pendingCard = results.find(item => item.status === 'pending' && item.requestId);
-    if (!pendingCard?.requestId) return;
-    if (autoResumedRequestIdsRef.current.has(pendingCard.requestId)) return;
+    const pendingCards = results
+      .filter((item) => item.status === 'pending' && item.requestId)
+      .filter((item) => !autoResumedRequestIdsRef.current.has(item.requestId as string));
+    if (!pendingCards.length) return;
 
-    autoResumedRequestIdsRef.current.add(pendingCard.requestId);
+    pendingCards.forEach((item) => autoResumedRequestIdsRef.current.add(item.requestId as string));
     const timer = window.setTimeout(() => {
-      handleResumeCard(pendingCard);
+      pendingCards.forEach((item) => handleResumeCard(item));
     }, 300);
 
     return () => window.clearTimeout(timer);
@@ -431,13 +519,13 @@ export const Video: React.FC = () => {
         </div>
 
         {activeFeature === 'image-to-video' && (
-          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
+          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
         )}
         {activeFeature === 'motion-control' && (
-          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
+          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
         )}
         {activeFeature === 'lip-sync' && (
-          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
+          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
         )}
         {activeFeature === 'free-mode' && (
           <FreeMode onGenerate={handleNewResult} initialImage={initialImage} />
@@ -467,21 +555,11 @@ export const Video: React.FC = () => {
                       {gen.type}
                     </span>
                     {renderStatusPill(gen)}
-                    <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                      {gen.model} • {gen.resolution}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => gen.status === 'pending' ? handleResumeCard(gen) : undefined}
-                      className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors"
-                      title={gen.status === 'pending' ? 'Check existing Fal request' : 'Refresh'}
-                    >
-                      <RefreshCw className={`h-4 w-4 ${gen.status === 'pending' ? 'animate-spin' : ''}`} />
-                    </button>
-                    <button className="rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-700 dark:hover:text-slate-300 transition-colors">
-                      <Edit2 className="h-4 w-4" />
-                    </button>
+                    {gen.resolution !== 'Saved' && (
+                      <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                        {gen.resolution}
+                      </span>
+                    )}
                   </div>
                 </div>
 
@@ -489,17 +567,17 @@ export const Video: React.FC = () => {
                   <p className="text-sm text-slate-700 dark:text-slate-200 leading-relaxed pr-8">
                     "{gen.prompt}"
                   </p>
-                  {gen.requestId && (
-                    <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
-                      Fal request: {gen.requestId}
-                    </p>
-                  )}
                   {gen.error && (
                     <p className="mt-2 rounded-lg bg-amber-50 p-2 text-xs text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-                      {gen.error}
+                      {getUserFacingError(gen.error)}
                     </p>
                   )}
-                  <button className="absolute right-5 top-5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+                  <button
+                    onClick={() => handleCopyPrompt(gen.prompt)}
+                    className="absolute right-5 top-5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                    title="Copy prompt"
+                    type="button"
+                  >
                     <Copy className="h-4 w-4" />
                   </button>
                 </div>
@@ -544,7 +622,7 @@ export const Video: React.FC = () => {
                       <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 text-white backdrop-blur-sm">
                         <RefreshCw className="mb-3 h-8 w-8 animate-spin" />
                         <p className="text-sm font-semibold">Generating video...</p>
-                        <p className="mt-1 text-xs text-white/70">Do not click Generate again. Resume this job if status check fails.</p>
+                        <p className="mt-1 text-xs text-white/70">You may leave this page. This job can be resumed later.</p>
                       </div>
                     )}
 
@@ -583,14 +661,17 @@ export const Video: React.FC = () => {
                       </>
                     )}
                     {gen.videoUrl && (
-                      <a 
-                        href={gen.videoUrl}
-                        download={`video-${gen.id}.mp4`}
+                      <button
+                        onClick={() => handleDownloadVideo(gen)}
+                        disabled={downloadingVideoId === gen.id}
                         className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600 transition-colors"
+                        type="button"
                       >
-                        <Download className="h-3.5 w-3.5" />
-                        Download
-                      </a>
+                        {downloadingVideoId === gen.id
+                          ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          : <Download className="h-3.5 w-3.5" />}
+                        {downloadingVideoId === gen.id ? 'Downloading...' : 'Download'}
+                      </button>
                     )}
                     <button 
                       onClick={() => setVideoToDelete(gen.id)}

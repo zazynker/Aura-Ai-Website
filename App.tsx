@@ -1,5 +1,5 @@
 import React, { Suspense, lazy } from 'react';
-import { HashRouter, Routes, Route, useLocation, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, useLocation, useNavigate, Navigate } from 'react-router-dom';
 import { Analytics } from '@vercel/analytics/react';
 import { StoreProvider } from './context/StoreContext';
 import { Navbar } from './components/Navbar';
@@ -7,8 +7,26 @@ import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
 import { WorkflowDock } from './components/workflow/WorkflowDock';
+import { clearWorkflow, restoreActiveWorkflow } from './components/workflow/workflowManager';
 import { RewardCelebrationModal } from './components/RewardCelebrationModal';
 import { useStore } from './context/StoreContext';
+import {
+  claimCreatorRewardCelebration,
+  CREATOR_REWARD_AVAILABLE_EVENT,
+} from './utils/notificationsApi';
+import type { CreatorRewardCelebration } from './types';
+
+const pendingCelebrationClaims = new Map<string, Promise<CreatorRewardCelebration | null>>();
+
+const claimCelebrationOnce = (userId: string): Promise<CreatorRewardCelebration | null> => {
+  const existing = pendingCelebrationClaims.get(userId);
+  if (existing) return existing;
+  const request = claimCreatorRewardCelebration().finally(() => {
+    pendingCelebrationClaims.delete(userId);
+  });
+  pendingCelebrationClaims.set(userId, request);
+  return request;
+};
 
 // ============ 首屏必须的组件（不懒加载）============
 import { Home } from './pages/Home';
@@ -49,6 +67,9 @@ const RequireAuth = ({ children }: React.PropsWithChildren) => {
   if (authLoading) return <PageLoader />;
 
   if (!user) {
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('postAuthDestination', `${location.pathname}${location.search}`);
+    }
     return (
       <Navigate
         to="/login"
@@ -63,15 +84,81 @@ const RequireAuth = ({ children }: React.PropsWithChildren) => {
 
 const AppContent = () => {
   const location = useLocation();
-  const { user } = useStore();
-  const [showReward, setShowReward] = React.useState(false);
+  const navigate = useNavigate();
+  const { user, authLoading } = useStore();
+  const [rewardCelebration, setRewardCelebration] = React.useState<CreatorRewardCelebration | null>(null);
 
   React.useEffect(() => {
-    if (user && !sessionStorage.getItem('rewardCelebrationShown')) {
-      setShowReward(true);
-      sessionStorage.setItem('rewardCelebrationShown', 'true');
+    if (authLoading || !user) {
+      setRewardCelebration(null);
+      return;
     }
-  }, [user]);
+
+    let active = true;
+    const checkForCreatorRewards = () => {
+      if (!active || rewardCelebration) return;
+      void claimCelebrationOnce(user.id)
+        .then((celebration) => {
+          if (active && celebration) setRewardCelebration(celebration);
+        })
+        .catch((error) => {
+          if (active) console.error('Could not claim creator reward celebration.', error);
+        });
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') checkForCreatorRewards();
+    };
+
+    checkForCreatorRewards();
+    window.addEventListener(CREATOR_REWARD_AVAILABLE_EVENT, checkForCreatorRewards);
+    window.addEventListener('focus', checkForCreatorRewards);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    const intervalId = window.setInterval(checkForCreatorRewards, 30_000);
+
+    return () => {
+      active = false;
+      window.removeEventListener(CREATOR_REWARD_AVAILABLE_EVENT, checkForCreatorRewards);
+      window.removeEventListener('focus', checkForCreatorRewards);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearInterval(intervalId);
+    };
+  }, [authLoading, user?.id, rewardCelebration]);
+
+  React.useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      void clearWorkflow(false);
+      return;
+    }
+
+    let disposed = false;
+    const restore = async () => {
+      try {
+        await restoreActiveWorkflow();
+      } catch (error) {
+        if (!disposed) console.error('Could not restore active workflow.', error);
+      }
+    };
+
+    void restore();
+    const handleFocus = () => { void restore(); };
+    window.addEventListener('focus', handleFocus);
+    return () => {
+      disposed = true;
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [authLoading, user?.id]);
+
+  React.useEffect(() => {
+    if (!user) return;
+    const destination = sessionStorage.getItem('postAuthDestination');
+    if (!destination) return;
+    sessionStorage.removeItem('postAuthDestination');
+    sessionStorage.removeItem('authEntryContext');
+    if (destination.startsWith('/') && !destination.startsWith('//') && location.pathname !== destination) {
+      navigate(destination, { replace: true });
+    }
+  }, [user, location.pathname, navigate]);
   
   React.useEffect(() => {
     if (window.location.hash.includes('error=access_denied')) {
@@ -94,12 +181,22 @@ const AppContent = () => {
       {!isAuthPage && <Navbar />}
       <ToastContainer />
       <WorkflowDock />
-      <RewardCelebrationModal isOpen={showReward} onClose={() => setShowReward(false)} />
+      <RewardCelebrationModal
+        celebration={rewardCelebration}
+        onClose={() => setRewardCelebration(null)}
+      />
       <Analytics
         beforeSend={(event) => {
-          const hash = window.location.hash;
-          const path = hash ? hash.replace('#', '') : '/';
-          return { ...event, url: path };
+          // HashRouter routes are not part of location.pathname. Keep the
+          // route visible to Web Analytics while preserving the absolute URL
+          // shape that Vercel emits by default.
+          const hashPath = window.location.hash.replace(/^#/, '');
+          const route = hashPath || window.location.pathname || '/';
+          const safeRoute = route.startsWith('/') && !route.startsWith('//') ? route : '/';
+          return {
+            ...event,
+            url: new URL(safeRoute, window.location.origin).toString(),
+          };
         }}
       />
       <Suspense fallback={<PageLoader />}>
@@ -114,9 +211,19 @@ const AppContent = () => {
               </RequireAuth>
             }
           />
-          <Route path="/templates/:templateId" element={<TemplateDetail />} />
+          <Route
+            path="/templates/:templateId"
+            element={<TemplateDetail />}
+          />
           <Route path="/modify" element={<Modify />} />
-          <Route path="/video" element={<Video />} />
+          <Route
+            path="/video"
+            element={
+              <RequireAuth>
+                <Video />
+              </RequireAuth>
+            }
+          />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Login isSignup />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />

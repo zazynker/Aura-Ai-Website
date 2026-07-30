@@ -4,7 +4,8 @@ import {
   Shield, Users, TrendingUp, Zap, Search, Crown, 
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
   Settings, BarChart3, RefreshCw, Image, AlertTriangle, Video,
-  Eye, X, CheckCircle, MessageSquare, ChevronDown, ChevronUp, Layers
+  Eye, X, CheckCircle, MessageSquare, ChevronDown, ChevronUp, Layers,
+  PlayCircle, Maximize2, Music, Gift, Sparkles
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
@@ -19,11 +20,23 @@ import {
   adminUpdatePlan,
   adminGetVideoInterestStats,
   adminGetUserGenerations,
-  AdminGeneration
+  adminGetTemplateReviews,
+  adminReviewTemplate,
+  adminSetTemplateUseCount,
+  adminIssueTemplateEncouragement,
+  AdminGeneration,
+  AdminReviewTemplate,
+  AdminReviewedTemplate,
 } from '../utils/adminApi';
+import { announceCreatorRewardAvailable } from '../utils/notificationsApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
-type TabType = 'overview' | 'users' | 'templates' | 'unused' | 'video' | 'review';
+type TabType = 'overview' | 'users' | 'templates' | 'rewards' | 'unused' | 'video' | 'review';
+
+const VIRTUAL_USERNAME_SUGGESTIONS = [
+  'Bananapiepie', 'MochiStudio', 'PeachyNova', 'CocoCanvas',
+  'LunaCreates', 'MintyMango', 'PixelPanda', 'SunnyBunny',
+];
 
 export const Admin = () => {
   const navigate = useNavigate();
@@ -37,107 +50,21 @@ export const Admin = () => {
   const [activeTab, setActiveTab] = useState<TabType>('overview');
 
   // Review state
-  const [pendingTemplates, setPendingTemplates] = useState([
-    {
-      id: 'pt-1',
-      name: 'Neon Cyberpunk City',
-      coverUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=500&q=80',
-      authorName: 'Alex Mercer',
-      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Alex',
-      submittedAt: '2026-07-15T08:30:00Z',
-      stepsCount: 3,
-      description: 'A vibrant neon city generator with glowing accents.',
-      status: 'In review',
-      steps: [
-        {
-          id: 's1',
-          name: 'Base Image Generation',
-          resultUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=500&q=80',
-          feature: 'Text to Image',
-          prompt: 'A futuristic city at night, neon lights, cyberpunk style, high detail',
-          settings: 'Aspect Ratio: 16:9, Quality: High',
-          reusable: true
-        },
-        {
-          id: 's2',
-          name: 'Upscale',
-          resultUrl: 'https://images.unsplash.com/photo-1515694346937-94d85e41e6f0?w=1000&q=80',
-          feature: 'Upscaler',
-          prompt: '',
-          settings: 'Scale: 2x, Face Enhance: On',
-          reusable: true
-        }
-      ]
-    },
-    {
-      id: 'pt-2',
-      name: 'Vintage Film Effect',
-      coverUrl: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=500&q=80',
-      authorName: 'Sarah Chen',
-      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Sarah',
-      submittedAt: '2026-07-14T15:20:00Z',
-      stepsCount: 2,
-      description: 'Add a nostalgic 35mm film look to any portrait.',
-      status: 'In review',
-      steps: [
-        {
-          id: 's1',
-          name: 'Apply Filter',
-          resultUrl: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=500&q=80',
-          feature: 'Image to Image',
-          materials: 'User uploaded portrait',
-          reusable: false,
-          prompt: 'Vintage 35mm film photography, film grain, nostalgic, soft focus, light leaks',
-          settings: 'Strength: 0.65'
-        }
-      ]
-    },
-    {
-      id: 'pt-3',
-      name: 'Anime Character Design',
-      coverUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
-      authorName: 'Kaito Tanaka',
-      authorAvatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Kaito',
-      submittedAt: '2026-07-13T09:10:00Z',
-      stepsCount: 4,
-      description: 'Create consistent anime characters from simple descriptions.',
-      status: 'In review',
-      steps: [
-         {
-          id: 's1',
-          name: 'Character Sketch',
-          resultUrl: 'https://images.unsplash.com/photo-1578632767115-351597cf2477?w=500&q=80',
-          feature: 'Text to Image',
-          prompt: 'Anime style character design sheet, full body, multiple angles, flat colors',
-          settings: 'Style: Anime',
-          reusable: true
-        }
-      ]
-    }
-  ]);
-  
-  const [reviewedTemplates, setReviewedTemplates] = useState([
-    {
-      id: 'rt-1',
-      name: 'Watercolor Landscape',
-      authorName: 'Emma Watson',
-      status: 'Published',
-      reviewedAt: '2026-07-15T07:15:00Z'
-    },
-    {
-      id: 'rt-2',
-      name: 'Dynamic Lip Sync',
-      authorName: 'David Kim',
-      status: 'Changes requested',
-      reviewedAt: '2026-07-14T11:30:00Z'
-    }
-  ]);
-  
-  const [reviewingTemplate, setReviewingTemplate] = useState<any>(null);
+  const [pendingTemplates, setPendingTemplates] = useState<AdminReviewTemplate[]>([]);
+  const [reviewedTemplates, setReviewedTemplates] = useState<AdminReviewedTemplate[]>([]);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [reviewsLoaded, setReviewsLoaded] = useState(false);
+  const [reviewingTemplate, setReviewingTemplate] = useState<AdminReviewTemplate | null>(null);
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [approveConfirmOpen, setApproveConfirmOpen] = useState(false);
   const [rejectModalOpen, setRejectModalOpen] = useState(false);
   const [rejectFeedback, setRejectFeedback] = useState('');
+  const [reviewActionLoading, setReviewActionLoading] = useState(false);
+  const [reviewMediaPreview, setReviewMediaPreview] = useState<{
+    url: string;
+    type: 'image' | 'video' | 'audio';
+    title: string;
+  } | null>(null);
 
   // Stats state
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -153,6 +80,16 @@ export const Admin = () => {
   // Template stats state
   const [templateStats, setTemplateStats] = useState<TemplateStats[]>([]);
   const [templateStatsLoading, setTemplateStatsLoading] = useState(false);
+
+  // Admin-only creator encouragement controls
+  const [boostingTemplate, setBoostingTemplate] = useState<TemplateStats | null>(null);
+  const [boostDisplayedUses, setBoostDisplayedUses] = useState('0');
+  const [boostVirtualUsername, setBoostVirtualUsername] = useState('Bananapiepie');
+  const [boostUsageDelta, setBoostUsageDelta] = useState('1');
+  const [boostRewardCredits, setBoostRewardCredits] = useState('10');
+  const [boostInternalNote, setBoostInternalNote] = useState('');
+  const [boostSaving, setBoostSaving] = useState(false);
+  const [boostTemplateSearch, setBoostTemplateSearch] = useState('');
 
   // Unused templates state
   const [unusedTemplates, setUnusedTemplates] = useState<UnusedTemplate[]>([]);
@@ -230,11 +167,12 @@ export const Admin = () => {
   // Load template stats
   const loadTemplateStats = useCallback(async () => {
     setTemplateStatsLoading(true);
-    const { data, error } = await adminGetTemplateStats(30);
+    const { data, error } = await adminGetTemplateStats(100);
+    if (data) {
+      setTemplateStats(data);
+    }
     if (error) {
       addToast('error', `Failed to load template stats: ${error}`);
-    } else if (data) {
-      setTemplateStats(data);
     }
     setTemplateStatsLoading(false);
   }, [addToast]);
@@ -251,6 +189,44 @@ export const Admin = () => {
     setUnusedTemplatesLoading(false);
   }, [addToast]);
 
+  const loadTemplateReviews = useCallback(async () => {
+    setReviewsLoading(true);
+    const { data, error } = await adminGetTemplateReviews();
+    if (error) {
+      addToast('error', `Failed to load template reviews: ${error}`);
+    } else if (data) {
+      setPendingTemplates(data.pending);
+      setReviewedTemplates(data.recent);
+    }
+    setReviewsLoaded(true);
+    setReviewsLoading(false);
+  }, [addToast]);
+
+  const submitTemplateReview = useCallback(async (
+    decision: 'approve' | 'request_changes',
+    feedback?: string,
+  ) => {
+    if (!reviewingTemplate || reviewActionLoading) return;
+    if (decision === 'approve' && !reviewingTemplate.coverUrl) {
+      addToast('error', 'A template cover is required before approval.');
+      return;
+    }
+    setReviewActionLoading(true);
+    const result = await adminReviewTemplate(reviewingTemplate.id, reviewingTemplate.versionId, decision, feedback);
+    if (!result.success) {
+      addToast('error', result.error || 'The review could not be saved.');
+      setReviewActionLoading(false);
+      return;
+    }
+    setApproveConfirmOpen(false);
+    setRejectModalOpen(false);
+    setRejectFeedback('');
+    setReviewingTemplate(null);
+    await loadTemplateReviews();
+    addToast('success', decision === 'approve' ? 'Template approved' : 'Feedback sent');
+    setReviewActionLoading(false);
+  }, [reviewingTemplate, reviewActionLoading, addToast, loadTemplateReviews]);
+
   // Load data when tab changes
   useEffect(() => {
     if (!isAdmin) return;
@@ -265,8 +241,10 @@ export const Admin = () => {
       loadUnusedTemplates();
     } else if (activeTab === 'video' && !videoInterestStats) {
       loadVideoInterestStats(videoSearchEmail, videoDateRange);
+    } else if (activeTab === 'review' && !reviewsLoaded && !reviewsLoading) {
+      loadTemplateReviews();
     }
-  }, [activeTab, isAdmin, stats, users.length, templateStats.length, unusedTemplates.length, loadStats, loadUsers, loadTemplateStats, loadUnusedTemplates]);
+  }, [activeTab, isAdmin, stats, users.length, templateStats.length, unusedTemplates.length, videoInterestStats, reviewsLoaded, reviewsLoading, loadStats, loadUsers, loadTemplateStats, loadUnusedTemplates, loadTemplateReviews]);
 
   // Load video interest stats
   const loadVideoInterestStats = useCallback(async (email: string = '', range: 'all' | '7d' | '30d' | '90d' = 'all') => {
@@ -388,6 +366,91 @@ export const Admin = () => {
     setIsUpdating(false);
   };
 
+  const openTemplateBoostModal = (template: TemplateStats) => {
+    setBoostingTemplate(template);
+    setBoostDisplayedUses(String(template.usage_count));
+    setBoostVirtualUsername(VIRTUAL_USERNAME_SUGGESTIONS[0]);
+    setBoostUsageDelta('1');
+    setBoostRewardCredits('10');
+    setBoostInternalNote('');
+  };
+
+  const closeTemplateBoostModal = () => {
+    if (boostSaving) return;
+    setBoostingTemplate(null);
+  };
+
+  const applyTemplateUseCount = async () => {
+    if (!boostingTemplate || boostSaving) return;
+    const useCount = Number(boostDisplayedUses);
+    if (!Number.isSafeInteger(useCount) || useCount < 0) {
+      addToast('error', 'Displayed uses must be a non-negative whole number.');
+      return;
+    }
+    setBoostSaving(true);
+    const { data, error } = await adminSetTemplateUseCount(
+      boostingTemplate.template_id,
+      useCount,
+      boostInternalNote,
+    );
+    if (error || !data) {
+      addToast('error', error || 'Could not update displayed uses.');
+    } else {
+      setTemplateStats((items) => items.map((item) => item.template_id === boostingTemplate.template_id
+        ? { ...item, usage_count: data.newUseCount }
+        : item));
+      setBoostingTemplate((current) => current ? { ...current, usage_count: data.newUseCount } : current);
+      setBoostDisplayedUses(String(data.newUseCount));
+      addToast('success', `Displayed uses updated: ${data.previousUseCount} → ${data.newUseCount}`);
+    }
+    setBoostSaving(false);
+  };
+
+  const sendTemplateEncouragement = async () => {
+    if (!boostingTemplate || boostSaving) return;
+    const rewardCredits = Number(boostRewardCredits);
+    const usageDelta = Number(boostUsageDelta);
+    if (!/^[A-Za-z0-9_.]{2,30}$/.test(boostVirtualUsername.trim())) {
+      addToast('error', 'Virtual username must be 2-30 letters, numbers, underscores, or dots.');
+      return;
+    }
+    if (!Number.isSafeInteger(rewardCredits) || rewardCredits < 1 || rewardCredits > 10000) {
+      addToast('error', 'Reward credits must be a whole number between 1 and 10,000.');
+      return;
+    }
+    if (!Number.isSafeInteger(usageDelta) || usageDelta < 1 || usageDelta > 1000) {
+      addToast('error', 'Usage increment must be a whole number between 1 and 1,000.');
+      return;
+    }
+
+    setBoostSaving(true);
+    const { data, error } = await adminIssueTemplateEncouragement({
+      templateId: boostingTemplate.template_id,
+      virtualUsername: boostVirtualUsername,
+      rewardCredits,
+      usageDelta,
+      internalNote: boostInternalNote,
+    });
+    if (error || !data) {
+      addToast('error', error || 'Could not send creator encouragement.');
+    } else {
+      setTemplateStats((items) => items.map((item) => item.template_id === boostingTemplate.template_id
+        ? {
+            ...item,
+            usage_count: data.newUseCount,
+            total_credits: item.total_credits + rewardCredits,
+          }
+        : item));
+      announceCreatorRewardAvailable();
+      addToast(
+        'success',
+        `${data.virtualUsername || boostVirtualUsername} used the template · ${rewardCredits} credits awarded`,
+      );
+      setBoostingTemplate(null);
+    }
+    setBoostSaving(false);
+  };
+
   // Loading state
   if (loading) {
     return (
@@ -410,6 +473,12 @@ export const Admin = () => {
   }
 
   const totalPages = Math.ceil(usersTotal / 15);
+  const visibleRewardTemplates = templateStats.filter((template) => {
+    const query = boostTemplateSearch.trim().toLowerCase();
+    return !query
+      || template.template_name?.toLowerCase().includes(query)
+      || template.template_id.toLowerCase().includes(query);
+  });
 
   return (
     <div className="min-h-screen pt-24 px-4 pb-12">
@@ -431,13 +500,17 @@ export const Admin = () => {
             { id: 'overview', label: 'Overview', icon: BarChart3 },
             { id: 'users', label: 'Users', icon: Users },
             { id: 'templates', label: 'Top Templates', icon: TrendingUp },
+            { id: 'rewards', label: 'Creator Rewards', icon: Gift },
             { id: 'unused', label: 'Low Usage', icon: AlertTriangle },
             { id: 'video', label: 'Video Interest', icon: Video },
             { id: 'review', label: 'Template Review', icon: Layers },
           ].map(tab => (
             <button
               key={tab.id}
-              onClick={() => setActiveTab(tab.id as TabType)}
+              onClick={() => {
+                setActiveTab(tab.id as TabType);
+                if (tab.id === 'rewards') void loadTemplateStats();
+              }}
               className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'border-purple-500 text-purple-600 dark:text-purple-400'
@@ -710,14 +783,124 @@ export const Admin = () => {
                       </div>
                     </div>
                     {/* Info */}
-                    <div className="p-2">
+                    <div className="p-2 space-y-2">
                       <h3 className="text-xs font-medium text-slate-900 dark:text-white truncate">
                         {t.template_name || t.template_id}
                       </h3>
-                      <p className="text-[10px] text-orange-500 font-mono">{t.total_credits.toLocaleString()} credits</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[10px] text-orange-500 font-mono">{t.total_credits.toLocaleString()} credits</p>
+                        <button
+                          type="button"
+                          onClick={() => openTemplateBoostModal(t)}
+                          className="inline-flex items-center gap-1 rounded-md bg-gradient-to-r from-amber-500 to-pink-500 px-2 py-1 text-[10px] font-bold text-white shadow-sm hover:from-amber-600 hover:to-pink-600"
+                        >
+                          <Sparkles className="w-3 h-3" /> Golden finger
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Creator Rewards / Golden Finger Tab */}
+        {activeTab === 'rewards' && (
+          <div className="space-y-5">
+            <div className="flex flex-col gap-4 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-pink-50 p-5 dark:border-amber-500/20 dark:from-amber-500/10 dark:to-pink-500/10 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="mb-1 flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-amber-500" />
+                  <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                    Creator Rewards / Golden Finger
+                  </h2>
+                </div>
+                <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300">
+                  Adjust a template's displayed usage count or issue an encouragement reward with a virtual username.
+                </p>
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={loadTemplateStats}
+                disabled={templateStatsLoading}
+              >
+                <RefreshCw className={`mr-2 h-4 w-4 ${templateStatsLoading ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={boostTemplateSearch}
+                onChange={(event) => setBoostTemplateSearch(event.target.value)}
+                placeholder="Search template name or ID..."
+                className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-amber-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+              />
+            </div>
+
+            {templateStatsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
+              </div>
+            ) : visibleRewardTemplates.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 py-14 text-center text-sm text-slate-500 dark:border-white/20">
+                No matching published templates.
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-white/10 dark:bg-slate-900/40">
+                <div className="divide-y divide-slate-200 dark:divide-white/10">
+                  {visibleRewardTemplates.map((template) => (
+                    <div
+                      key={template.template_id}
+                      className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center"
+                    >
+                      <div className="h-16 w-16 flex-shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800">
+                        {template.thumb_url || template.image_url ? (
+                          <img
+                            src={template.thumb_url || template.image_url || ''}
+                            alt={template.template_name || 'Template'}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center">
+                            <Image className="h-6 w-6 text-slate-400" />
+                          </div>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <h3 className="truncate font-semibold text-slate-900 dark:text-white">
+                          {template.template_name || template.template_id}
+                        </h3>
+                        <p className="mt-1 truncate text-xs text-slate-400">{template.template_id}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-5 text-sm sm:text-right">
+                        <div>
+                          <p className="text-xs text-slate-400">Displayed uses</p>
+                          <p className="font-semibold text-purple-600 dark:text-purple-400">
+                            {template.usage_count.toLocaleString()}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400">Credits earned</p>
+                          <p className="font-semibold text-amber-600 dark:text-amber-400">
+                            {template.total_credits.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        className="bg-gradient-to-r from-amber-500 to-pink-500 text-white hover:from-amber-600 hover:to-pink-600"
+                        onClick={() => openTemplateBoostModal(template)}
+                      >
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        Manage reward
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -974,39 +1157,77 @@ export const Admin = () => {
                 </div>
               </div>
 
-              {pendingTemplates.length === 0 ? (
+              {reviewsLoading ? (
+                <div className="flex justify-center py-16">
+                  <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+                </div>
+              ) : pendingTemplates.length === 0 ? (
                 <div className="text-center py-12 glass-panel rounded-2xl border-dashed border-slate-300 dark:border-white/20">
                   <CheckCircle className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
                   <h3 className="text-lg font-bold text-slate-900 dark:text-white">All caught up!</h3>
                   <p className="text-slate-500">There are no templates waiting for review.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div className="flex flex-wrap items-start gap-4">
                   {pendingTemplates.map(template => (
-                    <div key={template.id} className="glass-panel border border-slate-200 dark:border-white/10 rounded-2xl overflow-hidden flex flex-col bg-white dark:bg-slate-800">
-                      <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-900">
-                        <img src={template.coverUrl} className="w-full h-full object-cover" alt={template.name} />
-                        <div className="absolute top-3 left-3 z-10">
+                    <div key={template.id} className="w-full sm:w-[270px] glass-panel border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden flex flex-col bg-white dark:bg-slate-800">
+                      <button
+                        type="button"
+                        className="relative w-full aspect-video bg-slate-100 dark:bg-slate-900 overflow-hidden text-left group"
+                        onClick={() => {
+                          setReviewingTemplate(template);
+                          setExpandedStep(template.steps[0]?.id || null);
+                        }}
+                        aria-label={`Review ${template.name}`}
+                      >
+                        {template.coverUrl && template.coverType === 'video' ? (
+                          <video
+                            src={template.coverUrl}
+                            poster={template.coverPosterUrl}
+                            className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]"
+                            autoPlay
+                            muted
+                            loop
+                            playsInline
+                            preload="metadata"
+                          />
+                        ) : template.coverUrl ? (
+                          <img src={template.coverUrl} className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" alt={template.name} loading="lazy" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <Image className="w-9 h-9 text-slate-300" />
+                          </div>
+                        )}
+                        <div className="absolute top-2 left-2 z-10">
                           <span className="bg-amber-500/90 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded backdrop-blur-sm">In review</span>
                         </div>
-                      </div>
-                      <div className="p-4 flex-1 flex flex-col">
-                        <h4 className="font-bold text-slate-900 dark:text-white mb-2 line-clamp-1">{template.name}</h4>
-                        <div className="flex items-center gap-2 mb-3">
-                          <img src={template.authorAvatar} alt={template.authorName} className="w-6 h-6 rounded-full bg-slate-200" />
-                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{template.authorName}</span>
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/20 transition-colors">
+                          <Maximize2 className="w-6 h-6 text-white opacity-0 group-hover:opacity-100 drop-shadow" />
                         </div>
-                        <div className="text-xs text-slate-500 mb-4 space-y-1">
-                          <p>Submitted: {new Date(template.submittedAt).toLocaleDateString()}</p>
-                          <p>{template.stepsCount} steps</p>
+                      </button>
+                      <div className="p-3 flex-1 flex flex-col">
+                        <h4 className="font-bold text-sm text-slate-900 dark:text-white mb-2 line-clamp-1">{template.name}</h4>
+                        <div className="flex items-center gap-2 mb-2">
+                          {template.authorAvatar ? (
+                            <img src={template.authorAvatar} alt={template.authorName} className="w-5 h-5 rounded-full bg-slate-200" />
+                          ) : (
+                            <div className="w-5 h-5 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center text-[9px] font-bold">
+                              {template.authorName.slice(0, 1).toUpperCase()}
+                            </div>
+                          )}
+                          <span className="text-xs font-medium text-slate-700 dark:text-slate-300 truncate">{template.authorName}</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 mb-3 flex items-center justify-between gap-2">
+                          <span>{new Date(template.submittedAt).toLocaleDateString()}</span>
+                          <span>{template.stepsCount} steps</span>
                         </div>
                         <div className="mt-auto">
                           <Button 
                             variant="gradient" 
-                            className="w-full"
+                            className="w-full h-9 text-sm"
                             onClick={() => {
                               setReviewingTemplate(template);
-                              setExpandedStep('s1');
+                              setExpandedStep(template.steps[0]?.id || null);
                             }}
                           >
                             <Eye className="w-4 h-4 mr-2" /> Review
@@ -1057,6 +1278,122 @@ export const Admin = () => {
             </div>
           </div>
         )}
+
+      {/* Admin-only template golden finger */}
+      <Modal
+        isOpen={!!boostingTemplate}
+        onClose={closeTemplateBoostModal}
+        title={`Golden finger: ${boostingTemplate?.template_name || 'Template'}`}
+      >
+        {boostingTemplate && (
+          <div className="space-y-6">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+              Creator-facing rewards use the same popup and notification as a real template use. The internal source is visible only in the admin audit trail.
+            </div>
+
+            <section className="space-y-3">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="h-4 w-4 text-purple-500" />
+                <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Displayed usage count</h4>
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={boostDisplayedUses}
+                  onChange={(event) => setBoostDisplayedUses(event.target.value)}
+                  className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-purple-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={() => void applyTemplateUseCount()}
+                  disabled={boostSaving}
+                >
+                  {boostSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save count'}
+                </Button>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-t border-slate-200 pt-5 dark:border-white/10">
+              <div className="flex items-center gap-2">
+                <Gift className="h-4 w-4 text-pink-500" />
+                <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Simulate a successful use</h4>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Displayed username</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    maxLength={30}
+                    value={boostVirtualUsername}
+                    onChange={(event) => setBoostVirtualUsername(event.target.value)}
+                    placeholder="Bananapiepie"
+                    className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-pink-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      const options = VIRTUAL_USERNAME_SUGGESTIONS.filter((name) => name !== boostVirtualUsername);
+                      setBoostVirtualUsername(options[Math.floor(Math.random() * options.length)] || VIRTUAL_USERNAME_SUGGESTIONS[0]);
+                    }}
+                  >
+                    Random
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Add to uses</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    step="1"
+                    value={boostUsageDelta}
+                    onChange={(event) => setBoostUsageDelta(event.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-pink-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Reward credits</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="10000"
+                    step="1"
+                    value={boostRewardCredits}
+                    onChange={(event) => setBoostRewardCredits(event.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-pink-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-slate-600 dark:text-slate-300">Internal audit note (optional)</label>
+                <textarea
+                  maxLength={500}
+                  value={boostInternalNote}
+                  onChange={(event) => setBoostInternalNote(event.target.value)}
+                  placeholder="Only administrators can see this note."
+                  className="h-20 w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-pink-500 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                />
+              </div>
+
+              <Button
+                className="w-full bg-gradient-to-r from-amber-500 to-pink-500 text-white hover:from-amber-600 hover:to-pink-600"
+                onClick={() => void sendTemplateEncouragement()}
+                disabled={boostSaving || !boostVirtualUsername.trim() || !boostRewardCredits || !boostUsageDelta}
+              >
+                {boostSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Sparkles className="mr-2 h-4 w-4" /> Send encouragement</>}
+              </Button>
+            </section>
+          </div>
+        )}
+      </Modal>
 
       {/* Edit User Modal */}
       <Modal 
@@ -1338,19 +1675,147 @@ export const Admin = () => {
         </div>
       )}
 
+      {/* Review media preview: open images large and play videos without enlarging the review card. */}
+      {reviewMediaPreview && (
+        <div
+          className="fixed inset-0 z-[10000] bg-black/90 flex items-center justify-center p-4"
+          onClick={() => setReviewMediaPreview(null)}
+        >
+          <button
+            type="button"
+            className="absolute top-4 right-4 z-10 rounded-full bg-black/40 p-2 text-white/80 hover:text-white"
+            onClick={() => setReviewMediaPreview(null)}
+            aria-label="Close media preview"
+          >
+            <X className="w-7 h-7" />
+          </button>
+          <div
+            className="w-full max-w-5xl max-h-[90vh] flex flex-col items-center gap-3"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {reviewMediaPreview.type === 'video' ? (
+              <video
+                src={reviewMediaPreview.url}
+                controls
+                autoPlay
+                playsInline
+                preload="metadata"
+                className="max-w-full max-h-[82vh] rounded-xl bg-black"
+              />
+            ) : reviewMediaPreview.type === 'audio' ? (
+              <div className="w-full max-w-xl rounded-2xl bg-white p-6">
+                <div className="mb-4 flex items-center justify-center gap-2 text-slate-700">
+                  <Music className="h-6 w-6" />
+                  <span className="font-medium">Audio material</span>
+                </div>
+                <audio
+                  src={reviewMediaPreview.url}
+                  controls
+                  autoPlay
+                  className="w-full"
+                />
+              </div>
+            ) : (
+              <img
+                src={reviewMediaPreview.url}
+                alt={reviewMediaPreview.title}
+                className="max-w-full max-h-[82vh] object-contain rounded-xl"
+              />
+            )}
+            <p className="text-sm text-white/80">{reviewMediaPreview.title}</p>
+          </div>
+        </div>
+      )}
+
       {/* Template Review Detail Modal */}
-      <Modal isOpen={!!reviewingTemplate} onClose={() => setReviewingTemplate(null)} title="Review Template" size="lg">
+      <Modal isOpen={!!reviewingTemplate} onClose={() => { setReviewingTemplate(null); setReviewMediaPreview(null); }} title="Review Template" size="lg">
         {reviewingTemplate && (
           <div className="space-y-6">
             <div className="flex flex-col md:flex-row gap-6">
-              <div className="w-full md:w-1/3">
-                <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full aspect-[3/4] object-cover rounded-xl shadow-sm border border-slate-200 dark:border-white/10" />
+              <div className="w-full md:w-[240px] md:flex-none">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Template Cover</p>
+                {reviewingTemplate.coverUrl ? (
+                  <button
+                    type="button"
+                    className="relative w-full aspect-video overflow-hidden rounded-xl border border-slate-200 dark:border-white/10 group"
+                    onClick={() => setReviewMediaPreview({
+                      url: reviewingTemplate.coverUrl,
+                      type: reviewingTemplate.coverType,
+                      title: `${reviewingTemplate.name} cover`,
+                    })}
+                  >
+                    {reviewingTemplate.coverType === 'video' ? (
+                      <video
+                        src={reviewingTemplate.coverUrl}
+                        poster={reviewingTemplate.coverPosterUrl}
+                        className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]"
+                        autoPlay
+                        muted
+                        loop
+                        playsInline
+                        preload="metadata"
+                      />
+                    ) : (
+                      <img src={reviewingTemplate.coverUrl} alt="Cover" className="w-full h-full object-cover transition-transform group-hover:scale-[1.02]" />
+                    )}
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/25 transition-colors">
+                      <Maximize2 className="w-7 h-7 text-white opacity-0 group-hover:opacity-100 drop-shadow" />
+                    </span>
+                  </button>
+                ) : (
+                  <div className="w-full aspect-video flex items-center justify-center rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10">
+                    <Image className="w-9 h-9 text-slate-300" />
+                  </div>
+                )}
               </div>
-              <div className="w-full md:w-2/3 space-y-4">
+              <div className="w-full md:w-[240px] md:flex-none">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">Final Result</p>
+                {reviewingTemplate.finalResultUrl ? (
+                  <button
+                    type="button"
+                    className="group relative w-full aspect-video overflow-hidden rounded-xl border border-slate-200 bg-slate-100 dark:border-white/10 dark:bg-slate-800"
+                    onClick={() => setReviewMediaPreview({
+                      url: reviewingTemplate.finalResultUrl!,
+                      type: reviewingTemplate.finalResultType === 'video' ? 'video' : 'image',
+                      title: `${reviewingTemplate.name} final result`,
+                    })}
+                  >
+                    {reviewingTemplate.finalResultType === 'video' ? (
+                      <>
+                        <video
+                          src={reviewingTemplate.finalResultUrl}
+                          poster={reviewingTemplate.finalResultPosterUrl}
+                          className="h-full w-full object-cover"
+                          muted
+                          playsInline
+                          preload="metadata"
+                        />
+                        <span className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25">
+                          <PlayCircle className="h-10 w-10 text-white drop-shadow" />
+                        </span>
+                      </>
+                    ) : (
+                      <img
+                        src={reviewingTemplate.finalResultUrl}
+                        alt="Final result"
+                        className="h-full w-full object-cover"
+                      />
+                    )}
+                    <Maximize2 className="absolute right-2 top-2 h-4 w-4 text-white drop-shadow" />
+                  </button>
+                ) : (
+                  <div className="flex w-full aspect-video items-center justify-center rounded-xl border border-slate-200 bg-slate-100 text-xs text-slate-400 dark:border-white/10 dark:bg-slate-800">
+                    No final result
+                  </div>
+                )}
+              </div>
+              <div className="w-full md:flex-1 space-y-4">
                 <div>
                   <h3 className="text-xl font-bold text-slate-900 dark:text-white">{reviewingTemplate.name}</h3>
                   <div className="flex items-center gap-2 mt-2">
-                    <img src={reviewingTemplate.authorAvatar} alt="Author" className="w-5 h-5 rounded-full" />
+                    {reviewingTemplate.authorAvatar ? (
+                      <img src={reviewingTemplate.authorAvatar} alt="Author" className="w-5 h-5 rounded-full" />
+                    ) : null}
                     <span className="text-sm text-slate-600 dark:text-slate-300">{reviewingTemplate.authorName}</span>
                   </div>
                 </div>
@@ -1383,20 +1848,88 @@ export const Admin = () => {
                   {expandedStep === step.id && (
                     <div className="p-4 border-t border-slate-200 dark:border-white/10 space-y-4 bg-slate-50 dark:bg-slate-900/50">
                       <div className="flex flex-col md:flex-row gap-4">
-                        <div className="w-full md:w-1/3 space-y-2">
+                        <div className="w-full md:w-[190px] md:flex-none space-y-2">
                           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Result from This Step</span>
-                          <img src={step.resultUrl} alt="Step Result" className="w-full rounded-lg shadow-sm border border-slate-200 dark:border-white/10" />
+                          {step.resultUrl ? (
+                            <button
+                              type="button"
+                              className="relative block w-full aspect-video overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10 group"
+                              onClick={() => setReviewMediaPreview({
+                                url: step.resultUrl,
+                                type: step.resultType === 'video' ? 'video' : 'image',
+                                title: `${step.name} result`,
+                              })}
+                            >
+                              {step.resultType === 'video' ? (
+                                <>
+                                  <video src={step.resultUrl} muted playsInline preload="metadata" className="w-full h-full object-cover" />
+                                  <span className="absolute inset-0 flex items-center justify-center bg-black/10 group-hover:bg-black/25 transition-colors">
+                                    <PlayCircle className="w-9 h-9 text-white drop-shadow" />
+                                  </span>
+                                </>
+                              ) : (
+                                <img src={step.resultUrl} alt="Step Result" className="w-full h-full object-cover" />
+                              )}
+                              <Maximize2 className="absolute top-2 right-2 w-4 h-4 text-white opacity-80 drop-shadow" />
+                            </button>
+                          ) : (
+                            <div className="aspect-video flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800 text-xs text-slate-400">
+                              No saved result preview
+                            </div>
+                          )}
                         </div>
-                        <div className="w-full md:w-2/3 space-y-4">
+                        <div className="w-full md:flex-1 space-y-4">
                           <div>
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Feature I Used</span>
                             <div className="text-sm font-medium text-slate-900 dark:text-white">{step.feature}</div>
                           </div>
                           
-                          {step.materials && (
+                          {step.materials.length > 0 && (
                             <div>
                               <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1">Materials I Uploaded</span>
-                              <div className="text-sm text-slate-700 dark:text-slate-300">{step.materials}</div>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                {step.materials.map((material: any, materialIndex: number) => (
+                                  <button
+                                    key={material.id}
+                                    type="button"
+                                    disabled={!material.url}
+                                    onClick={() => material.url && setReviewMediaPreview({
+                                      url: material.url,
+                                      type: material.type,
+                                      title: `${step.name} material ${materialIndex + 1}`,
+                                    })}
+                                    className="relative aspect-video overflow-hidden rounded-lg border border-slate-200 bg-slate-100 text-left disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:bg-slate-800"
+                                  >
+                                    {material.type === 'image' && material.url ? (
+                                      <img
+                                        src={material.url}
+                                        alt={`${step.name} material ${materialIndex + 1}`}
+                                        className="h-full w-full object-cover"
+                                        loading="lazy"
+                                      />
+                                    ) : material.type === 'video' && material.url ? (
+                                      <>
+                                        <video
+                                          src={material.url}
+                                          muted
+                                          playsInline
+                                          preload="metadata"
+                                          className="h-full w-full object-cover"
+                                        />
+                                        <PlayCircle className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-white drop-shadow" />
+                                      </>
+                                    ) : (
+                                      <span className="flex h-full w-full flex-col items-center justify-center gap-1 text-xs text-slate-500 dark:text-slate-300">
+                                        <Music className="h-6 w-6" />
+                                        {material.url ? 'Play audio' : 'Preview unavailable'}
+                                      </span>
+                                    )}
+                                    <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium capitalize text-white">
+                                      {material.type}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
                               <div className={`mt-1 text-xs font-medium ${step.reusable ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
                                 {step.reusable ? 'Allowed to be reused' : 'Not allowed for reuse'}
                               </div>
@@ -1426,6 +1959,7 @@ export const Admin = () => {
               <Button 
                 variant="secondary" 
                 className="flex-1 text-red-600 dark:text-red-400 border-red-200 dark:border-red-500/30 hover:bg-red-50 dark:hover:bg-red-500/10"
+                disabled={reviewActionLoading}
                 onClick={() => {
                   setRejectModalOpen(true);
                 }}
@@ -1434,6 +1968,7 @@ export const Admin = () => {
               </Button>
               <Button 
                 className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+                disabled={reviewActionLoading || !reviewingTemplate.coverUrl}
                 onClick={() => {
                   setApproveConfirmOpen(true);
                 }}
@@ -1453,21 +1988,13 @@ export const Admin = () => {
           </p>
           <div className="flex gap-3">
             <Button variant="secondary" className="flex-1" onClick={() => setApproveConfirmOpen(false)}>Cancel</Button>
-            <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20" onClick={() => {
-              if (reviewingTemplate) {
-                setPendingTemplates(prev => prev.filter(t => t.id !== reviewingTemplate.id));
-                setReviewedTemplates(prev => [{
-                  id: reviewingTemplate.id,
-                  name: reviewingTemplate.name,
-                  authorName: reviewingTemplate.authorName,
-                  status: 'Published',
-                  reviewedAt: new Date().toISOString()
-                }, ...prev]);
-              }
-              setApproveConfirmOpen(false);
-              setReviewingTemplate(null);
-              addToast('success', 'Template approved');
-            }}>Approve</Button>
+            <Button
+              className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20"
+              disabled={reviewActionLoading}
+              onClick={() => void submitTemplateReview('approve')}
+            >
+              {reviewActionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Approve'}
+            </Button>
           </div>
         </div>
       </Modal>
@@ -1486,22 +2013,14 @@ export const Admin = () => {
           </div>
           <div className="flex gap-3">
             <Button variant="secondary" className="flex-1" onClick={() => { setRejectModalOpen(false); setRejectFeedback(''); }}>Cancel</Button>
-            <Button variant="danger" className="flex-1" disabled={!rejectFeedback.trim()} onClick={() => {
-              if (reviewingTemplate) {
-                setPendingTemplates(prev => prev.filter(t => t.id !== reviewingTemplate.id));
-                setReviewedTemplates(prev => [{
-                  id: reviewingTemplate.id,
-                  name: reviewingTemplate.name,
-                  authorName: reviewingTemplate.authorName,
-                  status: 'Changes requested',
-                  reviewedAt: new Date().toISOString()
-                }, ...prev]);
-              }
-              setRejectModalOpen(false);
-              setRejectFeedback('');
-              setReviewingTemplate(null);
-              addToast('success', 'Feedback sent');
-            }}>Send feedback</Button>
+            <Button
+              variant="danger"
+              className="flex-1"
+              disabled={!rejectFeedback.trim() || reviewActionLoading}
+              onClick={() => void submitTemplateReview('request_changes', rejectFeedback.trim())}
+            >
+              {reviewActionLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Send feedback'}
+            </Button>
           </div>
         </div>
       </Modal>

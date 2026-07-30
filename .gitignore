@@ -21,6 +21,10 @@ dist-ssr
 .env.*.local
 .env.production
 .env.development
+.env.*.tmp
+
+# Supabase CLI local state
+supabase/.temp/
 
 # Editor directories and files
 .vscode/*
@@ -49,3 +53,5 @@ coverage/
 .cache/
 .parcel-cache/
 .vite/
+.vercel/
+.env.local

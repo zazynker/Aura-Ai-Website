@@ -11,10 +11,13 @@ import {
   fetchUserCredits
 } from '../utils/api';
 import { uploadBase64Images } from '../utils/uploadService';
+import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import React, { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { User, LocalStorageData, ToastMessage, Generation, Collection, ModifySession } from '../types';
 import { getStorage, updateStorage } from '../utils/storage';
 import { supabase } from '../utils/supabase';
+import { completeTemplateGeneration, failTemplateGeneration } from '../utils/templateRunGeneration';
+import { fetchMyProfile } from '../utils/profileApi';
 import { Session } from '@supabase/supabase-js';
 
 export const USD_TO_CREDITS = 195;
@@ -40,6 +43,126 @@ export const estimateCredits = (resolution: Resolution, imageCount: number): num
   return Math.ceil((imageOutputCost + ESTIMATED_OVERHEAD_USD_PER_IMAGE * imageCount) * USD_TO_CREDITS);
 };
 
+export type FalImageQuality = 'low' | 'medium' | 'high';
+export type FalImageMode = 'text' | 'edit';
+
+export type FalImageCreditEstimate = {
+  mode: FalImageMode;
+  resolution: Resolution;
+  aspectRatio?: string;
+  imageCount: number;
+  quality?: FalImageQuality;
+  inputImageCount?: number;
+};
+
+type FalCanonicalPrice = {
+  width: number;
+  height: number;
+  low: number;
+  medium: number;
+  high: number;
+};
+
+// Published GPT Image 2 canonical prices on fal.ai. The edit prices include
+// one input image. When Quick Replace sends a second image, the estimate adds
+// the published edit-vs-text price difference for one more input image.
+const FAL_GPT_IMAGE_2_PRICES: Record<FalImageMode, FalCanonicalPrice[]> = {
+  text: [
+    { width: 1024, height: 768, low: 0.005, medium: 0.037, high: 0.145 },
+    { width: 1024, height: 1024, low: 0.006, medium: 0.053, high: 0.211 },
+    { width: 1024, height: 1536, low: 0.005, medium: 0.042, high: 0.165 },
+    { width: 1920, height: 1080, low: 0.005, medium: 0.040, high: 0.158 },
+    { width: 2560, height: 1440, low: 0.007, medium: 0.056, high: 0.222 },
+    { width: 3840, height: 2160, low: 0.012, medium: 0.101, high: 0.401 },
+  ],
+  edit: [
+    { width: 1024, height: 768, low: 0.011, medium: 0.043, high: 0.151 },
+    { width: 1024, height: 1024, low: 0.015, medium: 0.061, high: 0.219 },
+    { width: 1024, height: 1536, low: 0.018, medium: 0.054, high: 0.178 },
+    { width: 1920, height: 1080, low: 0.017, medium: 0.053, high: 0.158 },
+    { width: 2560, height: 1440, low: 0.019, medium: 0.068, high: 0.234 },
+    { width: 3840, height: 2160, low: 0.024, medium: 0.113, high: 0.413 },
+  ],
+};
+
+const roundToMultipleOf16 = (value: number): number =>
+  Math.max(16, Math.round(value / 16) * 16);
+
+const falRequestedDimensions = (
+  resolution: Resolution,
+  aspectRatio = '1:1',
+): { width: number; height: number } => {
+  const longEdgeByResolution: Record<Resolution, number> = {
+    '512': 512,
+    '1K': 1024,
+    '2K': 2048,
+    '4K': 3840,
+  };
+  const ratioMatch = aspectRatio.match(/^(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$/);
+  const ratio = ratioMatch
+    ? Math.max(1 / 3, Math.min(3, Number(ratioMatch[1]) / Number(ratioMatch[2])))
+    : 1;
+  const longEdge = longEdgeByResolution[resolution];
+  let width = ratio >= 1 ? longEdge : longEdge * ratio;
+  let height = ratio >= 1 ? longEdge / ratio : longEdge;
+
+  const maxPixels = 8_294_400;
+  if (width * height > maxPixels) {
+    const scale = Math.sqrt(maxPixels / (width * height));
+    width *= scale;
+    height *= scale;
+  }
+
+  return {
+    width: roundToMultipleOf16(width),
+    height: roundToMultipleOf16(height),
+  };
+};
+
+const closestFalCanonicalPrice = (
+  mode: FalImageMode,
+  width: number,
+  height: number,
+): FalCanonicalPrice => {
+  const area = Math.max(1, width * height);
+  const ratio = Math.max(0.01, width / Math.max(1, height));
+  return FAL_GPT_IMAGE_2_PRICES[mode].reduce((best, candidate) => {
+    const candidateArea = candidate.width * candidate.height;
+    const candidateRatio = candidate.width / candidate.height;
+    const candidateScore =
+      Math.abs(Math.log(area / candidateArea)) +
+      0.35 * Math.abs(Math.log(ratio / candidateRatio));
+    const bestArea = best.width * best.height;
+    const bestRatio = best.width / best.height;
+    const bestScore =
+      Math.abs(Math.log(area / bestArea)) +
+      0.35 * Math.abs(Math.log(ratio / bestRatio));
+    return candidateScore < bestScore ? candidate : best;
+  });
+};
+
+export const estimateFalImageCredits = ({
+  mode,
+  resolution,
+  aspectRatio = '1:1',
+  imageCount,
+  quality = 'medium',
+  inputImageCount = mode === 'edit' ? 1 : 0,
+}: FalImageCreditEstimate): number => {
+  const count = Math.max(1, Math.floor(imageCount));
+  const dimensions = falRequestedDimensions(resolution, aspectRatio === 'auto' ? '1:1' : aspectRatio);
+  const canonical = closestFalCanonicalPrice(mode, dimensions.width, dimensions.height);
+  const textCanonical = closestFalCanonicalPrice('text', dimensions.width, dimensions.height);
+  const extraInputImageCostUsd = mode === 'edit'
+    ? Math.max(0.006, canonical[quality] - textCanonical[quality])
+    : 0;
+  const estimatedCostUsd = (
+    canonical[quality] +
+    Math.max(0, Math.floor(inputImageCount) - 1) * extraInputImageCostUsd
+  ) * count;
+  return Math.max(1, Math.ceil(estimatedCostUsd * USD_TO_CREDITS));
+};
+
 // Calculate actual credits based on REAL token consumption from API
 // This is the authoritative calculation used after generation completes
 // Divisor of 60 yields ~65% profit margin
@@ -51,17 +174,23 @@ export const calculateCreditsFromTokens = (tokensUsed: number): number => {
 export type VideoCreditEstimate = {
   mode: 'image_to_video' | 'motion_control' | 'lip_sync';
   duration: number;
+  resolution?: '720p' | '1080p';
   generationCount?: number;
   lipSyncInput?: 'image' | 'video';
   generateAudio?: boolean;
 };
 
-export const estimateVideoCredits = ({ mode, duration, generationCount = 1, lipSyncInput = 'video', generateAudio = true }: VideoCreditEstimate): number => {
+export const estimateVideoCredits = ({ mode, duration, resolution = '720p', generationCount = 1, lipSyncInput = 'video', generateAudio = true }: VideoCreditEstimate): number => {
   const count = Math.max(1, Math.floor(generationCount));
   const seconds = Math.max(0, duration);
   let costUsd = 0;
-  if (mode === 'image_to_video') costUsd = seconds * (generateAudio ? 0.126 : 0.084);
-  else if (mode === 'motion_control') costUsd = seconds * 0.126;
+  if (mode === 'image_to_video') {
+    const pricePerSecond = resolution === '1080p'
+      ? (generateAudio ? 0.168 : 0.112)
+      : (generateAudio ? 0.126 : 0.084);
+    costUsd = seconds * pricePerSecond;
+  }
+  else if (mode === 'motion_control') costUsd = seconds * (resolution === '1080p' ? 0.168 : 0.126);
   else if (lipSyncInput === 'image') costUsd = seconds * 0.0562;
   else costUsd = Math.ceil(seconds / 5) * 5 * 0.014;
   return Math.ceil(costUsd * count * USD_TO_CREDITS);
@@ -86,6 +215,28 @@ const generateId = () => Math.random().toString(36).substr(2, 9);
 // Helper: Check if a string is a base64 data URL (these are too large for localStorage)
 const isBase64DataUrl = (str: string): boolean => {
   return str?.startsWith('data:image/') && str.includes('base64');
+};
+
+const getTemplateGenerationContext = (gen: Partial<Generation>) => {
+  if (!gen.templateRunId || !gen.templateStepId || !gen.templateCapability) return null;
+  return {
+    templateRunId: gen.templateRunId,
+    templateStepId: gen.templateStepId,
+    templateCapability: gen.templateCapability,
+  };
+};
+
+const recordTemplatePersistenceFailure = async (
+  gen: Partial<Generation>,
+  error: unknown,
+) => {
+  const templateContext = getTemplateGenerationContext(gen);
+  if (!templateContext) return;
+  try {
+    await failTemplateGeneration(templateContext, error);
+  } catch (lifecycleError) {
+    console.error('Unable to record workflow persistence failure:', lifecycleError);
+  }
 };
 
 interface StoreContextType {
@@ -213,7 +364,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const supaUser = session.user;
     
     // 先从数据库获取用户积分信息
-    const { data: creditsData } = await fetchUserCredits();
+    const [{ data: creditsData }, publicProfile] = await Promise.all([
+      fetchUserCredits(),
+      fetchMyProfile(),
+    ]);
     
     // 验证 plan 是否为有效值
     const validPlans = ['Free', 'Pro'] as const;
@@ -225,12 +379,13 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     const newUser: User = {
       id: supaUser.id,
       email: supaUser.email || '',
-      name: supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
+      name: publicProfile?.username || supaUser.user_metadata?.name || supaUser.email?.split('@')[0] || 'User',
       plan: plan,
       credits: creditsData?.credits ?? 120,
       maxCredits: creditsData?.maxCredits ?? 120,
-      avatar: supaUser.user_metadata?.avatar_url ||
+      avatar: publicProfile?.avatarUrl || supaUser.user_metadata?.avatar_url ||
         `https://api.dicebear.com/7.x/avataaars/svg?seed=${supaUser.email}`,
+      avatarUrl: publicProfile?.avatarUrl || supaUser.user_metadata?.avatar_url || undefined,
       isAdmin: creditsData?.isAdmin ?? false,
       isWhitelisted: creditsData?.isWhitelisted ?? false,
       welcomeGiftEligible: creditsData?.welcomeGiftEligible ?? false,
@@ -396,6 +551,10 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         createdAt: Date.now(),
       };
       setSessionGenerations(prev => [sessionGen, ...prev]);
+      await recordTemplatePersistenceFailure(
+        genWithUser,
+        'Template result could not be persisted as a database generation.',
+      );
       
       // 后端已扣分，刷新本地积分
       const { data: creditsData } = await fetchUserCredits();
@@ -414,6 +573,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     
     if (error) {
       console.error('Failed to save generation:', error);
+      await recordTemplatePersistenceFailure(genWithUser, error);
       addToast('error', 'Failed to save to history');
       return;
     }
@@ -421,6 +581,22 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     if (savedGen) {
       // Add to local state immediately (at the beginning)
       setDbGenerations(prev => [savedGen, ...prev]);
+      void ensureGenerationThumbnail(savedGen).then((thumbnailUrl) => {
+        if (!thumbnailUrl) return;
+        setDbGenerations((prev) => prev.map((item) => (
+          item.id === savedGen.id ? { ...item, thumbnailUrl } : item
+        )));
+      });
+
+      const templateContext = getTemplateGenerationContext(genWithUser);
+      if (templateContext) {
+        try {
+          await completeTemplateGeneration(templateContext, savedGen.id);
+        } catch (lifecycleError) {
+          console.error('Generation saved, but workflow step completion failed:', lifecycleError);
+          addToast('error', 'Result saved, but workflow progress could not be updated. Please reopen the workflow.');
+        }
+      }
       
       // 后端已扣分，刷新本地积分
       const { data: creditsData } = await fetchUserCredits();
@@ -494,10 +670,42 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       }
       if (error) {
         console.error('Failed to save generations:', error);
+        const templateSource = allGensToSave.find((item) => getTemplateGenerationContext(item));
+        if (templateSource) await recordTemplatePersistenceFailure(templateSource, error);
         addToast('error', 'Failed to save to history');
       } else if (savedGens.length > 0) {
         console.log('Saved to DB successfully:', savedGens.length);
         setDbGenerations(prev => [...savedGens, ...prev]);
+        savedGens.forEach((saved) => {
+          void ensureGenerationThumbnail(saved).then((thumbnailUrl) => {
+            if (!thumbnailUrl) return;
+            setDbGenerations((prev) => prev.map((item) => (
+              item.id === saved.id ? { ...item, thumbnailUrl } : item
+            )));
+          });
+        });
+
+
+        const templateSource = allGensToSave.find((item) => getTemplateGenerationContext(item));
+        const templateContext = templateSource
+          ? getTemplateGenerationContext(templateSource)
+          : null;
+        if (templateContext) {
+          try {
+            await completeTemplateGeneration(templateContext, savedGens[0].id);
+          } catch (lifecycleError) {
+            console.error('Generations saved, but workflow step completion failed:', lifecycleError);
+            addToast('error', 'Results saved, but workflow progress could not be updated. Please reopen the workflow.');
+          }
+        }
+      }
+    } else {
+      const templateSource = gens.find((item) => getTemplateGenerationContext(item));
+      if (templateSource) {
+        await recordTemplatePersistenceFailure(
+          templateSource,
+          'Generated files could not be uploaded for history persistence.',
+        );
       }
     }
 

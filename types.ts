@@ -21,6 +21,7 @@ export interface User {
 
 export interface Template {
   id: string;
+  slug?: string;
   name: string;
   imageUrl: string;
   thumbUrl?: string;
@@ -37,6 +38,7 @@ export interface Template {
   isWorkflow?: boolean;
   authorName?: string;
   usesCount?: number;
+  publishedAt?: string;
 }
 
 // ============================================
@@ -83,6 +85,7 @@ export interface CreatorTemplateSummary {
   uses?: number;
   creditsEarned?: number;
   feedback?: string;
+  updateStatus?: 'draft' | 'in_review';
 }
 
 export interface AdminReviewStep {
@@ -117,12 +120,23 @@ export interface ReviewedWorkflowTemplate {
   reviewedAt: string;
 }
 
-export interface CreatorRewardCelebration {
+export interface CreatorRewardTemplateSummary {
   templateId: string;
   templateName: string;
-  leadingUserName: string;
-  additionalUsers: number;
   creditsEarned: number;
+  userCount: number;
+  usernames: string[];
+}
+
+export interface CreatorRewardCelebration {
+  claimedAt: string;
+  notificationCount: number;
+  userCount: number;
+  templateCount: number;
+  creditsEarned: number;
+  primaryTemplateId: string | null;
+  usernames: string[];
+  templates: CreatorRewardTemplateSummary[];
 }
 
 export interface Generation {
@@ -138,6 +152,7 @@ export interface Generation {
   isSessionOnly?: boolean;
   groupId?: string; // 同一批生成的图片共享同一个 groupId
   mediaType?: 'image' | 'video';
+  thumbnailUrl?: string;
   videoUrl?: string;
   videoDuration?: number;
   videoAspectRatio?: string;
@@ -145,6 +160,10 @@ export interface Generation {
   capability?: WorkflowCapabilityKey;
   inputAssets?: GenerationInputAssetSnapshot[];
   generationParameters?: JsonObject;
+  requestId?: string;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
 }
 
 export interface GenerationInputAssetSnapshot {

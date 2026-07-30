@@ -15,7 +15,11 @@ type RequestBody = {
   resolution?: '720p' | '1080p';
   characterOrientation?: CharacterOrientation;
   generationCount?: number;
+  requestedOutputCount?: number;
   generateAudio?: boolean;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
 };
 
 type FalSubmitResult = {
@@ -30,10 +34,16 @@ const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 const KLING_IMAGE_TO_VIDEO_ENDPOINT =
   process.env.FAL_KLING_IMAGE_TO_VIDEO_ENDPOINT ||
   'fal-ai/kling-video/v3/standard/image-to-video';
+const KLING_IMAGE_TO_VIDEO_PRO_ENDPOINT =
+  process.env.FAL_KLING_IMAGE_TO_VIDEO_PRO_ENDPOINT ||
+  'fal-ai/kling-video/v3/pro/image-to-video';
 
 const KLING_MOTION_CONTROL_ENDPOINT =
   process.env.FAL_KLING_MOTION_CONTROL_ENDPOINT ||
   'fal-ai/kling-video/v3/standard/motion-control';
+const KLING_MOTION_CONTROL_PRO_ENDPOINT =
+  process.env.FAL_KLING_MOTION_CONTROL_PRO_ENDPOINT ||
+  'fal-ai/kling-video/v3/pro/motion-control';
 
 const KLING_LIP_SYNC_VIDEO_ENDPOINT =
   process.env.FAL_KLING_LIP_SYNC_VIDEO_ENDPOINT ||
@@ -44,8 +54,16 @@ const KLING_LIP_SYNC_IMAGE_ENDPOINT =
   'fal-ai/kling-video/ai-avatar/v2/standard';
 
 function getKlingEndpoint(mode: VideoMode, body: RequestBody): string {
-  if (mode === 'image_to_video') return KLING_IMAGE_TO_VIDEO_ENDPOINT;
-  if (mode === 'motion_control') return KLING_MOTION_CONTROL_ENDPOINT;
+  if (mode === 'image_to_video') {
+    return body.resolution === '1080p'
+      ? KLING_IMAGE_TO_VIDEO_PRO_ENDPOINT
+      : KLING_IMAGE_TO_VIDEO_ENDPOINT;
+  }
+  if (mode === 'motion_control') {
+    return body.resolution === '1080p'
+      ? KLING_MOTION_CONTROL_PRO_ENDPOINT
+      : KLING_MOTION_CONTROL_ENDPOINT;
+  }
 
   // Lip Sync has two Fal endpoints:
   // - image + audio: fal-ai/kling-video/ai-avatar/v2/standard
@@ -132,10 +150,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
     }
 
+    const requestedOutputCount = validateRequestedOutputCount(mode, body);
     const endpoint = getKlingEndpoint(mode, body);
     const requiredCredits = estimateVideoCredits(mode, body);
     await checkRateLimit(supabase, user.id);
     const userData = await checkCredits(supabase, user.id, requiredCredits);
+    assertProAccess(mode, body, requestedOutputCount, userData);
     const payload = buildFalPayload(mode, body);
 
     console.log('[generate-video] Submitting Fal job:', {
@@ -145,6 +165,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       duration: body.duration,
       normalizedDuration: mode === 'image_to_video' ? normalizeDuration(body.duration) : undefined,
       resolution: body.resolution,
+      requestedOutputCount,
       isWhitelisted: userData.is_whitelisted,
       payloadKeys: Object.keys(payload),
     });
@@ -153,15 +174,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     let newCredits = userData.credits;
     let creditsDeducted = 0;
-    if (!userData.is_whitelisted) {
-      const { data: deductResult, error: deductError } = await supabase.rpc('deduct_credits_fifo', {
+    let eligiblePaidCredits = 0;
+    let creditDeductionId: string | undefined;
+    {
+      const { data: deductResult, error: deductError } = await supabase.rpc('deduct_generation_credits', {
         p_user_id: user.id,
         p_amount: requiredCredits,
+        p_request_id: falJob.requestId,
+        p_template_run_id: body.templateRunId || null,
+        p_template_step_id: body.templateStepId || null,
+        p_capability: body.templateCapability || null,
       });
       if (deductError || !deductResult?.success) {
+        console.error('[generate-video] Credit settlement failed after Fal submission:', {
+          userId: user.id,
+          requestId: falJob.requestId,
+          deductError: deductError?.message,
+          deductCode: deductError?.code,
+          deductDetails: deductError?.details,
+          deductResult,
+        });
         throw new ApiError(500, 'CREDIT_DEDUCTION_FAILED', 'Video was submitted but credit settlement failed.', { requestId: falJob.requestId });
       }
-      creditsDeducted = requiredCredits;
+      creditsDeducted = Number(deductResult.credits_deducted) || 0;
+      eligiblePaidCredits = Number(deductResult.eligible_paid_credits) || 0;
+      creditDeductionId = typeof deductResult.deduction_id === 'string'
+        ? deductResult.deduction_id
+        : undefined;
       newCredits = Number(deductResult.new_balance ?? deductResult.new_credits ?? newCredits);
     }
 
@@ -169,6 +208,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       mode,
       creditsUsed: requiredCredits,
       creditsDeducted,
+      eligiblePaidCredits,
+      creditDeductionId,
       newCredits,
       endpoint,
       requestId: falJob.requestId,
@@ -185,6 +226,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       responseUrl: falJob.responseUrl,
       cancelUrl: falJob.cancelUrl,
       mode,
+      creditsUsed: requiredCredits,
+      creditsDeducted,
+      eligiblePaidCredits,
+      creditDeductionId,
+      newCredits,
     });
   } catch (err) {
     if (err instanceof ApiError) {
@@ -229,6 +275,39 @@ function parseBody(body: unknown): RequestBody {
 
 function isVideoMode(value: string): value is VideoMode {
   return value === 'image_to_video' || value === 'motion_control' || value === 'lip_sync';
+}
+
+function validateRequestedOutputCount(mode: VideoMode, body: RequestBody): number {
+  const value = Number(body.requestedOutputCount ?? body.generationCount ?? 1);
+  if (!Number.isInteger(value) || value < 1 || value > 4) {
+    throw new ApiError(400, 'INVALID_OUTPUT_COUNT', 'Output count must be an integer from 1 to 4');
+  }
+  if (mode === 'lip_sync' && value !== 1) {
+    throw new ApiError(400, 'MULTIPLE_OUTPUTS_UNSUPPORTED', 'Lip Sync supports one output per request');
+  }
+  return value;
+}
+
+function assertProAccess(
+  mode: VideoMode,
+  body: RequestBody,
+  requestedOutputCount: number,
+  userData: { plan?: unknown; is_whitelisted: boolean },
+) {
+  const hasProAccess =
+    String(userData.plan || '').toLowerCase() === 'pro' || userData.is_whitelisted;
+  const usesProResolution =
+    (mode === 'image_to_video' || mode === 'motion_control') && body.resolution === '1080p';
+  const usesMultipleOutputs =
+    (mode === 'image_to_video' || mode === 'motion_control') && requestedOutputCount > 1;
+
+  if (!hasProAccess && (usesProResolution || usesMultipleOutputs)) {
+    throw new ApiError(
+      403,
+      'PRO_REQUIRED',
+      'A Pro plan is required for 1080p resolution and multiple video outputs',
+    );
+  }
 }
 
 function getHeaderValue(value: string | string[] | undefined): string | undefined {
@@ -597,9 +676,13 @@ function estimateVideoCredits(mode: VideoMode, body: RequestBody): number {
   }
   let costUsd = 0;
   if (mode === 'image_to_video') {
-    costUsd = normalizeDuration(body.duration) * (body.generateAudio === false ? 0.084 : 0.126);
+    const pricePerSecond = body.resolution === '1080p'
+      ? (body.generateAudio === false ? 0.112 : 0.168)
+      : (body.generateAudio === false ? 0.084 : 0.126);
+    costUsd = normalizeDuration(body.duration) * pricePerSecond;
   } else if (mode === 'motion_control') {
-    costUsd = normalizePositiveDuration(body.duration, 5) * 0.126;
+    const pricePerSecond = body.resolution === '1080p' ? 0.168 : 0.126;
+    costUsd = normalizePositiveDuration(body.duration, 5) * pricePerSecond;
   } else if (body.videoUrl) {
     costUsd = Math.ceil(normalizePositiveDuration(body.duration, 5) / 5) * 5 * 0.014;
   } else {

@@ -1,5 +1,6 @@
-import React, { useState, useRef } from 'react';
-import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw, Upload, Maximize2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { useStore } from '../context/StoreContext';
@@ -13,19 +14,25 @@ import {
   type BuilderMaterial as Material,
 } from '../workflows/builderAdapter';
 import {
+  loadTemplateDraft,
   saveTemplateDraft,
+  submitTemplateForReview,
   type PersistedMaterialMap,
+  type PersistedResultMap,
+  type PersistedResultPosterMap,
   type TemplateDraftIdentity,
 } from '../utils/templateDraftApi';
-import type { UploadedTemplateCover } from '../utils/templateStorage';
+import {
+  TEMPLATE_UPLOAD_LIMITS,
+  validateTemplateCoverFile,
+  validateTemplateMaterialFile,
+  type UploadedTemplateCover,
+  type UploadedTemplateObject,
+} from '../utils/templateStorage';
+import { getWorkflowCapability } from '../workflows/registry';
+import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 
 type WorkflowGeneration = Generation;
-
-type PublishGateIssue = {
-  code: 'result' | 'material' | 'title' | 'workflow';
-  message: string;
-  stepId?: string;
-};
 
 const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
   Object.entries(BUILDER_FEATURE_TO_CAPABILITY).map(([feature, capability]) => [
@@ -37,51 +44,148 @@ const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
 const isPersistedGenerationId = (id: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 
-const getPublishGateIssue = (
-  templateTitle: string,
-  steps: WorkflowStep[],
-): PublishGateIssue | null => {
-  const incompleteStepIndex = steps.findIndex((step) => !step.resultUrl);
-  if (incompleteStepIndex >= 0) {
-    return {
-      code: 'result',
-      stepId: steps[incompleteStepIndex].id,
-      message: `Choose the Dashboard result for Step ${incompleteStepIndex + 1}.`,
-    };
-  }
+const VIDEO_FEATURES: FeatureType[] = [
+  'Image to Video',
+  'Motion Control',
+  'Image Lip Sync',
+  'Video Lip Sync',
+];
 
-  const missingMaterialIndex = steps.findIndex(
-    (step) => !step.materials.some((material) => material.url),
-  );
-  if (missingMaterialIndex >= 0) {
-    return {
-      code: 'material',
-      stepId: steps[missingMaterialIndex].id,
-      message: `Add the material used in Step ${missingMaterialIndex + 1}.`,
-    };
-  }
-
-  if (!templateTitle.trim()) {
-    return {
-      code: 'title',
-      message: 'Add a template title before submitting for review.',
-    };
-  }
-
-  const { validation } = convertAndValidateBuilderWorkflow(steps);
-  if (!validation.valid) {
-    return {
-      code: 'workflow',
-      message:
-        validation.issues[0]?.message ||
-        'Check every workflow step before submitting.',
-    };
-  }
-
-  return null;
+const FEATURE_REQUIRED_MATERIAL_TYPES: Record<FeatureType, Material['type'][]> = {
+  'Text to Image': [],
+  'Replace Product': ['Image', 'Image'],
+  'Modify Image': ['Image'],
+  'Image to Video': ['Image'],
+  'Motion Control': ['Image', 'Video'],
+  'Image Lip Sync': ['Image', 'Audio'],
+  'Video Lip Sync': ['Video', 'Audio'],
 };
 
+const isVideoFeature = (feature: FeatureType): boolean =>
+  VIDEO_FEATURES.includes(feature);
+
+const looksLikeVideoUrl = (url?: string | null): boolean =>
+  Boolean(url && /\.(mp4|webm|mov|m4v)(?:[?#]|$)/i.test(url));
+
+const getImageToVideoDuration = (value?: string): number => {
+  const parsed = Number.parseInt(value?.replace(/[^0-9]/g, '') || '3', 10);
+  return Math.min(15, Math.max(3, Number.isFinite(parsed) ? parsed : 3));
+};
+
+const getGenerationDuration = (value: unknown, fallback?: number): number => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.min(15, Math.max(3, Math.round(value)));
+  }
+  if (typeof value === 'string') {
+    const parts = value.split(':').map((part) => Number.parseFloat(part));
+    const parsed = parts.length > 1 && parts.every(Number.isFinite)
+      ? parts.reduce((total, part) => total * 60 + part, 0)
+      : Number.parseFloat(value.replace(/[^0-9.]/g, ''));
+    if (Number.isFinite(parsed)) {
+      return Math.min(15, Math.max(3, Math.round(parsed)));
+    }
+  }
+  return Math.min(15, Math.max(3, Math.round(fallback || 3)));
+};
+
+const getGenerationResolution = (value: unknown): '720p' | '1080p' =>
+  value === '1080p' ? '1080p' : '720p';
+
+const IMAGE_RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2'] as const;
+const IMAGE_RESOLUTIONS = ['1K', '2K', '4K'] as const;
+
+const getGenerationImageRatio = (value: unknown): string =>
+  typeof value === 'string' && IMAGE_RATIOS.includes(value as typeof IMAGE_RATIOS[number])
+    ? value
+    : '1:1';
+
+const getGenerationImageResolution = (value: unknown): string =>
+  typeof value === 'string' && IMAGE_RESOLUTIONS.includes(value as typeof IMAGE_RESOLUTIONS[number])
+    ? value
+    : '1K';
+
+const getMissingRequiredMaterialTypes = (
+  step: WorkflowStep,
+  stepIndex: number,
+  allSteps: WorkflowStep[],
+): Material['type'][] => {
+  const capability = getWorkflowCapability(BUILDER_FEATURE_TO_CAPABILITY[step.feature]);
+  const unusedMaterials = step.materials.filter((material) => Boolean(material.url));
+  const usedMaterialIds = new Set<string>();
+  let previousStepUsed = false;
+  const missing: Material['type'][] = [];
+
+  capability.inputs.filter((slot) => slot.required).forEach((slot) => {
+    const material = unusedMaterials.find(
+      (candidate) =>
+        !usedMaterialIds.has(candidate.id) &&
+        candidate.type.toLowerCase() === slot.assetType,
+    );
+    if (material) {
+      usedMaterialIds.add(material.id);
+      return;
+    }
+
+    const hasPreviousOutput = !previousStepUsed &&
+      slot.allowedSources.includes('previous_step') &&
+      allSteps.slice(0, stepIndex).reverse().some((previous) => {
+        const previousCapability = getWorkflowCapability(
+          BUILDER_FEATURE_TO_CAPABILITY[previous.feature],
+        );
+        return previousCapability.output.assetType === slot.assetType;
+      });
+    if (hasPreviousOutput) {
+      previousStepUsed = true;
+      return;
+    }
+
+    missing.push(
+      slot.assetType === 'image'
+        ? 'Image'
+        : slot.assetType === 'video'
+          ? 'Video'
+          : 'Audio',
+    );
+  });
+
+  return missing;
+};
+
+const ensureRequiredMaterialCards = (
+  feature: FeatureType,
+  materials: Material[],
+): Material[] => {
+  const next = [...materials];
+  const reservedIds = new Set<string>();
+  FEATURE_REQUIRED_MATERIAL_TYPES[feature].forEach((type, index) => {
+    const existing = next.find(
+      (material) => material.type === type && !reservedIds.has(material.id),
+    );
+    if (existing) {
+      reservedIds.add(existing.id);
+      return;
+    }
+    const id = `required-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
+    reservedIds.add(id);
+    next.push({ id, type, url: null, allowDownload: true });
+  });
+  return next;
+};
+
+const createInitialStep = (): WorkflowStep => ({
+  id: 'step-1',
+  feature: 'Text to Image',
+  resultUrl: null,
+  materials: [
+    { id: 'mat-1', type: 'Image', url: null, allowDownload: true },
+  ],
+  prompt: '',
+  imageParams: { ratio: '1:1', resolution: '1K' },
+});
+
 export const TemplateBuilder = () => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const {
     addToast,
     generations,
@@ -93,6 +197,11 @@ export const TemplateBuilder = () => {
   // Left column - Final Result
   const [finalResult, setFinalResult] = useState<string | null>(null);
   const [finalResultType, setFinalResultType] = useState<'image' | 'video' | null>(null);
+  const [isFinalResultManual, setIsFinalResultManual] = useState(false);
+  const [finalResultFile, setFinalResultFile] = useState<File | null>(null);
+  const [persistedFinalResult, setPersistedFinalResult] = useState<UploadedTemplateObject | null>(null);
+  const [persistedFinalResultPoster, setPersistedFinalResultPoster] = useState<UploadedTemplateObject | null>(null);
+  const [showFinalResultPreview, setShowFinalResultPreview] = useState(false);
   
   const [templateTitle, setTemplateTitle] = useState('');
   const [templateDescription, setTemplateDescription] = useState('');
@@ -102,39 +211,124 @@ export const TemplateBuilder = () => {
   const [publishCover, setPublishCover] = useState<string | null>(null);
   const [publishCoverFile, setPublishCoverFile] = useState<File | null>(null);
   const [publishCoverType, setPublishCoverType] = useState<'image' | 'video' | null>(null);
+  const [coverAspectRatio, setCoverAspectRatio] = useState<number | null>(null);
   const [coverVideoDuration, setCoverVideoDuration] = useState<number>(0);
   const [coverVideoStartTime, setCoverVideoStartTime] = useState<number>(0);
 
-  const [steps, setSteps] = useState<WorkflowStep[]>([
-    {
-      id: 'step-1',
-      feature: 'Text to Image',
-      resultUrl: null,
-      materials: [{ id: 'mat-1', type: 'Image', url: null, allowDownload: true }],
-      prompt: ''
-    }
-  ]);
+  const [steps, setSteps] = useState<WorkflowStep[]>([createInitialStep()]);
   const [activeStepId, setActiveStepId] = useState<string>('step-1');
   const [showRewardsModal, setShowRewardsModal] = useState(false);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [isDraggingResult, setIsDraggingResult] = useState(false);
+  const [previewMaterial, setPreviewMaterial] = useState<Material | null>(null);
   const [builderError, setBuilderError] = useState<string | null>(null);
   const [draftIdentity, setDraftIdentity] = useState<TemplateDraftIdentity | null>(null);
   const [persistedCover, setPersistedCover] = useState<UploadedTemplateCover | null>(null);
+  const [resultFiles, setResultFiles] = useState<Record<string, File>>({});
+  const [persistedResults, setPersistedResults] = useState<PersistedResultMap>({});
+  const [persistedResultPosters, setPersistedResultPosters] = useState<PersistedResultPosterMap>({});
   const [materialFiles, setMaterialFiles] = useState<Record<string, File>>({});
   const [persistedMaterials, setPersistedMaterials] = useState<PersistedMaterialMap>({});
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
+  const [reviewState, setReviewState] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle');
+  const [draftLoadState, setDraftLoadState] = useState<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const resultFileInputRef = useRef<HTMLInputElement>(null);
+  const resultDragDepthRef = useRef(0);
   const publishFileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const loadedDraftIdRef = useRef<string | null>(null);
+
+  const requestedTemplateId = new URLSearchParams(location.search).get('templateId');
+
+  useEffect(() => {
+    if (!user || !requestedTemplateId || loadedDraftIdRef.current === requestedTemplateId) return;
+    loadedDraftIdRef.current = requestedTemplateId;
+    setDraftLoadState('loading');
+    setBuilderError(null);
+    void loadTemplateDraft(requestedTemplateId, user.id)
+      .then((draft) => {
+        setDraftIdentity(draft.identity);
+        setTemplateTitle(draft.title);
+        setTemplateDescription(draft.description);
+        setSteps(draft.steps.map((step) => ({
+          ...step,
+          materials: ensureRequiredMaterialCards(step.feature, step.materials),
+        })));
+        setActiveStepId(draft.steps[0]?.id || 'step-1');
+        setFinalResult(draft.finalResultUrl);
+        setFinalResultType(draft.finalResultType);
+        setIsFinalResultManual(draft.isFinalResultManual);
+        setFinalResultFile(null);
+        setPersistedFinalResult(draft.finalResult);
+        setPersistedFinalResultPoster(draft.finalResultPoster);
+        setShowFinalResultPreview(false);
+        setPersistedCover(draft.cover);
+        setPublishCover(draft.coverUrl);
+        setPublishCoverType(draft.coverType);
+        setCoverAspectRatio(
+          draft.cover?.original.width && draft.cover?.original.height
+            ? draft.cover.original.width / draft.cover.original.height
+            : null,
+        );
+        setPublishCoverFile(null);
+        setPersistedResults(draft.results);
+        setPersistedResultPosters(draft.resultPosters);
+        setResultFiles({});
+        setPersistedMaterials(draft.materials);
+        setMaterialFiles({});
+        setSaveState('saved');
+        setReviewState('idle');
+        setDraftLoadState('loaded');
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Could not load this draft.';
+        setBuilderError(message);
+        setDraftLoadState('failed');
+        addToast('error', message);
+      });
+  }, [requestedTemplateId, user, addToast]);
 
   const activeStep = steps.find(s => s.id === activeStepId) || steps[0];
+  const activeResultGeneration = generations.find(
+    (generation) => generation.id === activeStep.resultGenerationId,
+  );
+  const activeStepResultIsVideo = activeResultGeneration
+    ? Boolean(
+        activeResultGeneration.videoUrl &&
+          activeResultGeneration.videoUrl === activeStep.resultUrl,
+      )
+    : activeStep.resultType === 'video' || (
+        !activeStep.resultType && isVideoFeature(activeStep.feature)
+      );
   const selectableGenerations = generations.filter(
     (generation) =>
       isPersistedGenerationId(generation.id) &&
       Boolean(generation.imageUrl || generation.videoUrl),
   );
-  const publishGateIssue = getPublishGateIssue(templateTitle, steps);
+
+  useEffect(() => {
+    if (isFinalResultManual) return;
+    const latestStep = steps[steps.length - 1];
+    const latestResult = latestStep?.resultUrl || null;
+    setFinalResult(latestResult);
+    setFinalResultType(
+      latestResult
+        ? latestStep.resultType || (isVideoFeature(latestStep.feature) ? 'video' : 'image')
+        : null,
+    );
+  }, [steps, isFinalResultManual]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!showPublishModal || publishCoverType !== 'video' || !video) return;
+    const duration = Number.isFinite(video.duration) ? video.duration : coverVideoDuration;
+    if (!duration) return;
+    const segmentStart = Math.min(coverVideoStartTime, Math.max(0, duration - 2));
+    video.currentTime = segmentStart;
+    void video.play().catch(() => undefined);
+  }, [coverVideoDuration, coverVideoStartTime, publishCover, publishCoverType, showPublishModal]);
 
   const [draggedStepId, setDraggedStepId] = useState<string | null>(null);
 
@@ -168,23 +362,55 @@ export const TemplateBuilder = () => {
 
   const handleFinalResultUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (file) {
+      if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+        addToast('error', 'Please choose an image or video file.');
+        return;
+      }
+      try {
+        validateTemplateMaterialFile(
+          file,
+          file.type.startsWith('video/') ? 'video' : 'image',
+          'Final result',
+        );
+      } catch (error) {
+        addToast('error', error instanceof Error ? error.message : 'This final result file is not supported.');
+        return;
+      }
+      if (isFinalResultManual && finalResult?.startsWith('blob:')) {
+        URL.revokeObjectURL(finalResult);
+      }
       const url = URL.createObjectURL(file);
       setFinalResult(url);
       setFinalResultType(file.type.startsWith('video/') ? 'video' : 'image');
+      setIsFinalResultManual(true);
+      setFinalResultFile(file);
+      setPersistedFinalResult(null);
+      setPersistedFinalResultPoster(null);
+      setShowFinalResultPreview(false);
       setSaveState('idle');
     }
   };
 
   const handlePublishCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (file) {
+      try {
+        validateTemplateCoverFile(file);
+      } catch (error) {
+        addToast('error', error instanceof Error ? error.message : 'This cover file is not supported.');
+        return;
+      }
+      if (publishCover?.startsWith('blob:')) URL.revokeObjectURL(publishCover);
       const url = URL.createObjectURL(file);
       setPublishCover(url);
       setPublishCoverFile(file);
       setPersistedCover(null);
       setSaveState('idle');
       setPublishCoverType(file.type.startsWith('video/') ? 'video' : 'image');
+      setCoverAspectRatio(null);
       setCoverVideoDuration(0);
       setCoverVideoStartTime(0);
     }
@@ -196,7 +422,8 @@ export const TemplateBuilder = () => {
       feature: 'Text to Image',
       resultUrl: null,
       materials: [{ id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }],
-      prompt: ''
+      prompt: '',
+      imageParams: { ratio: '1:1', resolution: '1K' },
     };
     setSteps([...steps, newStep]);
     setActiveStepId(newStep.id);
@@ -209,15 +436,42 @@ export const TemplateBuilder = () => {
     setSteps(steps.map(s => s.id === activeStepId ? { ...s, ...updates } : s));
   };
 
+  const updateImageToVideoSettings = (
+    updates: Partial<NonNullable<WorkflowStep['videoParams']>>,
+  ) => {
+    updateActiveStep({
+      videoParams: {
+        duration: activeStep.videoParams?.duration || '3s',
+        resolution: activeStep.videoParams?.resolution || '720p',
+        generateAudio: activeStep.videoParams?.generateAudio ?? true,
+        ...updates,
+      },
+    });
+  };
+
+  const updateTextToImageSettings = (
+    updates: Partial<NonNullable<WorkflowStep['imageParams']>>,
+  ) => {
+    updateActiveStep({
+      imageParams: {
+        ratio: activeStep.imageParams?.ratio || '1:1',
+        resolution: activeStep.imageParams?.resolution || '1K',
+        ...updates,
+      },
+    });
+  };
+
   const addMaterial = () => {
     updateActiveStep({
-      materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }]
+      materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }],
+      inputBindings: undefined,
     });
   };
 
   const updateMaterial = (id: string, updates: Partial<Material>) => {
     updateActiveStep({
-      materials: activeStep.materials.map(m => m.id === id ? { ...m, ...updates } : m)
+      materials: activeStep.materials.map(m => m.id === id ? { ...m, ...updates } : m),
+      inputBindings: undefined,
     });
   };
 
@@ -233,13 +487,31 @@ export const TemplateBuilder = () => {
       return next;
     });
     updateActiveStep({
-      materials: activeStep.materials.filter(m => m.id !== id)
+      materials: activeStep.materials.filter(m => m.id !== id),
+      inputBindings: undefined,
     });
   };
 
   const removeStep = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     if (steps.length === 1) return;
+    const removedStep = steps.find((step) => step.id === id);
+    if (removedStep?.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(removedStep.resultUrl);
+    setResultFiles((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+    setPersistedResultPosters((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
     const newSteps = steps.filter(s => s.id !== id);
     setSteps(newSteps);
     setSaveState('idle');
@@ -250,6 +522,17 @@ export const TemplateBuilder = () => {
 
   const handleMaterialUpload = (materialId: string, file?: File) => {
     if (!file) return;
+    const material = activeStep.materials.find((item) => item.id === materialId);
+    if (!material) return;
+    try {
+      validateTemplateMaterialFile(
+        file,
+        material.type.toLowerCase() as 'image' | 'video' | 'audio',
+      );
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'This material file is not supported.');
+      return;
+    }
     setMaterialFiles((current) => ({ ...current, [materialId]: file }));
     setPersistedMaterials((current) => {
       const next = { ...current };
@@ -260,6 +543,82 @@ export const TemplateBuilder = () => {
     updateMaterial(materialId, { url: URL.createObjectURL(file) });
   };
 
+  const applyStepResultFile = (file: File) => {
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
+      addToast('error', 'Please choose an image or video file.');
+      return;
+    }
+    const resultType = file.type.startsWith('video/') ? 'video' as const : 'image' as const;
+    try {
+      validateTemplateMaterialFile(file, resultType, 'Result image/video');
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'This result file is not supported.');
+      return;
+    }
+
+    if (activeStep.resultUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(activeStep.resultUrl);
+    }
+    const resultUrl = URL.createObjectURL(file);
+    setResultFiles((current) => ({ ...current, [activeStep.id]: file }));
+    setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResultPosters((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    updateActiveStep({
+      resultUrl,
+      resultType,
+      resultThumbnailUrl: undefined,
+      resultGenerationId: undefined,
+    });
+
+    if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id) {
+      setFinalResult(resultUrl);
+      setFinalResultType(resultType);
+    }
+  };
+
+  const handleStepResultUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file) applyStepResultFile(file);
+  };
+
+  const handleResultDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resultDragDepthRef.current += 1;
+    setIsDraggingResult(true);
+  };
+
+  const handleResultDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'copy';
+  };
+
+  const handleResultDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resultDragDepthRef.current = Math.max(0, resultDragDepthRef.current - 1);
+    if (resultDragDepthRef.current === 0) setIsDraggingResult(false);
+  };
+
+  const handleResultDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resultDragDepthRef.current = 0;
+    setIsDraggingResult(false);
+    const file = event.dataTransfer.files?.[0];
+    if (file) applyStepResultFile(file);
+  };
+
   const inferFeatureFromGeneration = (
     generation: WorkflowGeneration,
   ): FeatureType | null => {
@@ -267,7 +626,37 @@ export const TemplateBuilder = () => {
       return CAPABILITY_TO_BUILDER_FEATURE[generation.capability] ?? null;
     }
     if (generation.videoMode === 'image_to_video') return 'Image to Video';
+    if (generation.videoMode === 'motion_control') return 'Motion Control';
+    if (generation.videoMode === 'lip_sync') {
+      const sourceAsset = generation.inputAssets?.find(
+        (asset) => asset.assetType === 'image' || asset.assetType === 'video',
+      );
+      if (sourceAsset?.assetType === 'video') return 'Video Lip Sync';
+      if (sourceAsset?.assetType === 'image') return 'Image Lip Sync';
+      return looksLikeVideoUrl(generation.imageUrl)
+        ? 'Video Lip Sync'
+        : 'Image Lip Sync';
+    }
+    const inputKeys = new Set(
+      generation.inputAssets?.map((asset) => asset.key) ?? [],
+    );
+    const hasReplaceInputs =
+      inputKeys.has('scene_image') || inputKeys.has('product_image');
+    const hasReplaceParameters =
+      typeof generation.generationParameters?.extraBlend === 'boolean' ||
+      typeof generation.generationParameters?.productSizePercent === 'number';
+    if (hasReplaceInputs || hasReplaceParameters) return 'Replace Product';
     if (generation.templateId === 'text-to-image') return 'Text to Image';
+    if (
+      !generation.videoUrl &&
+      generation.mediaType !== 'video' &&
+      generation.templateId &&
+      !['modify-session', 'default-welcome'].includes(generation.templateId)
+    ) {
+      // Rows created before generation snapshots existed still keep the real
+      // gallery template id used by Replace Product.
+      return 'Replace Product';
+    }
     return null;
   };
 
@@ -278,7 +667,7 @@ export const TemplateBuilder = () => {
       return;
     }
     const feature = inferFeatureFromGeneration(generation);
-    const restoredMaterials = generation.inputAssets?.map((asset, index) => ({
+    const snapshotMaterials = generation.inputAssets?.filter((asset) => asset.url).map((asset, index) => ({
       id: `history-${generation.id}-${index}`,
       type:
         asset.assetType === 'image'
@@ -289,28 +678,136 @@ export const TemplateBuilder = () => {
       url: asset.url,
       allowDownload: true,
       sourceGenerationId: generation.id,
-    }));
+    })) ?? [];
+    const legacySourceUrl =
+      generation.videoUrl &&
+      generation.imageUrl &&
+      generation.imageUrl !== generation.videoUrl
+        ? generation.imageUrl
+        : null;
+    const legacyMaterials: Material[] =
+      snapshotMaterials.length === 0 && legacySourceUrl && feature
+        ? feature === 'Image to Video'
+          ? [{
+              id: `history-${generation.id}-legacy-image`,
+              type: 'Image',
+              url: legacySourceUrl,
+              allowDownload: true,
+              sourceGenerationId: generation.id,
+            }]
+          : feature === 'Video Lip Sync'
+            ? [{
+                id: `history-${generation.id}-legacy-video`,
+                type: 'Video',
+                url: legacySourceUrl,
+                allowDownload: true,
+                sourceGenerationId: generation.id,
+              }]
+            : feature === 'Motion Control' || feature === 'Image Lip Sync'
+              ? [{
+                  id: `history-${generation.id}-legacy-image`,
+                  type: 'Image',
+                  url: legacySourceUrl,
+                  allowDownload: true,
+                  sourceGenerationId: generation.id,
+                }]
+              : []
+        : [];
+    const restoredMaterials =
+      snapshotMaterials.length > 0 ? snapshotMaterials : legacyMaterials;
+    const parameterPrompt = generation.generationParameters?.prompt;
+    const parameterDuration = generation.generationParameters?.duration;
+    const parameterResolution = generation.generationParameters?.resolution;
+    const parameterGenerateAudio = generation.generationParameters?.generateAudio;
+    const parameterRatio = generation.generationParameters?.ratio;
 
-    updateActiveStep({
+    const nextFeature: FeatureType = feature ?? (
+      generation.videoUrl || generation.mediaType === 'video'
+        ? 'Image to Video'
+        : 'Text to Image'
+    );
+    const nextMaterials = ensureRequiredMaterialCards(
+      nextFeature,
+      restoredMaterials,
+    );
+    const nextVideoParams = nextFeature === 'Image to Video'
+      ? {
+          duration: `${getGenerationDuration(parameterDuration, generation.videoDuration)}s`,
+          resolution: getGenerationResolution(parameterResolution),
+          generateAudio:
+            typeof parameterGenerateAudio === 'boolean'
+              ? parameterGenerateAudio
+              : true,
+        }
+      : undefined;
+    const nextImageParams = nextFeature === 'Text to Image'
+      ? {
+          ratio: getGenerationImageRatio(parameterRatio),
+          resolution: getGenerationImageResolution(parameterResolution),
+        }
+      : undefined;
+    const nextStep: WorkflowStep = {
+      ...activeStep,
       resultUrl,
+      resultType: generation.videoUrl && resultUrl === generation.videoUrl ? 'video' : 'image',
+      resultThumbnailUrl: generation.videoUrl && resultUrl === generation.videoUrl
+        ? generation.thumbnailUrl || (
+            generation.imageUrl && generation.imageUrl !== generation.videoUrl
+              ? generation.imageUrl
+              : undefined
+          )
+        : undefined,
       resultGenerationId: generation.id,
-      feature: feature ?? activeStep.feature,
-      prompt: generation.prompt ?? '',
-      materials:
-        restoredMaterials && restoredMaterials.length > 0
-          ? restoredMaterials
-          : activeStep.materials,
-      videoParams:
-        feature === 'Image to Video'
-          ? {
-              duration: `${generation.videoDuration || 5}s`,
-              resolution: activeStep.videoParams?.resolution || '720p',
-              generateAudio: activeStep.videoParams?.generateAudio ?? true,
-            }
-          : activeStep.videoParams,
-    });
+      feature: nextFeature,
+      prompt:
+        typeof parameterPrompt === 'string'
+          ? parameterPrompt
+          : generation.prompt ?? '',
+      materials: nextMaterials,
+      inputBindings: undefined,
+      videoParams: nextVideoParams,
+      imageParams: nextImageParams,
+    };
 
-    if (activeStep.id === steps[steps.length - 1]?.id) {
+    // A Dashboard result is one immutable generation snapshot. Remove every
+    // local/persisted association from the previous selection so old uploads
+    // can never leak into the newly selected feature, prompt, or settings.
+    const replacedMaterialIds = new Set(activeStep.materials.map((material) => material.id));
+    setMaterialFiles((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => !replacedMaterialIds.has(id)),
+    ));
+    setPersistedMaterials((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => !replacedMaterialIds.has(id)),
+    ));
+    setResultFiles((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResultPosters((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    if (activeStep.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(activeStep.resultUrl);
+    updateActiveStep(nextStep);
+    if (nextStep.resultType === 'video' && !nextStep.resultThumbnailUrl) {
+      void ensureGenerationThumbnail(generation).then((thumbnailUrl) => {
+        if (!thumbnailUrl) return;
+        setSteps((current) => current.map((step) => (
+          step.id === activeStep.id && step.resultGenerationId === generation.id
+            ? { ...step, resultThumbnailUrl: thumbnailUrl }
+            : step
+        )));
+      });
+    }
+
+    if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id) {
       setFinalResult(resultUrl);
       setFinalResultType(
         generation.videoUrl && resultUrl === generation.videoUrl
@@ -319,10 +816,12 @@ export const TemplateBuilder = () => {
       );
     }
 
-    if (!feature || !restoredMaterials?.length) {
+    const activeIndex = steps.findIndex((step) => step.id === activeStep.id);
+    const nextSteps = steps.map((step) => step.id === activeStep.id ? nextStep : step);
+    if (getMissingRequiredMaterialTypes(nextStep, activeIndex, nextSteps).length > 0) {
       addToast(
         'info',
-        'This older result has no complete feature or material snapshot. Please confirm the fields below.',
+        'This older result has no complete material snapshot. The available fields were restored; please add the missing material below.',
       );
     }
     setShowHistoryModal(false);
@@ -333,29 +832,70 @@ export const TemplateBuilder = () => {
     void refreshGenerations();
   };
 
-  const showPublishGateIssue = (issue: PublishGateIssue) => {
-    if (issue.stepId) setActiveStepId(issue.stepId);
-    setBuilderError(issue.message);
-    setShowPublishModal(false);
-    addToast('error', issue.message);
+  const clearActiveStepResult = () => {
+    const removedResult = activeStep.resultUrl;
+    if (removedResult?.startsWith('blob:')) URL.revokeObjectURL(removedResult);
+    setResultFiles((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResults((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    setPersistedResultPosters((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      return next;
+    });
+    updateActiveStep({
+      resultUrl: null,
+      resultType: undefined,
+      resultThumbnailUrl: undefined,
+      resultGenerationId: undefined,
+    });
+    if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id && finalResult === removedResult) {
+      setFinalResult(null);
+      setFinalResultType(null);
+    }
   };
 
   const handleOpenPublish = () => {
-    const issue = getPublishGateIssue(templateTitle, steps);
-    if (issue) return showPublishGateIssue(issue);
-
+    if (reviewState === 'submitted') return;
     setBuilderError(null);
     setShowPublishModal(true);
   };
 
-  const handleSaveDraft = async (): Promise<boolean> => {
+  const handleSaveDraft = async (
+    showSuccessToast = true,
+  ): Promise<TemplateDraftIdentity | null> => {
     if (!user) {
       setBuilderError('Please log in before saving a template draft.');
       addToast('error', 'Please log in before saving a template draft.');
-      return false;
+      return null;
     }
 
-    const { workflow, validation } = convertAndValidateBuilderWorkflow(steps);
+    setSaveState('saving');
+    setBuilderError(null);
+    const stepsForSave = await Promise.all(steps.map(async (step) => {
+      if (
+        step.resultType !== 'video'
+        || !step.resultGenerationId
+        || step.resultThumbnailUrl
+      ) {
+        return step;
+      }
+      const generation = generations.find((item) => item.id === step.resultGenerationId);
+      if (!generation) return step;
+      const thumbnailUrl = await ensureGenerationThumbnail(generation);
+      return thumbnailUrl ? { ...step, resultThumbnailUrl: thumbnailUrl } : step;
+    }));
+    if (stepsForSave.some((step, index) => step !== steps[index])) {
+      setSteps(stepsForSave);
+    }
+    const { workflow, validation } = convertAndValidateBuilderWorkflow(stepsForSave);
     if (!validation.valid) {
       const message =
         validation.issues[0]?.message ||
@@ -363,11 +903,9 @@ export const TemplateBuilder = () => {
       setBuilderError(message);
       addToast('error', message);
       setSaveState('failed');
-      return false;
+      return null;
     }
 
-    setSaveState('saving');
-    setBuilderError(null);
     try {
       const saved = await saveTemplateDraft({
         identity: draftIdentity,
@@ -375,15 +913,28 @@ export const TemplateBuilder = () => {
         title: templateTitle,
         description: templateDescription,
         workflow,
-        steps,
+        steps: stepsForSave,
         finalResultUrl: finalResult,
+        finalResultType,
+        isFinalResultManual,
+        finalResultFile,
+        persistedFinalResult,
+        persistedFinalResultPoster,
         coverFile: publishCoverFile,
+        coverVideoStartSeconds: coverVideoStartTime,
         persistedCover,
+        resultFiles,
+        persistedResults,
+        persistedResultPosters,
         materialFiles,
         persistedMaterials,
       });
       setDraftIdentity(saved.identity);
       setPersistedCover(saved.cover);
+      setPersistedFinalResult(saved.finalResult);
+      setPersistedFinalResultPoster(saved.finalResultPoster);
+      setPersistedResults(saved.results);
+      setPersistedResultPosters(saved.resultPosters);
       setPersistedMaterials(saved.materials);
       setSteps((currentSteps) =>
         currentSteps.map((step) => ({
@@ -396,30 +947,95 @@ export const TemplateBuilder = () => {
         })),
       );
       setPublishCoverFile(null);
+      setFinalResultFile(null);
+      setResultFiles({});
       setMaterialFiles({});
       setSaveState('saved');
-      addToast('success', 'Draft saved to your account.');
-      return true;
+      if (showSuccessToast) addToast('success', 'Draft saved to your account.');
+      return saved.identity;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Draft save failed.';
       setBuilderError(message);
       setSaveState('failed');
       addToast('error', message);
-      return false;
+      return null;
     }
   };
 
   const handleConfirmPublish = async () => {
-    const issue = getPublishGateIssue(templateTitle, steps);
-    if (issue) return showPublishGateIssue(issue);
+    if (!publishCover || !publishCoverType) {
+      setReviewState('failed');
+      addToast('error', 'A template cover is required before submitting for review.');
+      return;
+    }
+    setReviewState('submitting');
+    const savedIdentity = await handleSaveDraft(false);
+    if (!savedIdentity) {
+      setReviewState('failed');
+      return;
+    }
 
-    const saved = await handleSaveDraft();
-    if (!saved) return;
-    addToast(
-      'info',
-      'Draft and cover are saved. Review submission will be connected in M5-4.',
-    );
+    try {
+      await submitTemplateForReview(savedIdentity);
+      setReviewState('submitted');
+      setShowPublishModal(false);
+      setBuilderError(null);
+      addToast('success', 'Template submitted. It is now under review.');
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : 'Review submission failed.';
+      setReviewState('failed');
+      setBuilderError(message);
+      addToast('error', message);
+    }
+  };
+
+  const handleBuildAnother = () => {
+    if (publishCover?.startsWith('blob:')) URL.revokeObjectURL(publishCover);
+    if (isFinalResultManual && finalResult?.startsWith('blob:')) URL.revokeObjectURL(finalResult);
+    steps.forEach((step) => {
+      if (step.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(step.resultUrl);
+      step.materials.forEach((material) => {
+        if (material.url?.startsWith('blob:')) URL.revokeObjectURL(material.url);
+      });
+    });
+
+    setFinalResult(null);
+    setFinalResultType(null);
+    setIsFinalResultManual(false);
+    setFinalResultFile(null);
+    setPersistedFinalResult(null);
+    setPersistedFinalResultPoster(null);
+    setShowFinalResultPreview(false);
+    setTemplateTitle('');
+    setTemplateDescription('');
+    setPublishCover(null);
+    setPublishCoverFile(null);
+    setPublishCoverType(null);
+    setCoverAspectRatio(null);
+    setCoverVideoDuration(0);
+    setCoverVideoStartTime(0);
+    setSteps([createInitialStep()]);
+    setActiveStepId('step-1');
     setShowPublishModal(false);
+    setShowHistoryModal(false);
+    setPreviewMaterial(null);
+    setBuilderError(null);
+    setDraftIdentity(null);
+    setPersistedCover(null);
+    setResultFiles({});
+    setPersistedResults({});
+    setPersistedResultPosters({});
+    setMaterialFiles({});
+    setPersistedMaterials({});
+    setSaveState('idle');
+    setReviewState('idle');
+    setDraftLoadState('idle');
+    loadedDraftIdRef.current = null;
+
+    navigate('/templates/create');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   return (
@@ -431,15 +1047,27 @@ export const TemplateBuilder = () => {
             <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Build a workflow template</h1>
           </div>
           <div className="flex items-center gap-4">
+            {reviewState === 'submitted' && (
+              <Button variant="outline" size="sm" onClick={handleBuildAnother}>
+                <Plus className="h-4 w-4" />
+                Build another template
+              </Button>
+            )}
             <span className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
               <span className={`w-2 h-2 rounded-full ${
-                saveState === 'saved'
+                reviewState === 'submitted'
+                  ? 'bg-amber-500'
+                  : saveState === 'saved'
                   ? 'bg-green-500'
                   : saveState === 'failed'
                     ? 'bg-red-500'
                     : 'bg-slate-300 dark:bg-slate-600'
               }`}></span>
-              {saveState === 'saving'
+              {reviewState === 'submitted'
+                ? 'In review'
+                : reviewState === 'submitting'
+                  ? 'Submitting...'
+                  : saveState === 'saving'
                 ? 'Saving...'
                 : saveState === 'saved'
                   ? 'Saved'
@@ -451,7 +1079,7 @@ export const TemplateBuilder = () => {
               variant="outline"
               size="sm"
               onClick={() => void handleSaveDraft()}
-              disabled={saveState === 'saving'}
+              disabled={draftLoadState === 'loading' || saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
             >
               {saveState === 'saving' ? 'Saving...' : 'Save draft'}
             </Button>
@@ -459,13 +1087,36 @@ export const TemplateBuilder = () => {
               variant="gradient"
               size="sm"
               onClick={handleOpenPublish}
-              disabled={saveState === 'saving'}
+              disabled={draftLoadState === 'loading' || saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
             >
-              Publish
+              {reviewState === 'submitted' ? 'Under review' : 'Submit for review'}
             </Button>
           </div>
         </div>
       </div>
+
+      {reviewState === 'submitted' && (
+        <div className="bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
+          <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-center text-sm font-medium text-amber-900 dark:text-amber-200">
+            <span>Submitted for review. This saved version is now read-only.</span>
+            <button
+              type="button"
+              onClick={handleBuildAnother}
+              className="pointer-events-auto font-semibold underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-100"
+            >
+              Build another template
+            </button>
+          </div>
+        </div>
+      )}
+
+      {draftLoadState === 'loading' && (
+        <div className="border-b border-purple-200 bg-purple-50 dark:border-purple-500/20 dark:bg-purple-500/10">
+          <div className="mx-auto max-w-7xl px-4 py-3 text-center text-sm font-medium text-purple-800 dark:text-purple-200">
+            Loading your saved draft...
+          </div>
+        </div>
+      )}
 
       {/* Rewards Banner */}
       <div className="bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
@@ -498,7 +1149,9 @@ export const TemplateBuilder = () => {
         </div>
       )}
 
-      <div className="flex-1 max-w-7xl mx-auto w-full px-4 py-8 grid grid-cols-1 md:grid-cols-12 gap-8 items-start">
+      <div className={`flex-1 max-w-7xl mx-auto w-full px-4 py-8 grid grid-cols-1 md:grid-cols-12 gap-8 items-start ${
+        reviewState === 'submitted' ? 'pointer-events-none opacity-75' : ''
+      }`}>
         {/* Left Column - Outline */}
         <div className="md:col-span-4 lg:col-span-3 space-y-6 md:sticky top-44">
           <div>
@@ -508,10 +1161,7 @@ export const TemplateBuilder = () => {
             <div className="mb-4">
               <input type="file" ref={fileInputRef} onChange={handleFinalResultUpload} accept="image/*,video/*" className="hidden" />
               {finalResult ? (
-                <div 
-                  className="aspect-[3/4] w-full bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700"
-                  onClick={() => fileInputRef.current?.click()}
-                >
+                <div className="aspect-[3/4] w-full bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group border border-slate-200 dark:border-slate-700">
                   {finalResultType === 'video' ? (
                     <video 
                       src={finalResult} 
@@ -523,8 +1173,25 @@ export const TemplateBuilder = () => {
                   ) : (
                     <img src={finalResult} alt="Final Result" className="w-full h-full object-cover" />
                   )}
-                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                    <span className="text-white text-sm font-medium">Change final result</span>
+                  <div className="absolute inset-0 flex items-center justify-center gap-3 bg-black/55 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowFinalResultPreview(true)}
+                      className="flex min-w-24 flex-col items-center gap-2 rounded-xl border border-white/25 bg-black/30 px-4 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/80"
+                    >
+                      <Maximize2 className="h-5 w-5" />
+                      <span className="text-xs font-semibold">
+                        {finalResultType === 'video' ? 'Play' : 'Enlarge'}
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex min-w-24 flex-col items-center gap-2 rounded-xl border border-white/25 bg-black/30 px-4 py-3 text-white backdrop-blur-sm transition hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-white/80"
+                    >
+                      <RefreshCw className="h-5 w-5" />
+                      <span className="text-xs font-semibold">Change</span>
+                    </button>
                   </div>
                 </div>
               ) : (
@@ -617,7 +1284,7 @@ export const TemplateBuilder = () => {
         {/* Center Column - Main Working Area */}
         <div className="md:col-span-8 lg:col-span-9 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-white/10 p-6 sm:p-8 shadow-sm">
           <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-8 pb-4 border-b border-slate-100 dark:border-white/5">
-          DEPLOY TEST M1 - Step {steps.findIndex(s => s.id === activeStepId) + 1}
+          Step {steps.findIndex(s => s.id === activeStepId) + 1} Configuration
           </h2>
 
           <div className="space-y-12">
@@ -629,37 +1296,113 @@ export const TemplateBuilder = () => {
                 <span>
                   Result from This Step
                   <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
-                    (Choose from Dashboard — the fields below fill automatically)
+                    (Choose from Dashboard or upload a local image/video)
                   </span>
                 </span>
               </h3>
-              <div 
-                onClick={openDashboardResults}
-                className={`w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group ${
-                  builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id
-                    ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
+              <input
+                ref={resultFileInputRef}
+                type="file"
+                accept="image/*,video/*"
+                onChange={handleStepResultUpload}
+                className="hidden"
+                aria-label="Upload a result image or video from this device"
+              />
+              <div
+                onDragEnter={handleResultDragEnter}
+                onDragOver={handleResultDragOver}
+                onDragLeave={handleResultDragLeave}
+                onDrop={handleResultDrop}
+                className={`relative w-full max-w-sm aspect-video bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed rounded-xl flex flex-col items-center justify-center gap-3 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group ${
+                  isDraggingResult
+                    ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-100 dark:border-purple-400 dark:bg-purple-950/30 dark:ring-purple-900/40'
                     : 'border-slate-200 dark:border-slate-700'
                 }`}
               >
                 {activeStep.resultUrl ? (
-                  <img src={activeStep.resultUrl} alt="Result" className="w-full h-full object-cover rounded-xl" />
+                  activeStepResultIsVideo ? (
+                    <video
+                      src={activeStep.resultUrl}
+                      className="w-full h-full object-cover rounded-xl"
+                      controls
+                      playsInline
+                      onClick={(event) => event.stopPropagation()}
+                    />
+                  ) : (
+                    <img src={activeStep.resultUrl} alt="Result" className="w-full h-full object-cover rounded-xl" />
+                  )
                 ) : (
                   <>
                     <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
-                      <History className="w-6 h-6" />
+                      <Upload className="w-6 h-6" />
                     </div>
-                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Choose from Dashboard</p>
+                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Add a result image or video</p>
                     <p className="px-4 text-center text-xs text-slate-400">
-                      This does not upload a local file. Select one of your saved generation results.
+                      Drag and drop a file here, use a saved generation, or choose one from this device.
                     </p>
+                    <p className="px-4 text-center text-[11px] text-slate-400">
+                      Images or videos up to {TEMPLATE_UPLOAD_LIMITS.materialBytes / (1024 * 1024)} MB.
+                    </p>
+                    <div className="flex flex-wrap items-center justify-center gap-2 px-4">
+                      <button
+                        type="button"
+                        onClick={openDashboardResults}
+                        className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-xs font-medium text-white shadow-sm hover:bg-purple-700"
+                      >
+                        <History className="h-3.5 w-3.5" />
+                        Choose from Dashboard
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => resultFileInputRef.current?.click()}
+                        className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:border-purple-300 hover:text-purple-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                      >
+                        <Upload className="h-3.5 w-3.5" />
+                        Upload from device
+                      </button>
+                    </div>
                   </>
                 )}
+                {activeStep.resultUrl && (
+                  <div className="absolute right-2 top-2 z-10 flex gap-2 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openDashboardResults();
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg bg-purple-600/90 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-purple-600"
+                      aria-label="Replace this step result"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      Dashboard
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        resultFileInputRef.current?.click();
+                      }}
+                      className="flex items-center gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black"
+                      aria-label="Upload a local replacement for this step result"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      Upload
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        clearActiveStepResult();
+                      }}
+                      className="rounded-lg bg-red-600/90 p-1.5 text-white backdrop-blur hover:bg-red-600"
+                      aria-label="Remove this step result"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                )}
               </div>
-              {builderError && publishGateIssue?.code === 'result' && publishGateIssue.stepId === activeStep.id && (
-                <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
-                  Required: choose this step's saved result from Dashboard.
-                </p>
-              )}
             </section>
 
             {/* Section 2: Feature */}
@@ -669,10 +1412,32 @@ export const TemplateBuilder = () => {
                 Feature I Used
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {(['Text to Image', 'Replace Product', 'Modify Image', 'Image to Video'] as FeatureType[]).map((feature) => (
+                {([
+                  'Text to Image',
+                  'Replace Product',
+                  'Modify Image',
+                  'Image to Video',
+                  'Motion Control',
+                  'Image Lip Sync',
+                  'Video Lip Sync',
+                ] as FeatureType[]).map((feature) => (
                   <button
                     key={feature}
-                    onClick={() => updateActiveStep({ feature })}
+                    onClick={() => updateActiveStep({
+                      feature,
+                      materials: ensureRequiredMaterialCards(feature, activeStep.materials),
+                      inputBindings: undefined,
+                      videoParams: feature === 'Image to Video'
+                        ? activeStep.feature === 'Image to Video' && activeStep.videoParams
+                          ? activeStep.videoParams
+                          : { duration: '3s', resolution: '720p', generateAudio: true }
+                        : undefined,
+                      imageParams: feature === 'Text to Image'
+                        ? activeStep.feature === 'Text to Image' && activeStep.imageParams
+                          ? activeStep.imageParams
+                          : { ratio: '1:1', resolution: '1K' }
+                        : undefined,
+                    })}
                     className={`p-4 rounded-xl border text-left transition-all ${
                       activeStep.feature === feature 
                         ? 'border-pink-500 bg-pink-50 dark:bg-pink-500/10 ring-1 ring-pink-500' 
@@ -702,11 +1467,7 @@ export const TemplateBuilder = () => {
                 {activeStep.materials.map((material, idx) => (
                   <div
                     key={material.id}
-                    className={`p-4 rounded-xl border bg-slate-50 dark:bg-slate-800/30 flex flex-col sm:flex-row gap-6 relative group ${
-                      builderError && publishGateIssue?.code === 'material' && publishGateIssue.stepId === activeStep.id && !material.url
-                        ? 'border-red-500 ring-2 ring-red-100 dark:ring-red-900/40'
-                        : 'border-slate-200 dark:border-slate-700'
-                    }`}
+                    className="p-4 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/30 flex flex-col sm:flex-row gap-6 relative group"
                   >
                     {activeStep.materials.length > 1 && (
                       <button 
@@ -718,8 +1479,9 @@ export const TemplateBuilder = () => {
                     )}
                     
                     {/* Material Upload Area */}
-                    <label className="w-full sm:w-48 aspect-square sm:aspect-auto sm:h-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-amber-500 transition-colors overflow-hidden relative">
+                    <div className="w-full sm:w-48 aspect-square sm:aspect-auto sm:h-32 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg flex flex-col items-center justify-center gap-2 hover:border-amber-500 transition-colors overflow-hidden relative">
                       <input
+                        id={`material-upload-${material.id}`}
                         type="file"
                         className="hidden"
                         accept={
@@ -733,27 +1495,50 @@ export const TemplateBuilder = () => {
                           handleMaterialUpload(material.id, event.target.files?.[0])
                         }
                       />
-                      {material.url && material.type === 'Image' ? (
-                        <img src={material.url} alt="Material" className="w-full h-full object-cover" />
-                      ) : material.url && material.type === 'Video' ? (
-                        <video src={material.url} className="w-full h-full object-cover" muted />
-                      ) : material.url && material.type === 'Audio' ? (
-                        <div className="px-3 text-center">
-                          <Music className="w-7 h-7 text-amber-500 mx-auto mb-2" />
-                          <span className="text-xs text-slate-500">Audio selected</span>
-                        </div>
+                      {material.url ? (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewMaterial(material)}
+                          className="group/preview relative flex h-full w-full items-center justify-center overflow-hidden"
+                          aria-label={`Preview ${material.type.toLowerCase()} material`}
+                        >
+                          {material.type === 'Image' ? (
+                            <img src={material.url} alt="Material" className="h-full w-full object-cover" />
+                          ) : material.type === 'Video' ? (
+                            <video
+                              src={material.url}
+                              className="pointer-events-none h-full w-full object-cover"
+                              muted
+                              preload="metadata"
+                            />
+                          ) : (
+                            <div className="px-3 text-center">
+                              <Music className="mx-auto mb-2 h-7 w-7 text-amber-500" />
+                              <span className="text-xs text-slate-500">Audio selected</span>
+                            </div>
+                          )}
+                          <span className="absolute inset-x-0 bottom-0 bg-black/65 py-1.5 text-center text-[10px] font-medium text-white transition-colors group-hover/preview:bg-black/80">
+                            Click to preview
+                          </span>
+                        </button>
                       ) : (
-                        <>
+                        <label
+                          htmlFor={`material-upload-${material.id}`}
+                          className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2"
+                        >
                           <Plus className="w-6 h-6 text-slate-400" />
                           <span className="text-xs text-slate-500">Upload {material.type}</span>
-                        </>
+                        </label>
                       )}
                       {material.url && (
-                        <span className="absolute inset-x-0 bottom-0 bg-black/60 py-1 text-center text-[10px] text-white">
-                          Click to replace
-                        </span>
+                        <label
+                          htmlFor={`material-upload-${material.id}`}
+                          className="absolute right-2 top-2 z-10 cursor-pointer rounded-md bg-white/95 px-2 py-1 text-[10px] font-semibold text-slate-700 shadow-sm transition hover:bg-amber-50 dark:bg-slate-900/95 dark:text-slate-200 dark:hover:bg-slate-800"
+                        >
+                          Replace
+                        </label>
                       )}
-                    </label>
+                    </div>
 
                     <div className="flex-1 space-y-4">
                       {/* Type Selector */}
@@ -796,11 +1581,6 @@ export const TemplateBuilder = () => {
                   </div>
                 ))}
               </div>
-              {builderError && publishGateIssue?.code === 'material' && publishGateIssue.stepId === activeStep.id && (
-                <p className="mt-2 text-sm font-medium text-red-600 dark:text-red-400">
-                  Required: upload or restore the material used for this step.
-                </p>
-              )}
             </section>
 
             {/* Section 4: Prompt & Settings */}
@@ -822,34 +1602,110 @@ export const TemplateBuilder = () => {
                 </div>
 
                 {activeStep.feature === 'Image to Video' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/30">
+                  <div className="space-y-5 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/30">
                     <div>
-                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Duration</label>
-                       <div className="flex gap-2">
-                         {['5s', '10s'].map(dur => (
-                           <button 
-                             key={dur}
-                             onClick={() => updateActiveStep({ videoParams: { ...activeStep.videoParams, duration: dur, resolution: activeStep.videoParams?.resolution || '1080p' } })}
-                             className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${activeStep.videoParams?.duration === dur ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'}`}
-                           >
-                             {dur}
-                           </button>
-                         ))}
-                       </div>
+                      <label className="mb-2 flex items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                        Duration
+                        <span className="font-normal text-green-700 dark:text-green-300">
+                          {getImageToVideoDuration(activeStep.videoParams?.duration)}s
+                        </span>
+                      </label>
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-medium text-slate-400">3s</span>
+                        <input
+                          type="range"
+                          min="3"
+                          max="15"
+                          step="1"
+                          value={getImageToVideoDuration(activeStep.videoParams?.duration)}
+                          onChange={(event) => updateImageToVideoSettings({ duration: `${event.target.value}s` })}
+                          style={{
+                            background: `linear-gradient(to right, #22c55e 0%, #22c55e ${((getImageToVideoDuration(activeStep.videoParams?.duration) - 3) / 12) * 100}%, #cbd5e1 ${((getImageToVideoDuration(activeStep.videoParams?.duration) - 3) / 12) * 100}%, #cbd5e1 100%)`,
+                          }}
+                          className="h-1.5 flex-1 cursor-pointer appearance-none rounded-full [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-green-500 [&::-webkit-slider-thumb]:shadow-md [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-green-500"
+                        />
+                        <span className="text-xs font-medium text-slate-400">15s</span>
+                      </div>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Resolution</label>
+                        <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800/60">
+                          {['720p', '1080p'].map((resolution) => (
+                            <button
+                              key={resolution}
+                              type="button"
+                              onClick={() => updateImageToVideoSettings({ resolution })}
+                              className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                                (activeStep.videoParams?.resolution || '720p') === resolution
+                                  ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
+                                  : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                              }`}
+                            >
+                              {resolution}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <label className={`flex cursor-pointer items-center justify-between rounded-lg border px-3 py-2.5 transition-colors ${
+                        (activeStep.videoParams?.generateAudio ?? true)
+                          ? 'border-green-400 bg-green-50/80 dark:border-green-400/70 dark:bg-green-500/10'
+                          : 'border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800/60'
+                      }`}>
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Generate Audio</div>
+                          <div className="mt-0.5 text-[10px] text-slate-400">Include synchronized sound</div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={activeStep.videoParams?.generateAudio ?? true}
+                          onChange={(event) => updateImageToVideoSettings({ generateAudio: event.target.checked })}
+                          className="h-4 w-4 cursor-pointer accent-green-500"
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {activeStep.feature === 'Text to Image' && (
+                  <div className="grid gap-5 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/30 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Aspect ratio</label>
+                      <div className="grid grid-cols-4 gap-2">
+                        {IMAGE_RATIOS.map((ratio) => (
+                          <button
+                            key={ratio}
+                            type="button"
+                            onClick={() => updateTextToImageSettings({ ratio })}
+                            className={`rounded-lg px-2 py-2 text-xs font-medium transition-all ${
+                              (activeStep.imageParams?.ratio || '1:1') === ratio
+                                ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
+                                : 'border border-slate-200 bg-white text-slate-500 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400 dark:hover:text-slate-200'
+                            }`}
+                          >
+                            {ratio}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                     <div>
-                       <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-3">Resolution</label>
-                       <div className="flex gap-2">
-                         {['720p', '1080p'].map(res => (
-                           <button 
-                             key={res}
-                             onClick={() => updateActiveStep({ videoParams: { ...activeStep.videoParams, resolution: res, duration: activeStep.videoParams?.duration || '5s' } })}
-                             className={`px-4 py-2 rounded-lg text-sm font-medium border transition-all ${activeStep.videoParams?.resolution === res ? 'border-green-500 bg-green-50 dark:bg-green-500/10 text-green-700 dark:text-green-300' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-slate-300'}`}
-                           >
-                             {res}
-                           </button>
-                         ))}
-                       </div>
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Resolution</label>
+                      <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800/60">
+                        {IMAGE_RESOLUTIONS.map((resolution) => (
+                          <button
+                            key={resolution}
+                            type="button"
+                            onClick={() => updateTextToImageSettings({ resolution })}
+                            className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                              (activeStep.imageParams?.resolution || '1K') === resolution
+                                ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
+                                : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                            }`}
+                          >
+                            {resolution}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -858,6 +1714,64 @@ export const TemplateBuilder = () => {
           </div>
         </div>
       </div>
+
+      {/* Final Result Preview Modal */}
+      <Modal
+        isOpen={showFinalResultPreview && Boolean(finalResult)}
+        onClose={() => setShowFinalResultPreview(false)}
+        title="Final Result Preview"
+        className="max-w-5xl"
+      >
+        <div className="flex min-h-64 items-center justify-center rounded-xl bg-slate-100 p-3 dark:bg-slate-950 sm:p-5">
+          {finalResult && finalResultType === 'video' ? (
+            <video
+              src={finalResult}
+              className="max-h-[76vh] max-w-full rounded-lg"
+              controls
+              autoPlay
+              playsInline
+              preload="metadata"
+            />
+          ) : finalResult ? (
+            <img
+              src={finalResult}
+              alt="Final result preview"
+              className="max-h-[76vh] max-w-full rounded-lg object-contain"
+            />
+          ) : null}
+        </div>
+      </Modal>
+
+      {/* Material Preview Modal */}
+      <Modal
+        isOpen={Boolean(previewMaterial?.url)}
+        onClose={() => setPreviewMaterial(null)}
+        title={`${previewMaterial?.type || 'Material'} Preview`}
+        className="max-w-4xl"
+      >
+        <div className="flex min-h-48 items-center justify-center rounded-xl bg-slate-100 p-3 dark:bg-slate-950 sm:p-5">
+          {previewMaterial?.url && previewMaterial.type === 'Image' ? (
+            <img
+              src={previewMaterial.url}
+              alt="Material preview"
+              className="max-h-[72vh] max-w-full rounded-lg object-contain"
+            />
+          ) : previewMaterial?.url && previewMaterial.type === 'Video' ? (
+            <video
+              src={previewMaterial.url}
+              className="max-h-[72vh] max-w-full rounded-lg"
+              controls
+              playsInline
+              preload="metadata"
+            />
+          ) : previewMaterial?.url && previewMaterial.type === 'Audio' ? (
+            <div className="w-full max-w-xl rounded-xl bg-white p-6 shadow-sm dark:bg-slate-900">
+              <Music className="mx-auto mb-5 h-12 w-12 text-amber-500" />
+              <audio src={previewMaterial.url} className="w-full" controls preload="metadata" />
+            </div>
+          ) : null}
+        </div>
+      </Modal>
 
       {/* Rewards Info Modal */}
       <Modal isOpen={showRewardsModal} onClose={() => setShowRewardsModal(false)} title="Creator Rewards">
@@ -948,23 +1862,40 @@ export const TemplateBuilder = () => {
         )}
       </Modal>
 
-      {/* Publish Modal */}
+      {/* Review submission modal */}
       <Modal 
-        isOpen={showPublishModal && !publishGateIssue}
+        isOpen={showPublishModal}
         onClose={() => setShowPublishModal(false)}
-        title="Publish Template"
+        title="Submit Template for Review"
         className="max-w-md"
       >
-        <div className="space-y-6">
+        <div className="space-y-4">
+            {draftIdentity && draftIdentity.versionNumber > 1 && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-4 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                Submitting this edit replaces the version currently waiting for review. If this template is already published, its published version stays live until the edit is approved.
+              </div>
+            )}
             <div>
-              <label className="block text-sm font-medium text-slate-900 dark:text-white mb-2">Template cover</label>
-              <p className="text-xs text-slate-500 mb-4">Upload an image or video. This will be displayed on the template marketplace.</p>
+              <label className="mb-1 block text-sm font-medium text-slate-900 dark:text-white">
+                Template cover <span className="text-red-500">*</span>
+              </label>
+              <p className="mb-2 text-xs text-slate-500">Required. Upload the image or video shown on the template marketplace.</p>
               
               <input type="file" ref={publishFileInputRef} onChange={handlePublishCoverUpload} accept="image/*,video/*" className="hidden" />
               {publishCover ? (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   <div 
-                    className="aspect-[3/4] w-full max-w-[240px] mx-auto bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700"
+                    className="w-full mx-auto bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden relative group cursor-pointer border border-slate-200 dark:border-slate-700 transition-[max-width,aspect-ratio] duration-200"
+                    style={{
+                      aspectRatio: coverAspectRatio || 3 / 4,
+                      maxWidth: coverAspectRatio
+                        ? coverAspectRatio > 1.15
+                          ? 320
+                          : coverAspectRatio >= 0.9
+                            ? 260
+                            : 180
+                        : 180,
+                    }}
                     onClick={() => publishFileInputRef.current?.click()}
                   >
                     {publishCoverType === 'video' ? (
@@ -974,13 +1905,71 @@ export const TemplateBuilder = () => {
                         className="w-full h-full object-cover" 
                         autoPlay 
                         muted 
-                        loop 
                         onLoadedMetadata={(e) => {
-                          setCoverVideoDuration(e.currentTarget.duration);
+                          const duration = e.currentTarget.duration;
+                          if (e.currentTarget.videoWidth && e.currentTarget.videoHeight) {
+                            setCoverAspectRatio(
+                              e.currentTarget.videoWidth / e.currentTarget.videoHeight,
+                            );
+                          }
+                          const segmentStart = Math.min(
+                            coverVideoStartTime,
+                            Math.max(0, duration - TEMPLATE_UPLOAD_LIMITS.coverClipSeconds),
+                          );
+                          setCoverVideoDuration(duration);
+                          if (segmentStart !== coverVideoStartTime) {
+                            setCoverVideoStartTime(segmentStart);
+                          }
+                          e.currentTarget.currentTime = segmentStart;
+                          void e.currentTarget.play().catch(() => undefined);
+                        }}
+                        onTimeUpdate={(e) => {
+                          const video = e.currentTarget;
+                          const duration = Number.isFinite(video.duration)
+                            ? video.duration
+                            : coverVideoDuration;
+                          if (!duration) return;
+                          const segmentStart = Math.min(
+                            coverVideoStartTime,
+                            Math.max(0, duration - TEMPLATE_UPLOAD_LIMITS.coverClipSeconds),
+                          );
+                          const segmentEnd = Math.min(
+                            segmentStart + TEMPLATE_UPLOAD_LIMITS.coverClipSeconds,
+                            duration,
+                          );
+                          if (
+                            video.currentTime < segmentStart - 0.05 ||
+                            video.currentTime >= segmentEnd - 0.02
+                          ) {
+                            video.currentTime = segmentStart;
+                            void video.play().catch(() => undefined);
+                          }
+                        }}
+                        onEnded={(e) => {
+                          const video = e.currentTarget;
+                          const segmentStart = Math.min(
+                            coverVideoStartTime,
+                            Math.max(
+                              0,
+                              video.duration - TEMPLATE_UPLOAD_LIMITS.coverClipSeconds,
+                            ),
+                          );
+                          video.currentTime = segmentStart;
+                          void video.play().catch(() => undefined);
                         }}
                       />
                     ) : (
-                      <img src={publishCover} alt="Cover" className="w-full h-full object-cover" />
+                      <img
+                        src={publishCover}
+                        alt="Cover"
+                        className="w-full h-full object-cover"
+                        onLoad={(event) => {
+                          const image = event.currentTarget;
+                          if (image.naturalWidth && image.naturalHeight) {
+                            setCoverAspectRatio(image.naturalWidth / image.naturalHeight);
+                          }
+                        }}
+                      />
                     )}
                     <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                       <span className="text-white text-sm font-medium">Change cover</span>
@@ -990,23 +1979,36 @@ export const TemplateBuilder = () => {
                   {publishCoverType === 'video' && coverVideoDuration > 0 && (
                     <div className="space-y-1 mt-3">
                       <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span>Cover Selection (2s)</span>
-                        <span>{coverVideoStartTime.toFixed(1)}s - {Math.min(coverVideoStartTime + 2, coverVideoDuration).toFixed(1)}s</span>
+                        <span>Cover Selection ({TEMPLATE_UPLOAD_LIMITS.coverClipSeconds}s)</span>
+                        <span>
+                          {coverVideoStartTime.toFixed(1)}s - {Math.min(
+                            coverVideoStartTime + TEMPLATE_UPLOAD_LIMITS.coverClipSeconds,
+                            coverVideoDuration,
+                          ).toFixed(1)}s
+                        </span>
                       </div>
                       <div 
                         className="relative h-10 bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 cursor-pointer"
                         onMouseDown={(e) => {
-                          if (coverVideoDuration <= 2) return;
+                          if (coverVideoDuration <= TEMPLATE_UPLOAD_LIMITS.coverClipSeconds) return;
                           const rect = e.currentTarget.getBoundingClientRect();
                           const updateTime = (clientX: number) => {
                             const x = clientX - rect.left;
                             const percentage = x / rect.width;
                             const targetCenter = percentage * coverVideoDuration;
                             // Ensure the 2s window doesn't go out of bounds
-                            const targetTime = Math.max(0, Math.min(targetCenter - 1, coverVideoDuration - 2));
+                            const halfClip = TEMPLATE_UPLOAD_LIMITS.coverClipSeconds / 2;
+                            const targetTime = Math.max(
+                              0,
+                              Math.min(
+                                targetCenter - halfClip,
+                                coverVideoDuration - TEMPLATE_UPLOAD_LIMITS.coverClipSeconds,
+                              ),
+                            );
                             setCoverVideoStartTime(targetTime);
                             if (videoRef.current) {
                               videoRef.current.currentTime = targetTime;
+                              void videoRef.current.play().catch(() => undefined);
                             }
                           };
                           updateTime(e.clientX);
@@ -1027,7 +2029,10 @@ export const TemplateBuilder = () => {
                            className="absolute top-0 bottom-0 bg-gradient-to-r from-purple-500/30 to-pink-500/30 border-2 border-purple-500 rounded-md shadow-sm transition-colors"
                            style={{
                              left: `${(coverVideoStartTime / coverVideoDuration) * 100}%`,
-                             width: `${Math.min(2 / coverVideoDuration * 100, 100)}%`
+                             width: `${Math.min(
+                               TEMPLATE_UPLOAD_LIMITS.coverClipSeconds / coverVideoDuration * 100,
+                               100,
+                             )}%`
                            }}
                          >
                             <div className="absolute inset-y-0 left-0 w-1 bg-white/50 rounded-l-sm" />
@@ -1040,32 +2045,39 @@ export const TemplateBuilder = () => {
               ) : (
                 <button 
                   onClick={() => publishFileInputRef.current?.click()}
-                  className="aspect-[3/4] w-full max-w-[240px] mx-auto bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
+                  className="aspect-[3/4] w-full max-w-[180px] mx-auto bg-slate-50 dark:bg-slate-800/50 border-2 border-dashed border-red-200 dark:border-red-500/30 rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors group"
                 >
                   <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400 group-hover:scale-110 transition-transform">
                     <Camera className="w-5 h-5" />
                   </div>
                   <div className="text-center">
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Add template cover</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-500">Image or video</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-500">
+                      Image up to {TEMPLATE_UPLOAD_LIMITS.coverImageBytes / (1024 * 1024)} MB or video up to {TEMPLATE_UPLOAD_LIMITS.coverVideoBytes / (1024 * 1024)} MB / {TEMPLATE_UPLOAD_LIMITS.coverVideoSeconds}s
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                      Only your selected {TEMPLATE_UPLOAD_LIMITS.coverClipSeconds}s clip is compressed and uploaded.
+                    </p>
                   </div>
                 </button>
               )}
             </div>
             
-            <div className="pt-4 flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800">
-              <Button variant="outline" onClick={() => setShowPublishModal(false)}>Cancel</Button>
+            <div className="pt-3 flex justify-end gap-3 border-t border-slate-100 dark:border-slate-800">
+              <Button variant="outline" onClick={() => setShowPublishModal(false)} disabled={reviewState === 'submitting'}>Cancel</Button>
               <Button
                 variant="gradient"
                 onClick={() => void handleConfirmPublish()}
-                disabled={!publishCover || saveState === 'saving'}
+                disabled={!publishCover || saveState === 'saving' || reviewState === 'submitting'}
               >
-                {saveState === 'saving' ? 'Saving...' : 'Save cover & validate'}
+                {reviewState === 'submitting' || saveState === 'saving'
+                  ? 'Submitting...'
+                  : 'Submit for review'}
               </Button>
             </div>
         </div>
       </Modal>
-      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-16-M1</p>
+      <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-18-M5-7</p>
     </div>
   );
 };

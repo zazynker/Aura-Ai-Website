@@ -15,11 +15,16 @@ export interface VideoResult {
   sourceImage?: string;
   sourceVideo?: string;
   audioUrl?: string;
+  generateAudio?: boolean;
   status?: VideoCardStatus;
   error?: string;
   requestId?: string;
   mode?: VideoMode;
+  creditsUsed?: number;
   createdAt?: number;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
 }
 
 const VIDEO_RESULTS_CACHE_KEY = 'lazora-video-results-cache-v1';
