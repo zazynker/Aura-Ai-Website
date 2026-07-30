@@ -5,8 +5,9 @@ export const TEMPLATE_ASSETS_BUCKET = 'template-assets';
 
 export const TEMPLATE_UPLOAD_LIMITS = {
   coverImageBytes: 10 * 1024 * 1024,
-  coverVideoBytes: 5 * 1024 * 1024,
+  coverVideoBytes: 20 * 1024 * 1024,
   coverVideoSeconds: 15,
+  coverClipSeconds: 2,
   materialBytes: 25 * 1024 * 1024,
 } as const;
 
@@ -73,6 +74,11 @@ interface ImageVariant {
   height: number;
 }
 
+interface VideoVariant extends ImageVariant {
+  mimeType: string;
+  durationSeconds: number;
+}
+
 function randomId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -128,7 +134,7 @@ function assertFile(
   }
   if (file.size <= 0) throw new Error(`${label} file is empty.`);
   if (file.size > maxBytes) {
-    throw new Error(`${label} must be smaller than ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
+    throw new Error(`${label} must be ${Math.floor(maxBytes / 1024 / 1024)} MB or smaller.`);
   }
 }
 
@@ -285,7 +291,10 @@ function canvasContainsVideoFrame(
   return false;
 }
 
-async function createVideoPoster(video: HTMLVideoElement): Promise<ImageVariant> {
+async function createVideoPoster(
+  video: HTMLVideoElement,
+  preferredTime?: number,
+): Promise<ImageVariant> {
   if (!video.videoWidth || !video.videoHeight) {
     throw new Error('The cover video has no readable frame dimensions.');
   }
@@ -301,6 +310,9 @@ async function createVideoPoster(video: HTMLVideoElement): Promise<ImageVariant>
 
   const duration = Number.isFinite(video.duration) ? video.duration : 0;
   const candidateTimes = [
+    ...(preferredTime === undefined
+      ? []
+      : [Math.min(Math.max(preferredTime, 0), Math.max(0, duration - 0.05))]),
     Math.min(Math.max(duration / 2, 0.1), 1),
     Math.min(Math.max(duration * 0.25, 0.1), Math.max(0.1, duration - 0.05)),
     Math.min(0.1, Math.max(0, duration - 0.05)),
@@ -316,6 +328,151 @@ async function createVideoPoster(video: HTMLVideoElement): Promise<ImageVariant>
   }
 
   throw new Error('The video preview frame was empty. Please try another video.');
+}
+
+function createCoverRecorder(
+  stream: MediaStream,
+): { recorder: MediaRecorder; uploadMimeType: string } {
+  if (typeof MediaRecorder === 'undefined') {
+    throw new Error('This browser cannot create a compact video cover.');
+  }
+
+  const supportedTypes = [
+    'video/mp4;codecs=avc1.42E01E',
+    'video/mp4',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ].filter((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+
+  for (const mimeType of supportedTypes) {
+    try {
+      return {
+        recorder: new MediaRecorder(stream, {
+          mimeType,
+          videoBitsPerSecond: 800_000,
+        }),
+        uploadMimeType: mimeType.split(';', 1)[0],
+      };
+    } catch {
+      // Some browsers report a codec as supported but cannot initialize it for
+      // a canvas stream. Continue to the next broadly playable format.
+    }
+  }
+
+  throw new Error('This browser cannot encode a compact MP4 or WebM cover.');
+}
+
+async function createVideoVariant(
+  video: HTMLVideoElement,
+  requestedStartSeconds: number,
+): Promise<VideoVariant> {
+  if (!video.videoWidth || !video.videoHeight || !Number.isFinite(video.duration)) {
+    throw new Error('The cover video has no readable dimensions or duration.');
+  }
+
+  const clipDuration = Math.min(TEMPLATE_UPLOAD_LIMITS.coverClipSeconds, video.duration);
+  const startSeconds = Math.min(
+    Math.max(Number.isFinite(requestedStartSeconds) ? requestedStartSeconds : 0, 0),
+    Math.max(0, video.duration - clipDuration),
+  );
+  const endSeconds = startSeconds + clipDuration;
+  const scale = Math.min(1, 720 / video.videoWidth, 720 / video.videoHeight);
+  const width = Math.max(2, Math.round(video.videoWidth * scale / 2) * 2);
+  const height = Math.max(2, Math.round(video.videoHeight * scale / 2) * 2);
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d', { alpha: false });
+  if (!context || typeof canvas.captureStream !== 'function') {
+    throw new Error('This browser cannot create a compact video cover.');
+  }
+
+  await waitForDecodedVideoFrame(video, startSeconds);
+  context.drawImage(video, 0, 0, width, height);
+
+  const stream = canvas.captureStream(30);
+  const chunks: Blob[] = [];
+  let recorderSetup: ReturnType<typeof createCoverRecorder>;
+  try {
+    recorderSetup = createCoverRecorder(stream);
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw error;
+  }
+  const { recorder, uploadMimeType } = recorderSetup;
+  const stopped = new Promise<Blob>((resolve, reject) => {
+    recorder.addEventListener('dataavailable', (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    });
+    recorder.addEventListener('error', () => {
+      reject(new Error('The compact video cover could not be encoded.'));
+    }, { once: true });
+    recorder.addEventListener('stop', () => {
+      const blob = new Blob(chunks, { type: uploadMimeType });
+      if (blob.size <= 0) {
+        reject(new Error('The compact video cover was empty.'));
+        return;
+      }
+      resolve(blob);
+    }, { once: true });
+  });
+
+  let processingError: unknown = null;
+  let recorderStarted = false;
+  try {
+    recorder.start(200);
+    recorderStarted = true;
+    video.playbackRate = 1;
+    await video.play();
+    await new Promise<void>((resolve, reject) => {
+      let frameRequest = 0;
+      const timeout = window.setTimeout(() => {
+        window.cancelAnimationFrame(frameRequest);
+        reject(new Error('Timed out while creating the 2-second video cover.'));
+      }, 8_000);
+      const finish = () => {
+        window.clearTimeout(timeout);
+        window.cancelAnimationFrame(frameRequest);
+        resolve();
+      };
+      const drawFrame = () => {
+        context.drawImage(video, 0, 0, width, height);
+        if (video.ended || video.currentTime >= endSeconds - 0.02) {
+          finish();
+          return;
+        }
+        frameRequest = window.requestAnimationFrame(drawFrame);
+      };
+      frameRequest = window.requestAnimationFrame(drawFrame);
+    });
+  } catch (error) {
+    processingError = error;
+  } finally {
+    video.pause();
+    if (recorderStarted && recorder.state !== 'inactive') recorder.stop();
+  }
+
+  if (!recorderStarted) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw processingError instanceof Error
+      ? processingError
+      : new Error('The compact video cover could not be encoded.');
+  }
+
+  try {
+    const blob = await stopped;
+    if (processingError) throw processingError;
+    return {
+      blob,
+      mimeType: uploadMimeType,
+      width,
+      height,
+      durationSeconds: clipDuration,
+    };
+  } finally {
+    stream.getTracks().forEach((track) => track.stop());
+  }
 }
 
 async function uploadObject(
@@ -352,6 +509,7 @@ async function uploadObject(
 export async function uploadTemplateCover(
   identity: TemplateStorageIdentity,
   file: File,
+  videoStartSeconds = 0,
 ): Promise<UploadedTemplateCover> {
   if (file.type.startsWith('image/')) {
     validateTemplateCoverFile(file);
@@ -389,18 +547,24 @@ export async function uploadTemplateCover(
     if (!Number.isFinite(video.duration) || video.duration > TEMPLATE_UPLOAD_LIMITS.coverVideoSeconds) {
       throw new Error(`Cover video must be ${TEMPLATE_UPLOAD_LIMITS.coverVideoSeconds} seconds or shorter.`);
     }
-    const poster = await createVideoPoster(video);
-    const videoPath = buildObjectPath(identity, 'cover-video', file.type);
+    const clipDuration = Math.min(TEMPLATE_UPLOAD_LIMITS.coverClipSeconds, video.duration);
+    const clipStart = Math.min(
+      Math.max(Number.isFinite(videoStartSeconds) ? videoStartSeconds : 0, 0),
+      Math.max(0, video.duration - clipDuration),
+    );
+    const poster = await createVideoPoster(video, clipStart + Math.min(0.5, clipDuration / 2));
+    const compactVideo = await createVideoVariant(video, clipStart);
+    const videoPath = buildObjectPath(identity, 'cover-video', compactVideo.mimeType);
     const posterPath = buildObjectPath(identity, 'cover-poster', 'image/webp');
     const uploadedVideo = await uploadObject(
       TEMPLATE_PREVIEWS_BUCKET,
       videoPath,
-      file,
-      file.type,
+      compactVideo.blob,
+      compactVideo.mimeType,
       {
-        width: video.videoWidth,
-        height: video.videoHeight,
-        durationSeconds: video.duration,
+        width: compactVideo.width,
+        height: compactVideo.height,
+        durationSeconds: compactVideo.durationSeconds,
       },
     );
     try {

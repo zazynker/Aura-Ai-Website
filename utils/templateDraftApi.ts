@@ -40,6 +40,7 @@ export interface SaveTemplateDraftInput {
   persistedFinalResult: UploadedTemplateObject | null;
   persistedFinalResultPoster: UploadedTemplateObject | null;
   coverFile: File | null;
+  coverVideoStartSeconds: number;
   persistedCover: UploadedTemplateCover | null;
   resultFiles: Record<string, File>;
   persistedResults: PersistedResultMap;
@@ -443,7 +444,11 @@ export async function saveTemplateDraft(
 
   try {
     if (input.coverFile) {
-      cover = await uploadTemplateCover(identity, input.coverFile);
+      cover = await uploadTemplateCover(
+        identity,
+        input.coverFile,
+        input.coverVideoStartSeconds,
+      );
       newlyUploaded.push(
         { bucket: cover.original.bucket, path: cover.original.path },
         { bucket: cover.thumbnail.bucket, path: cover.thumbnail.path },

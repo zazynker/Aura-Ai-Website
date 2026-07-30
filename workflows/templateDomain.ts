@@ -185,7 +185,7 @@ export function mapTemplateRow(row: TemplateRow): TemplateRecord {
 export function isEditableTemplateStatus(
   status: TemplateDatabaseStatus,
 ): boolean {
-  return status === 'draft' || status === 'rejected';
+  return status === 'draft' || status === 'pending_review' || status === 'rejected';
 }
 
 export function isPublishedTemplateStatus(

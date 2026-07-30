@@ -1032,7 +1032,10 @@ useEffect(() => {
                           </>
                         )}
                         {template.status === 'In review' && (
-                          <Button variant="secondary" size="sm" className="w-full" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                          <>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/${template.id}`); }}>View</Button>
+                            <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); navigate(`/templates/create?templateId=${template.id}`); }}>Edit</Button>
+                          </>
                         )}
                         {template.status === 'Published' && (
                           <>
@@ -1041,13 +1044,12 @@ useEffect(() => {
                               variant="secondary"
                               size="sm"
                               className="flex-1"
-                              disabled={template.updateStatus === 'in_review'}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 navigate(`/templates/create?templateId=${template.id}`);
                               }}
                             >
-                              {template.updateStatus === 'in_review' ? 'Under review' : 'Edit'}
+                              Edit
                             </Button>
                             <Button variant="secondary" size="sm" className="flex-1" onClick={(e) => { 
                               e.stopPropagation(); 

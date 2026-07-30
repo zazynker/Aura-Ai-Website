@@ -921,6 +921,7 @@ export const TemplateBuilder = () => {
         persistedFinalResult,
         persistedFinalResultPoster,
         coverFile: publishCoverFile,
+        coverVideoStartSeconds: coverVideoStartTime,
         persistedCover,
         resultFiles,
         persistedResults,
@@ -1871,7 +1872,7 @@ export const TemplateBuilder = () => {
         <div className="space-y-4">
             {draftIdentity && draftIdentity.versionNumber > 1 && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-4 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-                This update replaces the version waiting for review. The published version stays live until this update is approved.
+                Submitting this edit replaces the version currently waiting for review. If this template is already published, its published version stays live until the edit is approved.
               </div>
             )}
             <div>
@@ -1913,7 +1914,7 @@ export const TemplateBuilder = () => {
                           }
                           const segmentStart = Math.min(
                             coverVideoStartTime,
-                            Math.max(0, duration - 2),
+                            Math.max(0, duration - TEMPLATE_UPLOAD_LIMITS.coverClipSeconds),
                           );
                           setCoverVideoDuration(duration);
                           if (segmentStart !== coverVideoStartTime) {
@@ -1930,9 +1931,12 @@ export const TemplateBuilder = () => {
                           if (!duration) return;
                           const segmentStart = Math.min(
                             coverVideoStartTime,
-                            Math.max(0, duration - 2),
+                            Math.max(0, duration - TEMPLATE_UPLOAD_LIMITS.coverClipSeconds),
                           );
-                          const segmentEnd = Math.min(segmentStart + 2, duration);
+                          const segmentEnd = Math.min(
+                            segmentStart + TEMPLATE_UPLOAD_LIMITS.coverClipSeconds,
+                            duration,
+                          );
                           if (
                             video.currentTime < segmentStart - 0.05 ||
                             video.currentTime >= segmentEnd - 0.02
@@ -1945,7 +1949,10 @@ export const TemplateBuilder = () => {
                           const video = e.currentTarget;
                           const segmentStart = Math.min(
                             coverVideoStartTime,
-                            Math.max(0, video.duration - 2),
+                            Math.max(
+                              0,
+                              video.duration - TEMPLATE_UPLOAD_LIMITS.coverClipSeconds,
+                            ),
                           );
                           video.currentTime = segmentStart;
                           void video.play().catch(() => undefined);
@@ -1972,20 +1979,32 @@ export const TemplateBuilder = () => {
                   {publishCoverType === 'video' && coverVideoDuration > 0 && (
                     <div className="space-y-1 mt-3">
                       <div className="flex items-center justify-between text-xs text-slate-500">
-                        <span>Cover Selection (2s)</span>
-                        <span>{coverVideoStartTime.toFixed(1)}s - {Math.min(coverVideoStartTime + 2, coverVideoDuration).toFixed(1)}s</span>
+                        <span>Cover Selection ({TEMPLATE_UPLOAD_LIMITS.coverClipSeconds}s)</span>
+                        <span>
+                          {coverVideoStartTime.toFixed(1)}s - {Math.min(
+                            coverVideoStartTime + TEMPLATE_UPLOAD_LIMITS.coverClipSeconds,
+                            coverVideoDuration,
+                          ).toFixed(1)}s
+                        </span>
                       </div>
                       <div 
                         className="relative h-10 bg-slate-100 dark:bg-slate-800 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 cursor-pointer"
                         onMouseDown={(e) => {
-                          if (coverVideoDuration <= 2) return;
+                          if (coverVideoDuration <= TEMPLATE_UPLOAD_LIMITS.coverClipSeconds) return;
                           const rect = e.currentTarget.getBoundingClientRect();
                           const updateTime = (clientX: number) => {
                             const x = clientX - rect.left;
                             const percentage = x / rect.width;
                             const targetCenter = percentage * coverVideoDuration;
                             // Ensure the 2s window doesn't go out of bounds
-                            const targetTime = Math.max(0, Math.min(targetCenter - 1, coverVideoDuration - 2));
+                            const halfClip = TEMPLATE_UPLOAD_LIMITS.coverClipSeconds / 2;
+                            const targetTime = Math.max(
+                              0,
+                              Math.min(
+                                targetCenter - halfClip,
+                                coverVideoDuration - TEMPLATE_UPLOAD_LIMITS.coverClipSeconds,
+                              ),
+                            );
                             setCoverVideoStartTime(targetTime);
                             if (videoRef.current) {
                               videoRef.current.currentTime = targetTime;
@@ -2010,7 +2029,10 @@ export const TemplateBuilder = () => {
                            className="absolute top-0 bottom-0 bg-gradient-to-r from-purple-500/30 to-pink-500/30 border-2 border-purple-500 rounded-md shadow-sm transition-colors"
                            style={{
                              left: `${(coverVideoStartTime / coverVideoDuration) * 100}%`,
-                             width: `${Math.min(2 / coverVideoDuration * 100, 100)}%`
+                             width: `${Math.min(
+                               TEMPLATE_UPLOAD_LIMITS.coverClipSeconds / coverVideoDuration * 100,
+                               100,
+                             )}%`
                            }}
                          >
                             <div className="absolute inset-y-0 left-0 w-1 bg-white/50 rounded-l-sm" />
@@ -2032,6 +2054,9 @@ export const TemplateBuilder = () => {
                     <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Add template cover</p>
                     <p className="text-xs text-slate-500 dark:text-slate-500">
                       Image up to {TEMPLATE_UPLOAD_LIMITS.coverImageBytes / (1024 * 1024)} MB or video up to {TEMPLATE_UPLOAD_LIMITS.coverVideoBytes / (1024 * 1024)} MB / {TEMPLATE_UPLOAD_LIMITS.coverVideoSeconds}s
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-400 dark:text-slate-500">
+                      Only your selected {TEMPLATE_UPLOAD_LIMITS.coverClipSeconds}s clip is compressed and uploaded.
                     </p>
                   </div>
                 </button>
