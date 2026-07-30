@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
-import { User as UserIcon, LogOut, LayoutDashboard, CreditCard, Sparkles, Sun, Moon, Bell, Check, AlertCircle, Sparkles as SparklesOutline, Pencil } from 'lucide-react';
+import { User as UserIcon, LogOut, LayoutDashboard, CreditCard, Sparkles, Sun, Moon, Bell, Check, AlertCircle, Sparkles as SparklesOutline, Pencil, Menu, X, Images, Video as VideoIcon, Blocks, LayoutTemplate } from 'lucide-react';
 import { Button } from './ui/Button';
 import { ProfileSettingsModal } from './ProfileSettingsModal';
 import {
@@ -42,11 +42,20 @@ const getNotificationLink = (notification: UserNotification): string => {
   return baseLink;
 };
 
+const primaryNavItems = [
+  { to: '/', label: 'Templates', icon: LayoutTemplate },
+  { to: '/modify', label: 'Image', icon: Images },
+  { to: '/video', label: 'Video', icon: VideoIcon },
+  { to: '/templates/create', label: 'Builder', icon: Blocks },
+  { to: '/pricing', label: 'Plans', icon: CreditCard },
+] as const;
+
 export const Navbar = () => {
   const { user, logout, theme, toggleTheme, addToast } = useStore();
   const navigate = useNavigate();
   const location = useLocation();
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showProfileSettings, setShowProfileSettings] = useState(false);
   const [notifications, setNotifications] = useState<UserNotification[]>([]);
@@ -57,6 +66,10 @@ export const Navbar = () => {
   const unreadCount = notifications.filter(n => !n.readAt).length;
 
   const notifRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setShowMobileMenu(false);
+  }, [location.pathname, location.search]);
 
   const refreshNotifications = useCallback(async () => {
     if (!user) {
@@ -163,15 +176,23 @@ export const Navbar = () => {
 
         {/* Center */}
         <div className="hidden md:flex items-center gap-8">
-          <Link to="/" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Templates</Link>
-          <Link to="/modify" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/modify' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Image</Link>
-          <Link to="/video" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/video' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Video</Link>
-          <Link to="/templates/create" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/templates/create' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Builder</Link>
-          <Link to="/pricing" className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${location.pathname === '/pricing' ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}>Plans</Link>
+          {primaryNavItems.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className={`text-sm font-medium transition-colors hover:text-purple-500 dark:hover:text-white ${
+                location.pathname === item.to
+                  ? 'text-slate-900 dark:text-white'
+                  : 'text-slate-500 dark:text-slate-400'
+              }`}
+            >
+              {item.label}
+            </Link>
+          ))}
         </div>
 
         {/* Right */}
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-1 sm:gap-3 md:gap-4">
           
           {/* Theme Toggle */}
           <button 
@@ -325,13 +346,66 @@ export const Navbar = () => {
               </div>
             </>
           ) : (
-            <div className="flex items-center gap-3">
-              <Link to="/login" className="text-sm font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white">Log in</Link>
+            <div className="flex items-center gap-2 sm:gap-3">
+              <Link to="/login" className="hidden text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white sm:inline">Log in</Link>
               <Button variant="gradient" size="sm" onClick={() => navigate('/signup')}>Sign Up</Button>
             </div>
           )}
+          <button
+            type="button"
+            onClick={() => setShowMobileMenu((open) => !open)}
+            className="ml-0.5 inline-flex h-10 w-10 items-center justify-center rounded-xl text-slate-600 transition hover:bg-slate-100 hover:text-purple-600 dark:text-slate-300 dark:hover:bg-white/5 dark:hover:text-white md:hidden"
+            aria-label={showMobileMenu ? 'Close navigation menu' : 'Open navigation menu'}
+            aria-expanded={showMobileMenu}
+          >
+            {showMobileMenu ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
           </div>
         </div>
+        {showMobileMenu && (
+          <>
+            <button
+              type="button"
+              aria-label="Close navigation menu"
+              className="fixed inset-0 top-16 z-[-1] bg-slate-950/20 backdrop-blur-[2px] md:hidden"
+              onClick={() => setShowMobileMenu(false)}
+            />
+            <div className="border-t border-slate-200 bg-white px-4 py-3 shadow-xl dark:border-white/10 dark:bg-slate-900 md:hidden">
+              <div className="mx-auto grid max-w-7xl grid-cols-2 gap-2">
+                {primaryNavItems.map((item) => {
+                  const Icon = item.icon;
+                  const isActive = location.pathname === item.to;
+                  return (
+                    <Link
+                      key={item.to}
+                      to={item.to}
+                      className={`flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold transition ${
+                        isActive
+                          ? 'bg-purple-50 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300'
+                          : 'text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-white/5'
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+                {!user && (
+                  <Link
+                    to="/login"
+                    className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-white/5 sm:hidden"
+                  >
+                    <UserIcon className="h-4 w-4" />
+                    Log in
+                  </Link>
+                )}
+              </div>
+              <p className="mx-auto mt-2 max-w-7xl px-3 text-xs text-slate-400">
+                Browse every tool without an account. Sign up only when you create.
+              </p>
+            </div>
+          </>
+        )}
       </nav>
       <ProfileSettingsModal
         isOpen={showProfileSettings}

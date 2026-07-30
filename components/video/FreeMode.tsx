@@ -13,6 +13,8 @@ import { FreeModePromptEditor } from './FreeModePromptEditor';
 interface FreeModeProps {
   onGenerate: (result: VideoResult) => void;
   initialImage?: string | null;
+  isAuthenticated: boolean;
+  onRequireAuth: () => void;
 }
 
 interface Asset {
@@ -26,7 +28,7 @@ interface Asset {
 type FreeModeResolution = '720p' | '1080p' | '4k';
 type FreeModeRatio = 'auto' | '9:16' | '1:1' | '16:9';
 
-export const FreeMode: React.FC<FreeModeProps> = ({ onGenerate, initialImage }) => {
+export const FreeMode: React.FC<FreeModeProps> = ({ onGenerate, initialImage, isAuthenticated, onRequireAuth }) => {
   const [prompt, setPrompt] = useState('');
   const [assets, setAssets] = useState<Asset[]>([]);
 
@@ -66,6 +68,10 @@ export const FreeMode: React.FC<FreeModeProps> = ({ onGenerate, initialImage }) 
   }, [isParamsOpen]);
 
   const handleGenerate = async () => {
+    if (!isAuthenticated) {
+      onRequireAuth();
+      return;
+    }
     if (!prompt) {
       alert('Please enter a generation prompt.');
       return;

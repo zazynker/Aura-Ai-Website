@@ -19,11 +19,13 @@ interface ImageToVideoProps {
   onInsufficientCredits: (requiredCredits: number) => void;
   isPro: boolean;
   onProRequired: () => void;
+  isAuthenticated: boolean;
+  onRequireAuth: () => void;
 }
 
 const formatDuration = (seconds?: number) => `00:${String(seconds || 3).padStart(2, '0')}`;
 
-export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
+export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits, isPro, onProRequired, isAuthenticated, onRequireAuth }) => {
   const [prompt, setPrompt] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedEndImage, setSelectedEndImage] = useState<string | null>(null);
@@ -204,6 +206,10 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
   };
 
   const handleGenerate = async () => {
+    if (!isAuthenticated) {
+      onRequireAuth();
+      return;
+    }
     const existing = getPendingVideoJob();
     if (existing && existing.mode === 'image_to_video') {
       await handleResumePending();

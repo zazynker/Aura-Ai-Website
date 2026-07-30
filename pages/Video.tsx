@@ -30,6 +30,7 @@ import { Generation, VideoMode, type GenerationInputAssetSnapshot } from '../typ
 import type { WorkflowCapabilityKey } from '../workflows/types';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 import { consumeWorkflowHandoff, type WorkflowHandoff } from '../components/workflow/workflowManager';
+import { AuthGateModal } from '../components/AuthGateModal';
 
 const parseDurationSeconds = (duration: string): number | undefined => {
   if (!duration) return undefined;
@@ -195,6 +196,7 @@ export const Video: React.FC = () => {
   );
   const [videoToDelete, setVideoToDelete] = useState<string | null>(null);
   const [showWelcomeGift, setShowWelcomeGift] = useState(false);
+  const [showAuthGate, setShowAuthGate] = useState(false);
   const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
   const { addGeneration, user, generations } = useStore();
   const savedVideoKeysRef = useRef<Set<string>>(new Set());
@@ -207,6 +209,10 @@ export const Video: React.FC = () => {
   }, [location.search]);
 
   const handleInsufficientCredits = () => {
+    if (!user) {
+      setShowAuthGate(true);
+      return;
+    }
     if (user?.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
       setShowWelcomeGift(true);
       return;
@@ -215,6 +221,10 @@ export const Video: React.FC = () => {
   };
 
   const handleProRequired = () => {
+    if (!user) {
+      setShowAuthGate(true);
+      return;
+    }
     window.location.hash = '#/pricing';
   };
 
@@ -512,27 +522,27 @@ export const Video: React.FC = () => {
   };
 
   return (
-    <div className="flex w-full overflow-hidden bg-white dark:bg-slate-900 mt-16" style={{ height: 'calc(100vh - 64px)' }}>
-      <div className="flex w-[480px] shrink-0 flex-col border-r border-slate-200 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl relative z-10">
+    <div className="mt-16 flex min-h-[calc(100vh-64px)] w-full flex-col overflow-visible bg-white dark:bg-slate-900 lg:h-[calc(100vh-64px)] lg:flex-row lg:overflow-hidden">
+      <div className="relative z-10 flex min-h-[calc(100vh-64px)] w-full shrink-0 flex-col border-b border-slate-200 bg-white/80 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 lg:min-h-0 lg:w-[480px] lg:border-b-0 lg:border-r">
         <div className="p-5 border-b border-slate-200 dark:border-slate-800 shrink-0 relative z-50">
           <FeatureSwitcher activeFeature={activeFeature} onChange={setActiveFeature} />
         </div>
 
         {activeFeature === 'image-to-video' && (
-          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
+          <ImageToVideo onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} isAuthenticated={Boolean(user)} onRequireAuth={() => setShowAuthGate(true)} />
         )}
         {activeFeature === 'motion-control' && (
-          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} />
+          <MotionControl onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isPro={hasProAccess} onProRequired={handleProRequired} isAuthenticated={Boolean(user)} onRequireAuth={() => setShowAuthGate(true)} />
         )}
         {activeFeature === 'lip-sync' && (
-          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} />
+          <LipSync onGenerate={handleNewResult} onUpdate={handleUpdateResult} initialImage={initialImage} workflowHandoff={workflowHandoff} userCredits={user?.credits ?? 0} onInsufficientCredits={handleInsufficientCredits} isAuthenticated={Boolean(user)} onRequireAuth={() => setShowAuthGate(true)} />
         )}
         {activeFeature === 'free-mode' && (
-          <FreeMode onGenerate={handleNewResult} initialImage={initialImage} />
+          <FreeMode onGenerate={handleNewResult} initialImage={initialImage} isAuthenticated={Boolean(user)} onRequireAuth={() => setShowAuthGate(true)} />
         )}
       </div>
 
-      <div className="flex flex-1 flex-col relative overflow-hidden bg-slate-50 dark:bg-slate-900">
+      <div className="relative flex min-h-[60vh] flex-1 flex-col overflow-hidden bg-slate-50 dark:bg-slate-900">
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto w-full max-w-3xl space-y-8 pb-12">
             {results.length === 0 && (
@@ -719,6 +729,13 @@ export const Video: React.FC = () => {
         </div>
       </Modal>
       <WelcomeGiftModal isOpen={showWelcomeGift} onClose={() => setShowWelcomeGift(false)} />
+      <AuthGateModal
+        isOpen={showAuthGate}
+        onClose={() => setShowAuthGate(false)}
+        destination={`/video${location.search}`}
+        title="Sign up to generate your video"
+        description="Browse every video mode and configure your inputs first. Create a free account only when you are ready to generate."
+      />
     </div>
   );
 };

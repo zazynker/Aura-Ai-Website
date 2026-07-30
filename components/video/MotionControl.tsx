@@ -25,6 +25,8 @@ interface MotionControlProps {
   onInsufficientCredits: (requiredCredits: number) => void;
   isPro: boolean;
   onProRequired: () => void;
+  isAuthenticated: boolean;
+  onRequireAuth: () => void;
 }
 
 type DirectionMatch = 'video' | 'image';
@@ -32,7 +34,7 @@ type Resolution = '720p' | '1080p';
 
 const formatDuration = (seconds?: number) => `00:${String(seconds || 5).padStart(2, '0')}`;
 
-export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits, isPro, onProRequired }) => {
+export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits, isPro, onProRequired, isAuthenticated, onRequireAuth }) => {
   const [selectedImage, setSelectedImage] = useState<string | null>(initialImage);
   const [selectedVideo, setSelectedVideo] = useState<string | null>(null);
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -215,6 +217,10 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
   };
 
   const handleGenerate = async () => {
+    if (!isAuthenticated) {
+      onRequireAuth();
+      return;
+    }
     const existing = getPendingVideoJob();
     if (existing && existing.mode === 'motion_control') {
       await handleResumePending();

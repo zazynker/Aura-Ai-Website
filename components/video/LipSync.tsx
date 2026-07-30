@@ -26,6 +26,8 @@ interface LipSyncProps {
   workflowHandoff?: WorkflowHandoff | null;
   userCredits: number;
   onInsufficientCredits: (requiredCredits: number) => void;
+  isAuthenticated: boolean;
+  onRequireAuth: () => void;
 }
 
 type MediaState = { url: string; type: 'image' | 'video'; file?: File };
@@ -49,7 +51,7 @@ const formatTime = (timeInSeconds: number) => {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 };
 
-export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits }) => {
+export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialImage, workflowHandoff, userCredits, onInsufficientCredits, isAuthenticated, onRequireAuth }) => {
   const [selectedMedia, setSelectedMedia] = useState<MediaState | null>(
     initialImage ? { url: initialImage, type: 'image' } : null
   );
@@ -388,6 +390,10 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   };
 
   const handleGenerate = async () => {
+    if (!isAuthenticated) {
+      onRequireAuth();
+      return;
+    }
     const existing = getPendingVideoJob();
     if (existing && existing.mode === 'lip_sync') {
       await handleResumePending();

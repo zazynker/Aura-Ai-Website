@@ -7,6 +7,7 @@ import { Button } from '../components/ui/Button';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 import { supabase } from '../utils/supabase';
 import { DODO_PRODUCTS, openDodoOverlayCheckout, isDodoConfigured } from '../utils/dodoPayments';
+import { AuthGateModal } from '../components/AuthGateModal';
 
 export const Pricing = () => {
   const navigate = useNavigate();
@@ -14,6 +15,7 @@ export const Pricing = () => {
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [billingCycle, setBillingCycle] = useState<'yearly' | 'monthly'>('yearly');
   const [showGiftModal, setShowGiftModal] = useState(false);
+  const [showAuthGate, setShowAuthGate] = useState(false);
 
   // 预初始化 Dodo Checkout SDK
   React.useEffect(() => {
@@ -30,7 +32,7 @@ export const Pricing = () => {
   const handlePurchase = async (productId: string) => {
     if (!user) {
       saveBrowsingState({ intendedDestination: '/pricing' });
-      navigate('/login');
+      setShowAuthGate(true);
       return;
     }
 
@@ -382,6 +384,13 @@ export const Pricing = () => {
       </div>
 
       <WelcomeGiftModal isOpen={showGiftModal} onClose={() => setShowGiftModal(false)} />
+      <AuthGateModal
+        isOpen={showAuthGate}
+        onClose={() => setShowAuthGate(false)}
+        destination="/pricing"
+        title="Sign up to choose your plan"
+        description="You can compare every plan without an account. Create a free account only when you are ready to subscribe or buy credits."
+      />
     </div>
   );
 };

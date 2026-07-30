@@ -12,6 +12,7 @@ import { uploadUserImage, validateFile } from '../utils/uploadService';
 import { logVideoInterest } from '../utils/api';
 import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 import { consumeWorkflowHandoff } from '../components/workflow/workflowManager';
+import { AuthGateModal } from '../components/AuthGateModal';
 
 // === Admin Fake Generation Queue ===
 interface FakeQueueItem {
@@ -63,6 +64,7 @@ export const Modify = () => {
   const { user, addGenerations, addToast, generations, collections, saveBrowsingState, browsing, saveModifySession } = useStore();
   const MODIFY_SESSION_ID = 'modify-session';
   const [showWelcomeGift, setShowWelcomeGift] = useState(false);
+  const [showAuthGate, setShowAuthGate] = useState(false);
 
   const handleInsufficientCredits = () => {
     if (user?.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
@@ -268,14 +270,6 @@ export const Modify = () => {
     return sourceGenerations;
   }, [originalUploadedImage, generations, user, currentImageSource]);
 
-  // --- Effects ---
-  useEffect(() => {
-    if (!user) {
-      saveBrowsingState({ intendedDestination: '/modify' });
-      navigate('/login');
-    }
-  }, [user]);
-
   // Auto-open Replace tool when image is selected
   useEffect(() => {
     if (hasSelectedImage && activeTool === null) {
@@ -388,8 +382,6 @@ export const Modify = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hasSelectedImage, currentImage, originalUploadedImage, generatedResults, showResults, currentImageSource]);
-
-  if (!user) return null;
 
   // --- Logic: Session & Navigation ---
   
@@ -521,6 +513,11 @@ export const Modify = () => {
 
   // --- Helper: Upload file to Supabase and get URL ---
   const uploadFileToSupabase = async (file: File): Promise<string | null> => {
+    if (!user) {
+      saveBrowsingState({ intendedDestination: '/modify' });
+      setShowAuthGate(true);
+      return null;
+    }
     // Validate file first
     const validationError = validateFile(file);
     if (validationError) {
@@ -530,7 +527,7 @@ export const Modify = () => {
 
     setIsUploading(true);
     try {
-      const result = await uploadUserImage(user!.id, file);
+      const result = await uploadUserImage(user.id, file);
       if (!result.success) {
         addToast('error', result.error || 'Failed to upload image. Please try again.');
         return null;
@@ -555,7 +552,11 @@ export const Modify = () => {
   };
 
   const runGeneration = async (toolName: string, promptText: string) => {
-    if (!user) { navigate('/login'); return; }
+    if (!user) {
+      saveBrowsingState({ intendedDestination: '/modify' });
+      setShowAuthGate(true);
+      return;
+    }
     
         
     // Determine resolution for credit estimation
@@ -967,7 +968,11 @@ export const Modify = () => {
 
   // --- Text to Image Generation ---
   const runTextToImage = async () => {
-    if (!user) { navigate('/login'); return; }
+    if (!user) {
+      saveBrowsingState({ intendedDestination: '/modify' });
+      setShowAuthGate(true);
+      return;
+    }
     
    
     // Pre-check: estimate credits needed
@@ -2711,6 +2716,13 @@ export const Modify = () => {
       </Modal>
 
       <WelcomeGiftModal isOpen={showWelcomeGift} onClose={() => setShowWelcomeGift(false)} />
+      <AuthGateModal
+        isOpen={showAuthGate}
+        onClose={() => setShowAuthGate(false)}
+        destination="/modify"
+        title="Sign up to create your image"
+        description="Explore every image tool and setting first. Create a free account only when you upload or generate."
+      />
 
       {/* Fullscreen Lightbox */}
       {showLightbox && (

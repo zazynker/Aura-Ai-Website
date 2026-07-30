@@ -6,6 +6,7 @@ import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 import { fetchPublishedTemplates } from '../utils/templatePublicApi';
+import { AuthGateModal } from '../components/AuthGateModal';
 
 const getHomeColumnCount = (): number => {
   if (typeof window === 'undefined') return 5;
@@ -184,13 +185,6 @@ const TemplateCardItem: React.FC<{
   const handleUseWorkflow = (e: React.MouseEvent) => {
     e.stopPropagation();
     const detailPath = '/templates/' + (t.slug || t.id);
-    if (!user) {
-      saveBrowsingState({ 
-        intendedDestination: detailPath
-      });
-      navigate('/login');
-      return;
-    }
     // M5-8 will create the real run. Until then, never start the old mock
     // workflow; open the published workflow details instead.
     navigate(detailPath);
@@ -307,7 +301,7 @@ export const Home = () => {
   const [search, setSearch] = useState(browsing.searchQuery);
   const [activeCategory, setActiveCategory] = useState(browsing.category);
   const [selectedTemplateForModal, setSelectedTemplateForModal] = useState<Template | null>(null);
-  const [modalType, setModalType] = useState<'share' | 'collect' | 'upgrade' | null>(null);
+  const [modalType, setModalType] = useState<'share' | 'collect' | 'upgrade' | 'auth' | null>(null);
   
   // Tag Filter State
   const [activeScene, setActiveScene] = useState<string>('All');
@@ -489,28 +483,9 @@ export const Home = () => {
   const activeFilterCount = [activeScene, activeModel, activeMood, activeHoliday].filter(f => f !== 'All').length;
 
   const handleTemplateClick = (t: Template) => {
-    // Login Check
-    if (!user) {
-      saveBrowsingState({ 
-        scrollY: window.scrollY, 
-        searchQuery: search, 
-        category: activeCategory, 
-        lastViewedTemplate: t.id,
-        intendedDestination: '/modify'
-      });
-      // Store template info for after login
-      sessionStorage.setItem('pendingTemplate', JSON.stringify({
-        imageUrl: t.imageUrl,
-        templateId: t.id,
-        templateName: t.name
-      }));
-      navigate('/login');
-      return;
-    }
-
     // Pro Permission Check
     const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
-    if (t.isPro && !isProUser) {
+    if (user && t.isPro && !isProUser) {
       setModalType('upgrade');
       return;
     }
@@ -534,7 +509,7 @@ export const Home = () => {
       saveBrowsingState({ 
         intendedDestination: '/' // Stay on home if they just wanted to collect
       });
-      navigate('/login');
+      setModalType('auth');
       return;
     }
 
@@ -848,6 +823,13 @@ export const Home = () => {
              </div>
          </div>
       </Modal>
+      <AuthGateModal
+        isOpen={modalType === 'auth'}
+        onClose={() => setModalType(null)}
+        destination="/"
+        title="Sign up to save templates"
+        description="Browsing and opening templates is free. Create an account only when you want to save one to a collection."
+      />
     </div>
   );
 };

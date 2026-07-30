@@ -60,28 +60,6 @@ const PageLoader = () => (
   </div>
 );
 
-const RequireAuth = ({ children }: React.PropsWithChildren) => {
-  const { user, authLoading } = useStore();
-  const location = useLocation();
-
-  if (authLoading) return <PageLoader />;
-
-  if (!user) {
-    if (typeof window !== 'undefined') {
-      sessionStorage.setItem('postAuthDestination', `${location.pathname}${location.search}`);
-    }
-    return (
-      <Navigate
-        to="/login"
-        replace
-        state={{ from: `${location.pathname}${location.search}` }}
-      />
-    );
-  }
-
-  return <>{children}</>;
-};
-
 const AppContent = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -205,11 +183,7 @@ const AppContent = () => {
           <Route path="/template/:id" element={<Navigate to="/" replace />} />
           <Route
             path="/templates/create"
-            element={
-              <RequireAuth>
-                <TemplateBuilder />
-              </RequireAuth>
-            }
+            element={<TemplateBuilder />}
           />
           <Route
             path="/templates/:templateId"
@@ -218,11 +192,7 @@ const AppContent = () => {
           <Route path="/modify" element={<Modify />} />
           <Route
             path="/video"
-            element={
-              <RequireAuth>
-                <Video />
-              </RequireAuth>
-            }
+            element={<Video />}
           />
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Login isSignup />} />

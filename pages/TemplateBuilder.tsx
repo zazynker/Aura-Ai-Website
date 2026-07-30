@@ -31,6 +31,7 @@ import {
 } from '../utils/templateStorage';
 import { getWorkflowCapability } from '../workflows/registry';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
+import { AuthGateModal } from '../components/AuthGateModal';
 
 type WorkflowGeneration = Generation;
 
@@ -208,6 +209,7 @@ export const TemplateBuilder = () => {
   
   // Publish Modal States
   const [showPublishModal, setShowPublishModal] = useState(false);
+  const [showAuthGate, setShowAuthGate] = useState(false);
   const [publishCover, setPublishCover] = useState<string | null>(null);
   const [publishCoverFile, setPublishCoverFile] = useState<File | null>(null);
   const [publishCoverType, setPublishCoverType] = useState<'image' | 'video' | null>(null);
@@ -864,6 +866,10 @@ export const TemplateBuilder = () => {
 
   const handleOpenPublish = () => {
     if (reviewState === 'submitted') return;
+    if (!user) {
+      setShowAuthGate(true);
+      return;
+    }
     setBuilderError(null);
     setShowPublishModal(true);
   };
@@ -872,8 +878,7 @@ export const TemplateBuilder = () => {
     showSuccessToast = true,
   ): Promise<TemplateDraftIdentity | null> => {
     if (!user) {
-      setBuilderError('Please log in before saving a template draft.');
-      addToast('error', 'Please log in before saving a template draft.');
+      setShowAuthGate(true);
       return null;
     }
 
@@ -2077,6 +2082,13 @@ export const TemplateBuilder = () => {
             </div>
         </div>
       </Modal>
+      <AuthGateModal
+        isOpen={showAuthGate}
+        onClose={() => setShowAuthGate(false)}
+        destination={`/templates/create${location.search}`}
+        title="Sign up to save this workflow"
+        description="You can explore the full builder without an account. Create a free account when you are ready to save or submit your template."
+      />
       <p className="text-center text-[10px] text-slate-300 dark:text-slate-700 py-2 select-all">Build: 2026-07-18-M5-7</p>
     </div>
   );
