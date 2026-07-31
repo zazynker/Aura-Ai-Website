@@ -33,6 +33,7 @@ import { useStore } from '../context/StoreContext';
 import {
   fetchTemplateDetail,
   fetchPublicTemplateDetail,
+  type TemplateDetailMaterial,
   type RealTemplateDetail,
 } from '../utils/templateDetailApi';
 import { ensureTemplateResultPoster } from '../utils/templatePosterApi';
@@ -120,6 +121,7 @@ export const TemplateDetail = () => {
   } | null>(null);
   const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
   const [startingRun, setStartingRun] = useState(false);
+  const [downloadingMaterialId, setDownloadingMaterialId] = useState<string | null>(null);
   const [modalVideoReady, setModalVideoReady] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
   const [pendingGuestAction, setPendingGuestAction] = useState('');
@@ -386,6 +388,53 @@ export const TemplateDetail = () => {
     navigator.clipboard.writeText(prompt);
     setCopiedPromptId(id);
     setTimeout(() => setCopiedPromptId(null), 2000);
+  };
+
+  const handleDownloadMaterial = async (material: TemplateDetailMaterial) => {
+    if (openGuestGate('download-material')) return;
+    if (downloadingMaterialId) return;
+
+    setDownloadingMaterialId(material.id);
+    try {
+      const response = await fetch(material.url);
+      if (!response.ok) throw new Error(`Download failed (${response.status})`);
+
+      const blob = await response.blob();
+      const contentType = blob.type || response.headers.get('content-type') || '';
+      const extensionByType: Record<TemplateDetailMaterial['type'], string> = {
+        image: contentType.includes('png')
+          ? 'png'
+          : contentType.includes('webp')
+            ? 'webp'
+            : contentType.includes('gif')
+              ? 'gif'
+              : 'jpg',
+        video: contentType.includes('webm') ? 'webm' : 'mp4',
+        audio: contentType.includes('wav')
+          ? 'wav'
+          : contentType.includes('ogg')
+            ? 'ogg'
+            : 'mp3',
+      };
+      const safeName = material.name
+        .trim()
+        .replace(/[^a-z0-9_-]+/gi, '-')
+        .replace(/^-+|-+$/g, '') || 'template-material';
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `${safeName}.${extensionByType[material.type]}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+      addToast('success', 'Material downloaded.');
+    } catch (error) {
+      console.error('[TemplateDetail] Material download failed:', error);
+      addToast('error', 'Could not download this material. Please try again.');
+    } finally {
+      setDownloadingMaterialId(null);
+    }
   };
 
   const getMaterialIcon = (type: string) => {
@@ -715,12 +764,20 @@ export const TemplateDetail = () => {
                                         variant="secondary"
                                         size="sm"
                                         className="h-8 gap-1.5 px-3"
-                                        onClick={() => {
-                                          if (openGuestGate('download-material')) return;
+                                        disabled={downloadingMaterialId === material.id}
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          void handleDownloadMaterial(material);
                                         }}
                                       >
-                                        <Download className="w-3.5 h-3.5" />
-                                        <span className="text-xs">Download</span>
+                                        {downloadingMaterialId === material.id ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                          <Download className="w-3.5 h-3.5" />
+                                        )}
+                                        <span className="text-xs">
+                                          {downloadingMaterialId === material.id ? 'Downloading...' : 'Download'}
+                                        </span>
                                       </Button>
                                     )}
                                   </div>
