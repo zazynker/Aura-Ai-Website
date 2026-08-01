@@ -55,7 +55,7 @@ interface AssetRow {
 }
 
 const FEATURE_NAMES: Record<string, string> = {
-  'image.text_to_image': 'Text to Image',
+  'image.text_to_image': 'Image Generation',
   'image.replace_product': 'Replace Product',
   'image.modify': 'Modify Image',
   'video.image_to_video': 'Image to Video',

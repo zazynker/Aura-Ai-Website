@@ -20,6 +20,10 @@ const FAL_IMAGE_INPUT_USD_PER_MILLION = 8.0;
 const FAL_IMAGE_OUTPUT_USD_PER_MILLION = 30.0;
 const FAL_MIN_EXTRA_INPUT_IMAGE_USD = 0.006;
 const FAL_MAX_TOTAL_PIXELS = 8_294_400;
+const EVOLINK_API_BASE_URL = "https://api.evolink.ai/v1";
+const EVOLINK_MJ_MODEL = "mj-v8.1";
+const EVOLINK_MJ_STANDARD_USD = Number(process.env.EVOLINK_MJ_STANDARD_USD || 0.08);
+const EVOLINK_MJ_HD_USD = Number(process.env.EVOLINK_MJ_HD_USD || 0.12);
 
 // Initialize Supabase client for user verification
 const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -51,6 +55,8 @@ type TokenBreakdown = {
 };
 type GeneratedImagePayload = { base64: string; mimeType: string };
 type FalImageQuality = "low" | "medium" | "high";
+type MjImageQuality = "standard" | "hd";
+type MjReferenceMode = "image" | "style" | "omni";
 type FalImageMode = "text" | "edit";
 type FalImageSize = string | { width: number; height: number };
 type FalImageFile = {
@@ -97,6 +103,22 @@ type StoredFalPendingGeneration = {
   templateStepId?: string;
   templateCapability?: string;
 };
+type StoredEvoLinkPendingGeneration = {
+  version: 1;
+  provider: "evolink-mj-v8.1";
+  clientRequestId: string;
+  evolinkTaskId: string;
+  submittedAt: string;
+  quality: MjImageQuality;
+  aspectRatio: string;
+  requestedImages: 4;
+  templateRunId?: string;
+  templateStepId?: string;
+  templateCapability?: string;
+};
+type StoredPendingGeneration =
+  | StoredFalPendingGeneration
+  | StoredEvoLinkPendingGeneration;
 type FalFinalizeResult =
   | { state: "pending"; status: string }
   | { state: "success"; payload: StoredGenerationManifest }
@@ -125,18 +147,31 @@ type StoredGenerationManifest = {
   requestId: string;
   recovered: boolean;
   provider?: string;
-  quality?: FalImageQuality;
+  quality?: FalImageQuality | MjImageQuality;
 };
 type GenerateRequestBody = {
   prompt?: string;
   imageUrl?: string;
   productImageUrl?: string;
+  referenceImageUrls?: string[];
   numberOfImages?: number;
   imageSize?: string;
   aspectRatio?: string;
   capability?: string;
-  provider?: "fal-gpt-image-2-edit";
+  provider?: "fal-gpt-image-2-edit" | "evolink-mj-v8.1";
   quality?: FalImageQuality;
+  mjQuality?: MjImageQuality;
+  mjParams?: {
+    stylize?: number;
+    chaos?: number;
+    experimental?: number;
+    raw?: boolean;
+    seed?: number;
+    referenceMode?: MjReferenceMode;
+    imageWeight?: number;
+    styleWeight?: number;
+    omniWeight?: number;
+  };
   requestId?: string;
   recoverOnly?: boolean;
   templateRunId?: string;
@@ -227,6 +262,7 @@ function isFalGptImage2Capability(capability: unknown): boolean {
 }
 
 function isFalGptImage2Request(body: GenerateRequestBody): boolean {
+  if (body.provider === "evolink-mj-v8.1") return false;
   return (
     isFalGptImage2Capability(body.capability) ||
     body.provider === "fal-gpt-image-2-edit"
@@ -607,7 +643,7 @@ async function finalizeFalPendingGeneration(
   }
 
   if (status === "FAILED" || status === "CANCELLED" || statusError) {
-    await deletePendingFalGeneration(supabase, userId, pending.clientRequestId);
+    await deletePendingGeneration(supabase, userId, pending.clientRequestId);
     return {
       state: "failed",
       statusCode: 422,
@@ -667,7 +703,7 @@ async function finalizeFalPendingGeneration(
         creditsToDeduct,
       });
       await deleteStoredGenerationArtifacts(supabase, userId, pending.clientRequestId);
-      await deletePendingFalGeneration(supabase, userId, pending.clientRequestId);
+      await deletePendingGeneration(supabase, userId, pending.clientRequestId);
       const insufficientCredits =
         !deductError && deductResult?.error === "Insufficient credits";
       return {
@@ -708,7 +744,7 @@ async function finalizeFalPendingGeneration(
       pending.clientRequestId,
       responsePayload,
     );
-    await deletePendingFalGeneration(supabase, userId, pending.clientRequestId);
+    await deletePendingGeneration(supabase, userId, pending.clientRequestId);
     return { state: "success", payload: responsePayload };
   } catch (error) {
     console.error("Fal image finalization failed:", error);
@@ -725,6 +761,293 @@ async function finalizeFalPendingGeneration(
       error: error instanceof Error
         ? error.message
         : "The image finished generating but could not be finalized.",
+    };
+  }
+}
+
+const MJ_ASPECT_RATIOS = new Set([
+  "1:1",
+  "3:4",
+  "4:3",
+  "9:16",
+  "16:9",
+  "2:3",
+  "3:2",
+]);
+
+const clampNumber = (
+  value: unknown,
+  min: number,
+  max: number,
+  fallback: number,
+): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+};
+
+function normalizeMjQuality(value: unknown): MjImageQuality {
+  return value === "hd" ? "hd" : "standard";
+}
+
+function estimateMjCostUsd(quality: MjImageQuality): number {
+  const configured = quality === "hd" ? EVOLINK_MJ_HD_USD : EVOLINK_MJ_STANDARD_USD;
+  const fallback = quality === "hd" ? 0.12 : 0.08;
+  return Number.isFinite(configured) && configured > 0 ? configured : fallback;
+}
+
+function estimateMjCredits(quality: MjImageQuality): number {
+  return Math.max(1, Math.ceil(estimateMjCostUsd(quality) * USD_TO_CREDITS));
+}
+
+function normalizeReferenceUrls(body: GenerateRequestBody): string[] {
+  const explicit = Array.isArray(body.referenceImageUrls)
+    ? body.referenceImageUrls
+    : [];
+  return [...explicit, body.imageUrl, body.productImageUrl]
+    .filter((value): value is string =>
+      typeof value === "string" &&
+      (value.startsWith("https://") || value.startsWith("data:")),
+    )
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .slice(0, 3);
+}
+
+function buildEvoLinkMjPrompt(body: GenerateRequestBody): string {
+  const prompt = String(body.prompt || "").trim();
+  if (/(^|\s)--[a-z]/i.test(prompt)) {
+    throw new Error(
+      "Use Lazora's Midjourney settings instead of typing -- parameters in the prompt.",
+    );
+  }
+
+  const aspectRatio = MJ_ASPECT_RATIOS.has(String(body.aspectRatio))
+    ? String(body.aspectRatio)
+    : "1:1";
+  const params = body.mjParams || {};
+  const stylize = Math.round(clampNumber(params.stylize, 0, 1000, 100));
+  const chaos = Math.round(clampNumber(params.chaos, 0, 100, 0));
+  const experimental = Math.round(clampNumber(params.experimental, 0, 100, 0));
+  const seed = params.seed === undefined || params.seed === null
+    ? undefined
+    : Math.round(clampNumber(params.seed, 0, 4_294_967_295, 0));
+  const referenceMode: MjReferenceMode = ["style", "omni"].includes(
+    String(params.referenceMode),
+  )
+    ? params.referenceMode as MjReferenceMode
+    : "image";
+  const referenceUrls = normalizeReferenceUrls(body);
+  const prefix = referenceMode === "image" && referenceUrls.length > 0
+    ? `${referenceUrls.join(" ")} `
+    : "";
+  const suffixes = [`--ar ${aspectRatio}`, `--s ${stylize}`];
+
+  if (chaos > 0) suffixes.push(`--chaos ${chaos}`);
+  if (experimental > 0) suffixes.push(`--exp ${experimental}`);
+  if (params.raw) suffixes.push("--raw");
+  if (seed !== undefined) suffixes.push(`--seed ${seed}`);
+
+  if (referenceUrls.length > 0) {
+    if (referenceMode === "image") {
+      const imageWeight = clampNumber(params.imageWeight, 0, 3, 1);
+      suffixes.push(`--iw ${imageWeight}`);
+    } else if (referenceMode === "style") {
+      const styleWeight = Math.round(clampNumber(params.styleWeight, 0, 1000, 100));
+      suffixes.push(`--sref ${referenceUrls.join(" ")}`, `--sw ${styleWeight}`);
+    } else {
+      const omniWeight = Math.round(clampNumber(params.omniWeight, 1, 1000, 100));
+      suffixes.push(`--oref ${referenceUrls[0]}`, `--ow ${omniWeight}`);
+    }
+  }
+
+  return `${prefix}${prompt} ${suffixes.join(" ")}`.trim();
+}
+
+function evoLinkErrorMessage(
+  payload: Record<string, unknown>,
+  fallback: string,
+): string {
+  const error = payload.error;
+  if (typeof error === "string" && error.trim()) return error.trim();
+  if (error && typeof error === "object") {
+    const nested = error as Record<string, unknown>;
+    const message = nested.message ?? nested.detail;
+    if (typeof message === "string" && message.trim()) return message.trim();
+  }
+  const message = payload.message ?? payload.detail;
+  return typeof message === "string" && message.trim() ? message.trim() : fallback;
+}
+
+async function submitEvoLinkMj(
+  prompt: string,
+  quality: MjImageQuality,
+  apiKey: string,
+): Promise<string> {
+  const response = await fetch(`${EVOLINK_API_BASE_URL}/images/generations`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: EVOLINK_MJ_MODEL,
+      prompt,
+      quality,
+      model_params: { speed: "fast" },
+    }),
+  });
+  const payload = await readJsonResponse(response);
+  if (!response.ok) {
+    throw new Error(
+      `EvoLink Midjourney submission failed (${response.status}): ${evoLinkErrorMessage(payload, response.statusText)}`,
+    );
+  }
+  const taskId = getStringField(payload, "id", "taskId");
+  if (!taskId) throw new Error("EvoLink did not return a task ID.");
+  return taskId;
+}
+
+async function getEvoLinkTask(
+  taskId: string,
+  apiKey: string,
+): Promise<Record<string, unknown>> {
+  const response = await fetch(
+    `${EVOLINK_API_BASE_URL}/tasks/${encodeURIComponent(taskId)}`,
+    { headers: { Authorization: `Bearer ${apiKey}` } },
+  );
+  const payload = await readJsonResponse(response);
+  if (!response.ok) {
+    throw new Error(
+      `EvoLink task status failed (${response.status}): ${evoLinkErrorMessage(payload, response.statusText)}`,
+    );
+  }
+  return payload;
+}
+
+async function finalizeEvoLinkPendingGeneration(
+  supabase: any,
+  userId: string,
+  pending: StoredEvoLinkPendingGeneration,
+  apiKey: string,
+): Promise<FalFinalizeResult> {
+  let task: Record<string, unknown>;
+  try {
+    task = await getEvoLinkTask(pending.evolinkTaskId, apiKey);
+  } catch (error) {
+    console.error("EvoLink Midjourney status check failed:", error);
+    return {
+      state: "failed",
+      statusCode: 502,
+      code: "EVOLINK_STATUS_FAILED",
+      error: error instanceof Error ? error.message : "Could not check Midjourney status.",
+    };
+  }
+
+  const status = String(task.status || "pending").trim().toLowerCase();
+  if (status === "pending" || status === "processing") {
+    return { state: "pending", status: status.toUpperCase() };
+  }
+  if (status === "failed" || status === "cancelled" || status === "canceled") {
+    await deletePendingGeneration(supabase, userId, pending.clientRequestId);
+    return {
+      state: "failed",
+      statusCode: 422,
+      code: status.startsWith("cancel") ? "EVOLINK_CANCELLED" : "EVOLINK_GENERATION_FAILED",
+      error: `${evoLinkErrorMessage(task, "Midjourney generation failed.")} No Lazora credits were deducted.`,
+    };
+  }
+  if (status !== "completed") {
+    return { state: "pending", status: status.toUpperCase() || "PROCESSING" };
+  }
+
+  try {
+    const resultUrls = (Array.isArray(task.results) ? task.results : [])
+      .filter((value): value is string => typeof value === "string" && value.startsWith("https://"))
+      .slice(0, 4);
+    if (resultUrls.length === 0) {
+      throw new Error("Midjourney completed without returning any approved images.");
+    }
+    const generatedImages = await downloadFalImages(
+      resultUrls.map((url) => ({ url })),
+    );
+    const imageUrls = await uploadGeneratedImages(
+      supabase,
+      userId,
+      pending.clientRequestId,
+      generatedImages,
+    );
+    const actualCostUsd = estimateMjCostUsd(pending.quality);
+    const creditsToDeduct = estimateMjCredits(pending.quality);
+    const { data: deductResult, error: deductError } = await supabase.rpc(
+      "deduct_generation_credits",
+      {
+        p_user_id: userId,
+        p_amount: creditsToDeduct,
+        p_request_id: pending.clientRequestId,
+        p_template_run_id: pending.templateRunId || null,
+        p_template_step_id: pending.templateStepId || null,
+        p_capability: pending.templateCapability || null,
+      },
+    );
+    const deductionSucceeded =
+      !deductError && deductResult && deductResult.success === true;
+    if (!deductionSucceeded) {
+      await deleteStoredGenerationArtifacts(supabase, userId, pending.clientRequestId);
+      await deletePendingGeneration(supabase, userId, pending.clientRequestId);
+      const insufficientCredits =
+        !deductError && deductResult?.error === "Insufficient credits";
+      return {
+        state: "failed",
+        statusCode: insufficientCredits ? 402 : 500,
+        code: insufficientCredits ? "INSUFFICIENT_CREDITS" : "CREDIT_DEDUCTION_FAILED",
+        error: insufficientCredits
+          ? "Your credit balance changed while Midjourney was generating. No image was delivered."
+          : "Unable to charge credits. No image was delivered.",
+      };
+    }
+
+    const responsePayload: StoredGenerationManifest = {
+      success: true,
+      images: imageUrls,
+      text: "",
+      count: imageUrls.length,
+      imageSize: pending.quality === "hd" ? "HD" : "Standard",
+      tokensUsed: 0,
+      actualCostUsd,
+      creditsUsed: creditsToDeduct,
+      creditsDeducted: Number(deductResult.credits_deducted) || 0,
+      eligiblePaidCredits: Number(deductResult.eligible_paid_credits) || 0,
+      creditDeductionId: typeof deductResult.deduction_id === "string"
+        ? deductResult.deduction_id
+        : undefined,
+      newCredits: Number(deductResult.new_balance ?? deductResult.new_credits ?? 0),
+      requestId: pending.clientRequestId,
+      recovered: true,
+      provider: "evolink-mj-v8.1",
+      quality: pending.quality,
+    };
+    await saveGenerationManifest(
+      supabase,
+      userId,
+      pending.clientRequestId,
+      responsePayload,
+    );
+    await deletePendingGeneration(supabase, userId, pending.clientRequestId);
+    return { state: "success", payload: responsePayload };
+  } catch (error) {
+    console.error("EvoLink Midjourney finalization failed:", error);
+    const storedManifest = await readGenerationManifest(
+      supabase,
+      userId,
+      pending.clientRequestId,
+    );
+    if (storedManifest) return { state: "success", payload: storedManifest };
+    return {
+      state: "failed",
+      statusCode: 500,
+      code: "EVOLINK_RESULT_FINALIZATION_FAILED",
+      error: error instanceof Error
+        ? error.message
+        : "Midjourney finished but the result could not be finalized.",
     };
   }
 }
@@ -797,12 +1120,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  const pendingFalGeneration = await readPendingFalGeneration(
+  const pendingGeneration = await readPendingGeneration(
     supabase,
     user.id,
     requestId,
   );
-  if (pendingFalGeneration) {
+  if (pendingGeneration?.provider === "fal-gpt-image-2") {
     const falKey = process.env.FAL_KEY;
     if (!falKey) {
       return res.status(500).json({
@@ -815,7 +1138,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const finalized = await finalizeFalPendingGeneration(
       supabase,
       user.id,
-      pendingFalGeneration,
+      pendingGeneration,
       falKey,
     );
     if (finalized.state === "success") {
@@ -828,6 +1151,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         status: finalized.status,
         code: "RESULT_NOT_READY",
         error: "Your image is still generating.",
+        requestId,
+      });
+    }
+    return res.status(finalized.statusCode).json({
+      success: false,
+      code: finalized.code,
+      error: finalized.error,
+      requestId,
+    });
+  }
+  if (pendingGeneration?.provider === "evolink-mj-v8.1") {
+    const evoLinkKey = process.env.EVOLINK_API_KEY;
+    if (!evoLinkKey) {
+      return res.status(500).json({
+        success: false,
+        code: "CONFIG_ERROR",
+        error: "EvoLink API key not configured",
+        requestId,
+      });
+    }
+    const finalized = await finalizeEvoLinkPendingGeneration(
+      supabase,
+      user.id,
+      pendingGeneration,
+      evoLinkKey,
+    );
+    if (finalized.state === "success") {
+      return res.status(200).json(finalized.payload);
+    }
+    if (finalized.state === "pending") {
+      return res.status(202).json({
+        success: false,
+        pending: true,
+        status: finalized.status,
+        code: "RESULT_NOT_READY",
+        error: "Your Midjourney images are still generating.",
         requestId,
       });
     }
@@ -901,7 +1260,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? body.imageSize
       : "1K";
   const useFalGptImage2 = isFalGptImage2Request(body);
-  const estimatedCredits = useFalGptImage2
+  const useEvoLinkMj = body.provider === "evolink-mj-v8.1";
+  const normalizedMjQuality = normalizeMjQuality(body.mjQuality);
+  const estimatedCredits = useEvoLinkMj
+    ? estimateMjCredits(normalizedMjQuality)
+    : useFalGptImage2
     ? estimateFalCredits(body, requestedImages)
     : estimateImageCredits(requestedSize, requestedImages);
 
@@ -942,11 +1305,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // powers video generation and remains server-side in Vercel.
   const apiKey = process.env.GEMINI_API_KEY;
   const falKey = process.env.FAL_KEY;
+  const evoLinkKey = process.env.EVOLINK_API_KEY;
+  if (useEvoLinkMj && !evoLinkKey) {
+    console.error("EVOLINK_API_KEY not configured");
+    return res.status(500).json({ error: "EvoLink API key not configured" });
+  }
   if (useFalGptImage2 && !falKey) {
     console.error("FAL_KEY not configured");
     return res.status(500).json({ error: "Fal API key not configured" });
   }
-  if (!useFalGptImage2 && !apiKey) {
+  if (!useFalGptImage2 && !useEvoLinkMj && !apiKey) {
     console.error("GEMINI_API_KEY not configured");
     return res.status(500).json({ error: "Gemini API key not configured" });
   }
@@ -1041,7 +1409,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     // 4K Permission Check (Pro/Enterprise only)
     // Other resolutions are available for all logged-in users
     // ============================================
-    if (imageSize === "4K") {
+    if (!useEvoLinkMj && imageSize === "4K") {
       const userPlan = userData.plan || "Free";
       console.log("User plan:", userPlan);
 
@@ -1057,11 +1425,74 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     // ============================================
 
+    if (useEvoLinkMj) {
+      let assembledPrompt: string;
+      try {
+        assembledPrompt = buildEvoLinkMjPrompt(body);
+      } catch (error) {
+        return res.status(400).json({
+          success: false,
+          code: "INVALID_MJ_PROMPT",
+          error: error instanceof Error ? error.message : "Invalid Midjourney prompt.",
+          requestId,
+        });
+      }
+      console.log("Submitting EvoLink Midjourney V8.1 request:", {
+        requestId,
+        quality: normalizedMjQuality,
+        aspectRatio: MJ_ASPECT_RATIOS.has(String(aspectRatio)) ? aspectRatio : "1:1",
+        requestedImages: 4,
+        referenceImageCount: normalizeReferenceUrls(body).length,
+      });
+      const evolinkTaskId = await submitEvoLinkMj(
+        assembledPrompt,
+        normalizedMjQuality,
+        evoLinkKey as string,
+      );
+      const pendingMjGeneration: StoredEvoLinkPendingGeneration = {
+        version: 1,
+        provider: "evolink-mj-v8.1",
+        clientRequestId: requestId,
+        evolinkTaskId,
+        submittedAt: new Date().toISOString(),
+        quality: normalizedMjQuality,
+        aspectRatio: MJ_ASPECT_RATIOS.has(String(aspectRatio)) ? String(aspectRatio) : "1:1",
+        requestedImages: 4,
+        templateRunId: body.templateRunId,
+        templateStepId: body.templateStepId,
+        templateCapability: body.templateCapability,
+      };
+      try {
+        await savePendingGeneration(
+          supabase,
+          user.id,
+          requestId,
+          pendingMjGeneration,
+        );
+      } catch (pendingSaveError) {
+        console.error("Unable to save EvoLink pending request:", pendingSaveError);
+        return res.status(500).json({
+          success: false,
+          code: "PENDING_REQUEST_SAVE_FAILED",
+          error: "The Midjourney request was submitted but Lazora could not save its recovery record. Do not submit another request yet.",
+          requestId,
+          evolinkTaskId,
+        });
+      }
+      return res.status(202).json({
+        success: false,
+        pending: true,
+        status: "PENDING",
+        code: "GENERATION_QUEUED",
+        error: "Your Midjourney request was queued and is still generating.",
+        requestId,
+      });
+    }
+
     if (useFalGptImage2) {
       const mode = resolveFalMode(body);
       const normalizedQuality = normalizeFalQuality(quality);
-      const inputImageUrls = [imageUrl, productImageUrl]
-        .filter((value): value is string => typeof value === "string" && value.length > 0);
+      const inputImageUrls = normalizeReferenceUrls(body);
       if (mode === "edit" && inputImageUrls.length === 0) {
         return res.status(400).json({
           success: false,
@@ -1119,7 +1550,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       };
 
       try {
-        await savePendingFalGeneration(
+        await savePendingGeneration(
           supabase,
           user.id,
           requestId,
@@ -1747,11 +2178,11 @@ async function deleteStoredGenerationArtifacts(
   return true;
 }
 
-async function savePendingFalGeneration(
+async function savePendingGeneration(
   supabase: any,
   userId: string,
   requestId: string,
-  pending: StoredFalPendingGeneration,
+  pending: StoredPendingGeneration,
 ): Promise<void> {
   const folder = getGeneratedRequestFolder(userId, requestId);
   const path = `${folder}/${PENDING_GENERATION_MANIFEST_NAME}`;
@@ -1766,11 +2197,11 @@ async function savePendingFalGeneration(
   if (error) throw new Error(`Pending request upload failed: ${error.message}`);
 }
 
-async function readPendingFalGeneration(
+async function readPendingGeneration(
   supabase: any,
   userId: string,
   requestId: string,
-): Promise<StoredFalPendingGeneration | null> {
+): Promise<StoredPendingGeneration | null> {
   const folder = getGeneratedRequestFolder(userId, requestId);
   const path = `${folder}/${PENDING_GENERATION_MANIFEST_NAME}`;
   const { data, error } = await supabase.storage
@@ -1778,23 +2209,31 @@ async function readPendingFalGeneration(
     .download(path);
   if (error || !data) return null;
   try {
-    const parsed = JSON.parse(await data.text()) as StoredFalPendingGeneration;
+    const parsed = JSON.parse(await data.text()) as StoredPendingGeneration;
     if (
       parsed?.version === 1 &&
-      parsed.provider === "fal-gpt-image-2" &&
       parsed.clientRequestId === requestId &&
-      typeof parsed.falRequestId === "string" &&
-      [FAL_GPT_IMAGE_2_TEXT_ENDPOINT, FAL_GPT_IMAGE_2_EDIT_ENDPOINT].includes(parsed.endpoint)
+      (
+        (
+          parsed.provider === "fal-gpt-image-2" &&
+          typeof parsed.falRequestId === "string" &&
+          [FAL_GPT_IMAGE_2_TEXT_ENDPOINT, FAL_GPT_IMAGE_2_EDIT_ENDPOINT].includes(parsed.endpoint)
+        ) ||
+        (
+          parsed.provider === "evolink-mj-v8.1" &&
+          typeof parsed.evolinkTaskId === "string"
+        )
+      )
     ) {
       return parsed;
     }
   } catch (error) {
-    console.warn("Unable to parse Fal pending generation:", error);
+    console.warn("Unable to parse pending generation:", error);
   }
   return null;
 }
 
-async function deletePendingFalGeneration(
+async function deletePendingGeneration(
   supabase: any,
   userId: string,
   requestId: string,
@@ -1804,7 +2243,7 @@ async function deletePendingFalGeneration(
   const { error } = await supabase.storage
     .from(GENERATED_IMAGES_BUCKET)
     .remove([path]);
-  if (error) console.warn("Unable to remove Fal pending request:", error.message);
+  if (error) console.warn("Unable to remove pending request:", error.message);
 }
 
 async function saveGenerationManifest(

@@ -10,13 +10,26 @@ import {
 export interface GenerateOptions {
   prompt: string;
   capability?: string;
-  provider?: "fal-gpt-image-2-edit";
+  provider?: "fal-gpt-image-2-edit" | "evolink-mj-v8.1";
   imageUrl?: string; // Base/scene image (e.g., model photo)
   productImageUrl?: string; // Product image to replace/insert
+  referenceImageUrls?: string[];
   numberOfImages?: number;
   imageSize?: "512" | "1K" | "2K" | "4K";
   aspectRatio?: string;
   quality?: "low" | "medium" | "high";
+  mjQuality?: "standard" | "hd";
+  mjParams?: {
+    stylize?: number;
+    chaos?: number;
+    experimental?: number;
+    raw?: boolean;
+    seed?: number;
+    referenceMode?: "image" | "style" | "omni";
+    imageWeight?: number;
+    styleWeight?: number;
+    omniWeight?: number;
+  };
 }
 
 export interface GenerateResult {
@@ -188,7 +201,9 @@ async function recoverGeneratedImages(
       if (!response.ok || data?.error) {
         const retryable = [500, 502, 503, 504].includes(response.status) ||
           data?.code === "FAL_STATUS_FAILED" ||
-          data?.code === "FAL_RESULT_FINALIZATION_FAILED";
+          data?.code === "FAL_RESULT_FINALIZATION_FAILED" ||
+          data?.code === "EVOLINK_STATUS_FAILED" ||
+          data?.code === "EVOLINK_RESULT_FINALIZATION_FAILED";
         if (retryable && attempt < IMAGE_RECOVERY_ATTEMPTS) {
           console.warn("Image finalization is temporarily unavailable; retrying the same request:", {
             requestId,
@@ -221,7 +236,7 @@ async function recoverGeneratedImages(
     success: false,
     pending: true,
     error:
-      "The image is still processing and could not be confirmed within 9 minutes. Do not submit it again immediately; check Fal request history or try this page again later.",
+      "The image is still processing and could not be confirmed within 9 minutes. Do not submit it again immediately; try this page again later.",
     requestId,
   }, context);
 }
@@ -239,12 +254,15 @@ export async function generateImages(
     prompt,
     imageUrl,
     productImageUrl,
+    referenceImageUrls,
     capability,
     provider,
     numberOfImages = 1,
     imageSize = "1K",
     aspectRatio,
     quality = "medium",
+    mjQuality,
+    mjParams,
   } = options;
 
   console.log("=== generateImages called ===");
@@ -287,12 +305,15 @@ export async function generateImages(
         prompt,
         imageUrl,
         productImageUrl,
+        referenceImageUrls,
         numberOfImages,
         imageSize,
         aspectRatio,
         capability,
         provider,
         quality,
+        mjQuality,
+        mjParams,
         requestId,
         ...(templateContext || {}),
       }),

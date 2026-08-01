@@ -60,7 +60,7 @@ export const WORKFLOW_CAPABILITIES: Record<
   'image.text_to_image': {
     key: 'image.text_to_image',
     version: 1,
-    displayName: 'Text to Image',
+    displayName: 'Image Generation',
     description: 'Create an image from a prompt and optional references.',
     editorTarget: {
       route: '/modify',

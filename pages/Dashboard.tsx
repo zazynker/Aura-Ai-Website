@@ -44,7 +44,7 @@ const getGenerationDisplayName = (gen: Generation): string => {
     return gen.templateName || 'Video Generation';
   }
   if (gen.templateId === 'modify-session') return 'User Upload (Modify)';
-  if (gen.templateId === 'text-to-image') return 'Text to Image';
+  if (gen.templateId === 'text-to-image') return 'Image Generation';
   return gen.templateName || 'Image Generation';
 };
 

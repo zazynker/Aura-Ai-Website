@@ -21,6 +21,8 @@ import { fetchMyProfile } from '../utils/profileApi';
 import { Session } from '@supabase/supabase-js';
 
 export const USD_TO_CREDITS = 195;
+export const EVOLINK_MJ_STANDARD_USD = 0.08;
+export const EVOLINK_MJ_HD_USD = 0.12;
 const IMAGE_OUTPUT_USD_PER_MILLION = 60;
 const ESTIMATED_OVERHEAD_USD_PER_IMAGE = 0.005;
 
@@ -162,6 +164,17 @@ export const estimateFalImageCredits = ({
   ) * count;
   return Math.max(1, Math.ceil(estimatedCostUsd * USD_TO_CREDITS));
 };
+
+export type MjImageQuality = 'standard' | 'hd';
+
+export const estimateMjImageCredits = (quality: MjImageQuality): number =>
+  Math.max(
+    1,
+    Math.ceil(
+      (quality === 'hd' ? EVOLINK_MJ_HD_USD : EVOLINK_MJ_STANDARD_USD) *
+        USD_TO_CREDITS,
+    ),
+  );
 
 // Calculate actual credits based on REAL token consumption from API
 // This is the authoritative calculation used after generation completes

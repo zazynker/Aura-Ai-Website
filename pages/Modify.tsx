@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Upload, Loader2, Sparkles, Layers, Maximize2, Trash2, Edit2, X, Lock, Wand2, Clock, Heart, ExternalLink, ChevronDown, Settings2, Type, Plus, ArrowUp, Download, Video } from 'lucide-react';
-import { useStore, estimateCredits, estimateFalImageCredits, Resolution } from '../context/StoreContext';
+import { useStore, estimateCredits, estimateFalImageCredits, estimateMjImageCredits, Resolution } from '../context/StoreContext';
 import { supabase } from '../utils/supabase';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
@@ -151,13 +151,25 @@ export const Modify = () => {
   const [selectedResolution, setSelectedResolution] = useState('2K'); // Default to 2K
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
 
-  // Text to Image State
+  // Image Generation State
+  const [t2iModel, setT2iModel] = useState<'gpt-image-2' | 'mj-v8.1'>('gpt-image-2');
   const [t2iPrompt, setT2iPrompt] = useState('');
   const [t2iFiles, setT2iFiles] = useState<File[]>([]);
   const [t2iRatio, setT2iRatio] = useState('1:1');
   const [t2iSize, setT2iSize] = useState('1K');
   const [t2iOutputCount, setT2iOutputCount] = useState(1);
-  const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | null>(null);
+  const [t2iMjQuality, setT2iMjQuality] = useState<'standard' | 'hd'>('standard');
+  const [showT2iAdvanced, setShowT2iAdvanced] = useState(false);
+  const [t2iMjStylize, setT2iMjStylize] = useState(100);
+  const [t2iMjChaos, setT2iMjChaos] = useState(0);
+  const [t2iMjExperimental, setT2iMjExperimental] = useState(0);
+  const [t2iMjRaw, setT2iMjRaw] = useState(false);
+  const [t2iMjSeed, setT2iMjSeed] = useState('');
+  const [t2iMjReferenceMode, setT2iMjReferenceMode] = useState<'image' | 'style' | 'omni'>('image');
+  const [t2iMjImageWeight, setT2iMjImageWeight] = useState(1);
+  const [t2iMjStyleWeight, setT2iMjStyleWeight] = useState(100);
+  const [t2iMjOmniWeight, setT2iMjOmniWeight] = useState(100);
+  const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | 'quality' | null>(null);
 
   // 🔧 CHANGED: Admin Demo Mode - persist to sessionStorage (survives route changes, clears on tab close)
   const [showFakeQueue, setShowFakeQueue] = useState(false);
@@ -966,7 +978,7 @@ export const Modify = () => {
     }
   };
 
-  // --- Text to Image Generation ---
+  // --- Image Generation ---
   const runTextToImage = async () => {
     if (!user) {
       saveBrowsingState({ intendedDestination: '/modify' });
@@ -976,15 +988,18 @@ export const Modify = () => {
     
    
     // Pre-check: estimate credits needed
+    const isMidjourney = t2iModel === 'mj-v8.1';
     const t2iResolution = t2iSize as Resolution;
-    const estimatedCredits = estimateFalImageCredits({
-      mode: t2iFiles.length > 0 ? 'edit' : 'text',
-      resolution: t2iResolution,
-      aspectRatio: t2iRatio,
-      imageCount: t2iOutputCount,
-      quality: 'medium',
-      inputImageCount: t2iFiles.length,
-    });
+    const estimatedCredits = isMidjourney
+      ? estimateMjImageCredits(t2iMjQuality)
+      : estimateFalImageCredits({
+          mode: t2iFiles.length > 0 ? 'edit' : 'text',
+          resolution: t2iResolution,
+          aspectRatio: t2iRatio,
+          imageCount: t2iOutputCount,
+          quality: 'medium',
+          inputImageCount: t2iFiles.length,
+        });
     if (user.credits < estimatedCredits) { 
       handleInsufficientCredits();
       return; 
@@ -1056,27 +1071,42 @@ export const Modify = () => {
 
       // Build the prompt
       let fullPrompt = t2iPrompt.trim();
-      if (referenceImageUrls.length > 0) {
+      if (!isMidjourney && referenceImageUrls.length > 0) {
         fullPrompt = `Generate an image based on this description: ${t2iPrompt.trim()}. Use the provided reference images for style, composition, or content guidance.`;
       }
 
-      console.log('=== Text to Image Generation ===');
+      console.log('=== Image Generation ===');
       console.log('Prompt:', fullPrompt);
       console.log('Reference images:', referenceImageUrls.length);
       console.log('Ratio:', t2iRatio);
       console.log('Size:', t2iSize);
-      console.log('Output count:', t2iOutputCount);
+      console.log('Model:', t2iModel);
+      console.log('Output count:', isMidjourney ? 4 : t2iOutputCount);
 
       // Call API - for T2I, we pass reference images as the base image if available
       const result = await generateImages({
         prompt: fullPrompt,
         capability: 'image.text_to_image',
+        provider: isMidjourney ? 'evolink-mj-v8.1' : undefined,
         imageUrl: referenceImageUrls[0], // First reference as base
         productImageUrl: referenceImageUrls[1], // Second reference if available
-        numberOfImages: t2iOutputCount,
+        referenceImageUrls,
+        numberOfImages: isMidjourney ? 4 : t2iOutputCount,
         imageSize: t2iSize as '1K' | '2K' | '4K',
         aspectRatio: t2iRatio,
         quality: 'medium',
+        mjQuality: isMidjourney ? t2iMjQuality : undefined,
+        mjParams: isMidjourney ? {
+          stylize: t2iMjStylize,
+          chaos: t2iMjChaos,
+          experimental: t2iMjExperimental,
+          raw: t2iMjRaw,
+          seed: t2iMjSeed === '' ? undefined : Number(t2iMjSeed),
+          referenceMode: t2iMjReferenceMode,
+          imageWeight: t2iMjImageWeight,
+          styleWeight: t2iMjStyleWeight,
+          omniWeight: t2iMjOmniWeight,
+        } : undefined,
       });
 
       clearInterval(progressInterval);
@@ -1095,7 +1125,7 @@ export const Modify = () => {
 
       const newImages = result.images;
       const sourceId = 'text-to-image'; // Fixed ID for Generated category filtering
-      const sourceName = 'Text to Image';
+      const sourceName = 'Image Generation';
       const groupId = `group_${Date.now()}`;
 
       // Update source
@@ -1126,7 +1156,7 @@ export const Modify = () => {
         templateName: sourceName,
         imageUrl: imgUrl,
         creditsUsed: creditAllocations[imageIndex] || 0,
-        prompt: t2iPrompt || 'Text to Image',
+        prompt: t2iPrompt || 'Image Generation',
         capability: 'image.text_to_image' as const,
         templateRunId: result.templateRunId,
         templateStepId: result.templateStepId,
@@ -1135,10 +1165,22 @@ export const Modify = () => {
         generationParameters: {
           prompt: t2iPrompt,
           ratio: t2iRatio,
-          resolution: t2iSize,
-          outputCount: t2iOutputCount,
-          provider: referenceImageUrls.length > 0 ? 'fal-gpt-image-2-edit' : 'fal-gpt-image-2',
-          quality: 'medium',
+          resolution: isMidjourney ? (t2iMjQuality === 'hd' ? 'HD' : 'Standard') : t2iSize,
+          outputCount: isMidjourney ? 4 : t2iOutputCount,
+          provider: isMidjourney
+            ? 'evolink-mj-v8.1'
+            : referenceImageUrls.length > 0
+              ? 'fal-gpt-image-2-edit'
+              : 'fal-gpt-image-2',
+          quality: isMidjourney ? t2iMjQuality : 'medium',
+          ...(isMidjourney ? {
+            stylize: t2iMjStylize,
+            chaos: t2iMjChaos,
+            experimental: t2iMjExperimental,
+            raw: t2iMjRaw,
+            seed: t2iMjSeed || undefined,
+            referenceMode: t2iMjReferenceMode,
+          } : {}),
         },
     }));
 
@@ -1315,7 +1357,7 @@ export const Modify = () => {
     {activeTool === 'text2img' ? (
         <>
             <Type className="w-4 h-4 shrink-0 text-orange-500" /> 
-            Text to Image
+            Image Generation
         </>
     ) : (
         <>
@@ -1609,19 +1651,48 @@ export const Modify = () => {
             </div>
 
             {/* CENTER COLUMN: Preview */}
-            <div className="flex-1 glass-panel rounded-2xl relative overflow-hidden flex items-center justify-center mt-8 md:mt-0 bg-white dark:bg-slate-900">
+            <div className="flex-1 glass-panel rounded-2xl relative overflow-clip flex items-center justify-center mt-8 md:mt-0 bg-white dark:bg-slate-900">
                 {activeTool === 'text2img' ? (
                     // --- TEXT TO IMAGE STATE ---
                     <>
-                        <div className="h-full w-full animate-in zoom-in-95 duration-300">
-                            <div className="min-h-full w-full flex items-center justify-center p-4 sm:p-8">
+                        <div className="absolute inset-0 overflow-y-auto custom-scrollbar animate-in zoom-in-95 duration-300">
+                            <div className="min-h-full w-full flex items-start justify-center p-4 sm:p-8">
                                 <div className="w-full max-w-2xl space-y-6">
+                                    <div className="sticky top-0 z-40 mx-auto w-full max-w-md rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-100/95 dark:bg-slate-800/95 p-1.5 shadow-sm backdrop-blur">
+                                        <div className="grid grid-cols-2 gap-1.5" aria-label="Image generation model">
+                                            {([
+                                                { id: 'gpt-image-2', label: 'GPT Image 2', detail: 'Precise & editable' },
+                                                { id: 'mj-v8.1', label: 'Midjourney V8.1', detail: 'Creative · 4 images' },
+                                            ] as const).map((model) => (
+                                                <button
+                                                    key={model.id}
+                                                    type="button"
+                                                    onClick={() => {
+                                                        setT2iModel(model.id);
+                                                        setT2iOutputCount(model.id === 'mj-v8.1' ? 4 : 1);
+                                                        setOpenDropdown(null);
+                                                    }}
+                                                    className={`rounded-xl px-4 py-3 text-left transition-all ${
+                                                        t2iModel === model.id
+                                                            ? 'bg-white dark:bg-slate-700 shadow-sm ring-1 ring-orange-500/30'
+                                                            : 'hover:bg-white/70 dark:hover:bg-slate-700/60'
+                                                    }`}
+                                                >
+                                                    <span className={`block text-sm font-semibold ${t2iModel === model.id ? 'text-orange-600 dark:text-orange-400' : 'text-slate-800 dark:text-slate-200'}`}>
+                                                        {model.label}
+                                                    </span>
+                                                    <span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">{model.detail}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
                                     <div className="text-center space-y-2">
                                         <h2 className="text-3xl font-bold text-slate-900 dark:text-white flex items-center justify-center gap-3">
                                             <Sparkles className="w-8 h-8 text-orange-500" />
-                                            Text to Image
+                                            Image Generation
                                         </h2>
-                                        <p className="text-slate-500 dark:text-slate-400">Generate a completely new image from your imagination</p>
+                                        <p className="text-slate-500 dark:text-slate-400">Create images from a prompt and optional references</p>
                                     </div>
 
                                     <div className="rounded-2xl bg-white dark:bg-slate-900 flex flex-col border border-slate-200 dark:border-white/10 shadow-sm p-4">
@@ -1726,6 +1797,134 @@ export const Modify = () => {
                                             </div>
                                         </div>
 
+                                        {t2iModel === 'mj-v8.1' && showT2iAdvanced && (
+                                            <div className="mb-4 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50/80 dark:bg-slate-800/50 p-4 animate-in slide-in-from-top-2">
+                                                <div className="mb-4 flex items-center justify-between">
+                                                    <div>
+                                                        <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Advanced Settings</h3>
+                                                        <p className="text-xs text-slate-500 dark:text-slate-400">Fine-tune the Midjourney prompt parameters.</p>
+                                                    </div>
+                                                    <button type="button" onClick={() => setShowT2iAdvanced(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700">
+                                                        <X className="h-4 w-4" />
+                                                    </button>
+                                                </div>
+
+                                                <div className="grid gap-4 sm:grid-cols-2">
+                                                    {[
+                                                        { label: 'Stylize', value: t2iMjStylize, min: 0, max: 1000, setValue: setT2iMjStylize, hint: '--s' },
+                                                        { label: 'Chaos', value: t2iMjChaos, min: 0, max: 100, setValue: setT2iMjChaos, hint: '--chaos' },
+                                                        { label: 'Experimental', value: t2iMjExperimental, min: 0, max: 100, setValue: setT2iMjExperimental, hint: '--exp' },
+                                                    ].map((setting) => (
+                                                        <label key={setting.label} className="space-y-2">
+                                                            <span className="flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300">
+                                                                <span>{setting.label} <span className="font-mono text-[10px] text-slate-400">{setting.hint}</span></span>
+                                                                <input
+                                                                    type="number"
+                                                                    min={setting.min}
+                                                                    max={setting.max}
+                                                                    value={setting.value}
+                                                                    onChange={(event) => setting.setValue(Math.min(setting.max, Math.max(setting.min, Number(event.target.value) || 0)))}
+                                                                    className="h-7 w-20 rounded-md border border-slate-200 bg-white px-2 text-right text-xs dark:border-white/10 dark:bg-slate-900"
+                                                                />
+                                                            </span>
+                                                            <input
+                                                                type="range"
+                                                                min={setting.min}
+                                                                max={setting.max}
+                                                                value={setting.value}
+                                                                onChange={(event) => setting.setValue(Number(event.target.value))}
+                                                                className="w-full accent-orange-500"
+                                                            />
+                                                        </label>
+                                                    ))}
+
+                                                    <label className="space-y-2">
+                                                        <span className="flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300">
+                                                            <span>Seed <span className="font-mono text-[10px] text-slate-400">--seed</span></span>
+                                                            <span className="text-[10px] text-slate-400">Blank = random</span>
+                                                        </span>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            max="4294967295"
+                                                            value={t2iMjSeed}
+                                                            onChange={(event) => setT2iMjSeed(event.target.value)}
+                                                            placeholder="Random"
+                                                            className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-white/10 dark:bg-slate-900"
+                                                        />
+                                                    </label>
+                                                </div>
+
+                                                <div className="mt-4 flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5 dark:border-white/10 dark:bg-slate-900">
+                                                    <div>
+                                                        <p className="text-xs font-medium text-slate-800 dark:text-slate-200">Raw Mode <span className="font-mono text-[10px] text-slate-400">--raw</span></p>
+                                                        <p className="text-[11px] text-slate-500">Reduce automatic styling for closer prompt adherence.</p>
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        role="switch"
+                                                        aria-checked={t2iMjRaw}
+                                                        onClick={() => setT2iMjRaw((value) => !value)}
+                                                        className={`relative h-6 w-11 rounded-full transition-colors ${t2iMjRaw ? 'bg-orange-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                                                    >
+                                                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${t2iMjRaw ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                                    </button>
+                                                </div>
+
+                                                {t2iFiles.length > 0 && (
+                                                    <div className="mt-4 space-y-3 border-t border-slate-200 pt-4 dark:border-white/10">
+                                                        <div className="flex items-center justify-between">
+                                                            <div>
+                                                                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">Reference Type</p>
+                                                                <p className="text-[11px] text-slate-500">Choose how uploaded images guide the result.</p>
+                                                            </div>
+                                                            <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
+                                                                {([
+                                                                    { id: 'image', label: 'Image' },
+                                                                    { id: 'style', label: 'Style' },
+                                                                    { id: 'omni', label: 'Subject' },
+                                                                ] as const).map((mode) => (
+                                                                    <button
+                                                                        key={mode.id}
+                                                                        type="button"
+                                                                        onClick={() => setT2iMjReferenceMode(mode.id)}
+                                                                        className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${t2iMjReferenceMode === mode.id ? 'bg-white text-orange-600 shadow-sm dark:bg-slate-700 dark:text-orange-400' : 'text-slate-500'}`}
+                                                                    >
+                                                                        {mode.label}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                        <label className="flex items-center gap-3">
+                                                            <span className="min-w-24 text-xs font-medium text-slate-700 dark:text-slate-300">
+                                                                {t2iMjReferenceMode === 'image' ? 'Image Weight' : t2iMjReferenceMode === 'style' ? 'Style Weight' : 'Omni Weight'}
+                                                            </span>
+                                                            <input
+                                                                type="range"
+                                                                min={t2iMjReferenceMode === 'image' ? 0 : t2iMjReferenceMode === 'omni' ? 1 : 0}
+                                                                max={t2iMjReferenceMode === 'image' ? 3 : 1000}
+                                                                step={t2iMjReferenceMode === 'image' ? 0.1 : 1}
+                                                                value={t2iMjReferenceMode === 'image' ? t2iMjImageWeight : t2iMjReferenceMode === 'style' ? t2iMjStyleWeight : t2iMjOmniWeight}
+                                                                onChange={(event) => {
+                                                                    const value = Number(event.target.value);
+                                                                    if (t2iMjReferenceMode === 'image') setT2iMjImageWeight(value);
+                                                                    else if (t2iMjReferenceMode === 'style') setT2iMjStyleWeight(value);
+                                                                    else setT2iMjOmniWeight(value);
+                                                                }}
+                                                                className="flex-1 accent-orange-500"
+                                                            />
+                                                            <span className="w-12 text-right text-xs tabular-nums text-slate-600 dark:text-slate-300">
+                                                                {t2iMjReferenceMode === 'image' ? t2iMjImageWeight : t2iMjReferenceMode === 'style' ? t2iMjStyleWeight : t2iMjOmniWeight}
+                                                            </span>
+                                                        </label>
+                                                        {t2iMjReferenceMode === 'omni' && t2iFiles.length > 1 && (
+                                                            <p className="text-[11px] text-amber-600 dark:text-amber-400">Subject Reference uses the first uploaded image only.</p>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {/* Bottom section: Settings & Generate */}
                                         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 relative">
                                             {/* Invisible overlay to close dropdowns */}
@@ -1737,6 +1936,7 @@ export const Modify = () => {
                                             )}
                                             <div className="flex flex-wrap items-center gap-3 relative z-50">
                                                 {/* Quantity Dropdown */}
+                                                {t2iModel === 'gpt-image-2' ? (
                                                 <div className="relative">
                                                     <button 
                                                         onClick={() => setOpenDropdown(openDropdown === 'count' ? null : 'count')}
@@ -1761,6 +1961,12 @@ export const Modify = () => {
                                                         </div>
                                                     )}
                                                 </div>
+                                                ) : (
+                                                    <div className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm font-medium text-slate-600 shadow-sm dark:border-white/5 dark:bg-slate-800 dark:text-slate-300" title="Midjourney Fast returns up to four approved images per batch">
+                                                        <Lock className="h-3.5 w-3.5 text-slate-400" />
+                                                        <span>Variations: 4</span>
+                                                    </div>
+                                                )}
 
                                                 {/* Ratio Dropdown */}
                                                 <div className="relative">
@@ -1789,6 +1995,7 @@ export const Modify = () => {
                                                 </div>
 
                                                 {/* Size Dropdown */}
+                                                {t2iModel === 'gpt-image-2' ? (
                                                 <div className="relative">
                                                     <button 
                                                         onClick={() => setOpenDropdown(openDropdown === 'size' ? null : 'size')}
@@ -1813,6 +2020,46 @@ export const Modify = () => {
                                                         </div>
                                                     )}
                                                 </div>
+                                                ) : (
+                                                    <>
+                                                        <div className="relative">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setOpenDropdown(openDropdown === 'quality' ? null : 'quality')}
+                                                                className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 dark:border-white/5 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                                            >
+                                                                <span>Quality: {t2iMjQuality === 'hd' ? 'HD' : 'Standard'}</span>
+                                                                <ChevronDown className={`h-4 w-4 text-slate-400 transition-transform ${openDropdown === 'quality' ? 'rotate-180' : ''}`} />
+                                                            </button>
+                                                            {openDropdown === 'quality' && (
+                                                                <div className="absolute left-0 top-full z-50 mt-2 w-44 rounded-xl border border-slate-200 bg-white p-1 shadow-xl animate-in fade-in slide-in-from-top-2 dark:border-white/10 dark:bg-slate-800">
+                                                                    {([
+                                                                        { value: 'standard', label: 'Standard', detail: 'Best for everyday generation' },
+                                                                        { value: 'hd', label: 'HD', detail: 'Native high-resolution output' },
+                                                                    ] as const).map((option) => (
+                                                                        <button
+                                                                            key={option.value}
+                                                                            type="button"
+                                                                            onClick={() => { setT2iMjQuality(option.value); setOpenDropdown(null); }}
+                                                                            className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${t2iMjQuality === option.value ? 'bg-orange-50 text-orange-600 dark:bg-orange-900/20 dark:text-orange-400' : 'text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700'}`}
+                                                                        >
+                                                                            <span className="block text-sm font-medium">{option.label}</span>
+                                                                            <span className="block text-[10px] text-slate-400">{option.detail}</span>
+                                                                        </button>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setShowT2iAdvanced((value) => !value)}
+                                                            className={`flex h-9 items-center gap-2 rounded-lg border px-3 text-sm font-medium shadow-sm transition-colors ${showT2iAdvanced ? 'border-orange-300 bg-orange-50 text-orange-600 dark:border-orange-500/30 dark:bg-orange-900/20 dark:text-orange-400' : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-white/5 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700'}`}
+                                                        >
+                                                            <Settings2 className="h-4 w-4" />
+                                                            Advanced Settings
+                                                        </button>
+                                                    </>
+                                                )}
                                             </div>
 
                                             <button 
@@ -1821,7 +2068,9 @@ export const Modify = () => {
                                                 disabled={isGenerating || isUploading || !t2iPrompt.trim()}
                                             >
                                                 {isGenerating || isUploading ? <Loader2 className="w-5 h-5 animate-spin"/> : <ArrowUp className="w-5 h-5" />}
-                                                <span>~{estimateFalImageCredits({ mode: t2iFiles.length > 0 ? 'edit' : 'text', resolution: t2iSize as Resolution, aspectRatio: t2iRatio, imageCount: t2iOutputCount, quality: 'medium', inputImageCount: t2iFiles.length })} credits</span>
+                                                <span>~{t2iModel === 'mj-v8.1'
+                                                    ? estimateMjImageCredits(t2iMjQuality)
+                                                    : estimateFalImageCredits({ mode: t2iFiles.length > 0 ? 'edit' : 'text', resolution: t2iSize as Resolution, aspectRatio: t2iRatio, imageCount: t2iOutputCount, quality: 'medium', inputImageCount: t2iFiles.length })} credits</span>
                                             </button>
                                         </div>
                                     </div>
@@ -2482,14 +2731,14 @@ export const Modify = () => {
                         onClick={() => {
                             setActiveTool(activeTool === 'text2img' ? null : 'text2img');
                             if (activeTool !== 'text2img') {
-                                setT2iOutputCount(1);
+                                setT2iOutputCount(t2iModel === 'mj-v8.1' ? 4 : 1);
                             }
                         }}
                         className="w-full p-4 flex items-center justify-between text-left"
                     >
                         <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
                             <Type className="w-5 h-5 text-orange-500 dark:text-orange-400" /> 
-                            Text to Image
+                            Image Generation
                         </span>
                         <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeTool === 'text2img' ? 'rotate-180' : ''}`}/>
                     </button>
@@ -2580,7 +2829,7 @@ export const Modify = () => {
                 }}
                 className="flex-1 py-2 text-xs font-medium rounded-md transition-all text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
             >
-                Text to Image
+                Image Generation
             </button>
             </div>
 
@@ -2609,7 +2858,7 @@ export const Modify = () => {
                             ? 'bg-pink-600/80 text-white border-pink-400/30'
                             : 'bg-purple-600/80 text-white border-purple-400/30'
                         }`}>
-                            {isT2I ? 'Text to Image' : 'Upload'}
+                            {isT2I ? 'Image Generation' : 'Upload'}
                         </div>
                         )}
                     </div>

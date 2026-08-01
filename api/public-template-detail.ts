@@ -9,7 +9,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const VIDEO_URL_PATTERN = /\.(mp4|webm|mov|m4v)(?:$|[?#])/i;
 
 const FEATURE_NAMES: Record<string, string> = {
-  'image.text_to_image': 'Text to Image',
+  'image.text_to_image': 'Image Generation',
   'image.replace_product': 'Replace Product',
   'image.modify': 'Modify Image',
   'video.image_to_video': 'Image to Video',
