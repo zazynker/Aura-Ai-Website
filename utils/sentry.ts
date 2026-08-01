@@ -1,4 +1,13 @@
-import * as Sentry from '@sentry/react';
+type SentryModule = typeof import('@sentry/react');
+
+let sentryModulePromise: Promise<SentryModule> | null = null;
+
+const loadSentry = (): Promise<SentryModule> => {
+  if (!sentryModulePromise) {
+    sentryModulePromise = import('@sentry/react');
+  }
+  return sentryModulePromise;
+};
 
 /**
  * Initialize Sentry error monitoring
@@ -13,50 +22,51 @@ export function initSentry() {
     return;
   }
 
-  try {
-    Sentry.init({
-      dsn,
-      
-      // Environment tag
-      environment: import.meta.env.MODE || 'production',
-      
-      // Disable performance monitoring to save quota
-      tracesSampleRate: 0,
-      
-      // Don't send PII
-      sendDefaultPii: false,
-    });
-    
-    console.log('[Sentry] Initialized successfully');
-  } catch (error) {
-    console.error('[Sentry] Failed to initialize:', error);
-  }
+  void loadSentry()
+    .then((Sentry) => {
+      Sentry.init({
+        dsn,
+        environment: import.meta.env.MODE || 'production',
+        tracesSampleRate: 0,
+        sendDefaultPii: false,
+      });
+      console.log('[Sentry] Initialized successfully');
+    })
+    .catch((error) => console.error('[Sentry] Failed to initialize:', error));
 }
 
 /**
  * Manually capture an exception
  */
 export function captureException(error: Error, context?: Record<string, any>) {
-  Sentry.captureException(error, { extra: context });
+  if (!import.meta.env.VITE_SENTRY_DSN) return;
+  void loadSentry().then((Sentry) => {
+    Sentry.captureException(error, { extra: context });
+  });
 }
 
 /**
  * Manually capture a message
  */
 export function captureMessage(message: string, level: 'info' | 'warning' | 'error' = 'info') {
-  Sentry.captureMessage(message, level);
+  if (!import.meta.env.VITE_SENTRY_DSN) return;
+  void loadSentry().then((Sentry) => {
+    Sentry.captureMessage(message, level);
+  });
 }
 
 /**
  * Set user context for better error tracking
  */
 export function setUser(user: { id: string; email?: string }) {
-  Sentry.setUser(user);
+  if (!import.meta.env.VITE_SENTRY_DSN) return;
+  void loadSentry().then((Sentry) => Sentry.setUser(user));
 }
 
 /**
  * Clear user context
  */
 export function clearUser() {
-  Sentry.setUser(null);
+  if (!import.meta.env.VITE_SENTRY_DSN) return;
+  void loadSentry().then((Sentry) => Sentry.setUser(null));
 }

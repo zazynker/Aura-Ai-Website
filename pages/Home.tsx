@@ -16,6 +16,8 @@ const getHomeColumnCount = (): number => {
   return 2;
 };
 
+const HOME_PAGE_SIZE = 24;
+
 // Lazy loading image component with skeleton - 使用 aspect-ratio 防止跳动
 const LazyImage = ({ 
   src, 
@@ -77,6 +79,8 @@ const LazyImage = ({
         <img
           src={src}
           alt={alt}
+          loading="lazy"
+          decoding="async"
           onLoad={(event) => {
             const image = event.currentTarget;
             if (image.naturalWidth && image.naturalHeight) {
@@ -109,17 +113,9 @@ const LazyWorkflowVideo = ({
   useEffect(() => {
     setShouldLoad(false);
     setIntrinsicAspectRatio(null);
-    if (!posterUrl) return;
-    const poster = new Image();
-    poster.onload = () => {
-      if (poster.naturalWidth && poster.naturalHeight) {
-        setIntrinsicAspectRatio(poster.naturalWidth / poster.naturalHeight);
-      }
-    };
-    poster.src = posterUrl;
-    return () => {
-      poster.onload = null;
-    };
+    // Let the video element request its poster when it is near the viewport.
+    // Creating a new Image here caused every off-screen workflow to request
+    // its poster immediately, duplicating work on mobile connections.
   }, [posterUrl, videoUrl]);
 
   useEffect(() => {
@@ -298,6 +294,8 @@ export const Home = () => {
   // State
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMoreTemplates, setHasMoreTemplates] = useState(true);
   const [search, setSearch] = useState(browsing.searchQuery);
   const [activeCategory, setActiveCategory] = useState(browsing.category);
   const [selectedTemplateForModal, setSelectedTemplateForModal] = useState<Template | null>(null);
@@ -328,62 +326,64 @@ export const Home = () => {
   const moods = ['All', 'Minimal', 'Luxury', 'Fashion', 'Playful', 'Dark', 'Casual'];
   const holidays = ['All', 'Christmas', 'Valentine', 'Halloween', 'Easter', "Mother's Day"];
 
-  // M5-7: fetch real public templates only. The RPC returns a safe creator
-  // display name and its fallback query still enforces status=published.
-  useEffect(() => {
-    const fetchTemplates = async () => {
-      setLoading(true);
-
-      try {
-        const rows = await fetchPublishedTemplates(1000);
-        const mapped: Template[] = rows.map((row) => {
-          const isWorkflow = row.template_kind.startsWith('workflow_');
-          const originalCoverUrl = row.cover_url || row.preview_url || '';
-          const isVideoCover = isWorkflow && (
-            row.cover_type === 'video'
-            || /\.(mp4|webm|mov|m4v)(?:$|[?#])/i.test(originalCoverUrl)
-          );
-          const poster = row.thumb_url || row.image_url || '';
-          const cover = isVideoCover
-            ? poster
-            : row.thumb_url || row.cover_url || row.image_url || '';
-          return {
-            id: row.id,
-            slug: row.slug,
-            name: row.display_name || row.name,
-            imageUrl: cover,
-            thumbUrl: row.thumb_url || undefined,
-            videoUrl: isVideoCover
-              ? originalCoverUrl || undefined
-              : undefined,
-            category: row.category || (isWorkflow ? 'Workflow' : 'Other'),
-            tags: row.tags || [],
-            isPro: Boolean(row.is_pro),
-            scene: row.scene || undefined,
-            model: row.model || undefined,
-            mood: row.mood || undefined,
-            holiday: row.holiday || undefined,
-            width: row.width || 896,
-            height: row.height || 1344,
-            isWorkflow,
-            authorName: row.creator_id === user?.id
-              ? user.name
-              : row.author_name || (row.creator_id ? 'Lazora creator' : 'Lazora'),
-            usesCount: Number(row.use_count || 0),
-            publishedAt: row.published_at || undefined,
-          };
-        });
-        setTemplates(mapped);
-      } catch (err) {
-        console.error('Unexpected error:', err);
-        addToast('error', 'Failed to load published templates. Please refresh.');
-        setTemplates([]);
-      } finally {
-        setLoading(false);
-      }
+  const mapTemplate = (row: Awaited<ReturnType<typeof fetchPublishedTemplates>>[number]): Template => {
+    const isWorkflow = row.template_kind.startsWith('workflow_');
+    const originalCoverUrl = row.cover_url || row.preview_url || '';
+    const isVideoCover = isWorkflow && (
+      row.cover_type === 'video'
+      || /\.(mp4|webm|mov|m4v)(?:$|[?#])/i.test(originalCoverUrl)
+    );
+    const poster = row.thumb_url || row.image_url || '';
+    const cover = isVideoCover
+      ? poster
+      : row.thumb_url || row.cover_url || row.image_url || '';
+    return {
+      id: row.id,
+      slug: row.slug,
+      name: row.display_name || row.name,
+      imageUrl: cover,
+      thumbUrl: row.thumb_url || undefined,
+      videoUrl: isVideoCover ? originalCoverUrl || undefined : undefined,
+      category: row.category || (isWorkflow ? 'Workflow' : 'Other'),
+      tags: row.tags || [],
+      isPro: Boolean(row.is_pro),
+      scene: row.scene || undefined,
+      model: row.model || undefined,
+      mood: row.mood || undefined,
+      holiday: row.holiday || undefined,
+      width: row.width || 896,
+      height: row.height || 1344,
+      isWorkflow,
+      authorName: row.creator_id === user?.id
+        ? user.name
+        : row.author_name || (row.creator_id ? 'Lazora creator' : 'Lazora'),
+      usesCount: Number(row.use_count || 0),
+      publishedAt: row.published_at || undefined,
     };
+  };
 
-    void fetchTemplates();
+  const loadTemplatePage = async (offset: number, append: boolean) => {
+    if (append && (loadingMore || !hasMoreTemplates)) return;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+
+    try {
+      const rows = await fetchPublishedTemplates(HOME_PAGE_SIZE, offset);
+      const mapped = rows.map(mapTemplate);
+      setTemplates((current) => append ? [...current, ...mapped] : mapped);
+      setHasMoreTemplates(rows.length === HOME_PAGE_SIZE);
+    } catch (err) {
+      console.error('Unexpected error:', err);
+      addToast('error', 'Failed to load published templates. Please refresh.');
+      if (!append) setTemplates([]);
+    } finally {
+      if (append) setLoadingMore(false);
+      else setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTemplatePage(0, false);
   }, [addToast, user?.id, user?.name]);
 
   // Restore scroll position
@@ -722,6 +722,7 @@ export const Home = () => {
             <p className="text-slate-500 dark:text-slate-400">No templates found</p>
           </div>
         ) : (
+        <>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 items-start gap-4 max-w-[1600px] mx-auto">
           {masonryColumns.map((column, columnIndex) => (
             <div key={`template-column-${columnIndex}`} className="min-w-0 space-y-4">
@@ -739,6 +740,18 @@ export const Home = () => {
             </div>
           ))}
         </div>
+        {hasMoreTemplates && (
+          <div className="flex justify-center pt-10">
+            <Button
+              variant="secondary"
+              onClick={() => void loadTemplatePage(templates.length, true)}
+              disabled={loadingMore}
+            >
+              {loadingMore ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Load more templates'}
+            </Button>
+          </div>
+        )}
+        </>
         )}
       </div>
 

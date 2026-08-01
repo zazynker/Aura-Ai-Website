@@ -1,5 +1,4 @@
 import { supabase } from './supabase';
-import { fetchPublicProfiles } from './profileApi';
 
 export interface PublicTemplateRow {
   id: string;
@@ -61,48 +60,43 @@ const PUBLIC_TEMPLATE_COLUMNS = [
  * template can never leak into Home through the owner's broader RLS policy.
  */
 export async function fetchPublishedTemplates(
-  limit = 1000,
+  limit = 24,
+  offset = 0,
 ): Promise<PublicTemplateRow[]> {
   const safeLimit = Math.max(1, Math.min(limit, 1000));
-  const { data: rpcData, error: rpcError } = await supabase.rpc(
-    'list_published_templates',
-    { p_limit: safeLimit },
-  );
+  const safeOffset = Math.max(0, Math.floor(offset));
+  // The RPC is kept for the first page because it includes a privacy-safe
+  // author name. Subsequent pages use the published-only query so this code
+  // also works with deployments where the RPC has no offset argument.
+  const { data: rpcData, error: rpcError } = safeOffset === 0
+    ? await supabase.rpc('list_published_templates', { p_limit: safeLimit })
+    : { data: null, error: { message: 'Use the paged query after the first page.' } };
 
   if (!rpcError) {
-    const rows = (rpcData || []) as PublicTemplateRow[];
-    const profiles = await fetchPublicProfiles(
-      rows.map((row) => row.creator_id).filter((id): id is string => Boolean(id)),
-    );
-    return rows.map((row) => ({
-      ...row,
-      author_name: (row.creator_id && profiles.get(row.creator_id)?.username) || row.author_name,
-    }));
+    return (rpcData || []) as PublicTemplateRow[];
   }
 
-  console.warn(
-    'list_published_templates is unavailable; using the published-only fallback.',
-    rpcError.message,
-  );
+  if (safeOffset === 0) {
+    console.warn(
+      'list_published_templates is unavailable; using the published-only fallback.',
+      rpcError.message,
+    );
+  }
   const { data, error } = await supabase
     .from('templates')
     .select(PUBLIC_TEMPLATE_COLUMNS)
     .eq('status', 'published')
     .order('published_at', { ascending: false, nullsFirst: false })
     .order('created_at', { ascending: false })
-    .limit(safeLimit);
+    .range(safeOffset, safeOffset + safeLimit - 1);
 
   if (error) {
     throw new Error(`Could not load published templates: ${error.message}`);
   }
 
   const rows = (data || []) as unknown as Array<Omit<PublicTemplateRow, 'author_name'>>;
-  const profiles = await fetchPublicProfiles(
-    rows.map((row) => row.creator_id).filter((id): id is string => Boolean(id)),
-  );
   return rows.map((row) => ({
     ...row,
-    author_name: (row.creator_id && profiles.get(row.creator_id)?.username)
-      || (row.creator_id ? 'Lazora creator' : 'Lazora'),
+    author_name: row.creator_id ? 'Lazora creator' : 'Lazora',
   })) as PublicTemplateRow[];
 }
