@@ -11,7 +11,7 @@ import type {
 import { validateWorkflowDefinition } from './validators';
 
 export type BuilderFeatureType =
-  | 'Text to Image'
+  | 'Image Generation'
   | 'Replace Product'
   | 'Modify Image'
   | 'Image to Video'
@@ -53,8 +53,19 @@ export interface BuilderDraftStep {
     generateAudio?: boolean;
   };
   imageParams?: {
+    model: 'gpt-image-2' | 'mj-v8.1';
     ratio: string;
     resolution: string;
+    quality: 'standard' | 'hd';
+    stylize: number;
+    chaos: number;
+    experimental: number;
+    raw: boolean;
+    seed: string;
+    referenceMode: 'image' | 'style' | 'omni';
+    imageWeight: number;
+    styleWeight: number;
+    omniWeight: number;
   };
   inputBindings?: BuilderInputSelection[];
 }
@@ -68,7 +79,7 @@ export const BUILDER_FEATURE_TO_CAPABILITY: Record<
   BuilderFeatureType,
   WorkflowCapabilityKey
 > = {
-  'Text to Image': 'image.text_to_image',
+  'Image Generation': 'image.text_to_image',
   'Replace Product': 'image.replace_product',
   'Modify Image': 'image.modify',
   'Image to Video': 'video.image_to_video',
@@ -116,9 +127,27 @@ function buildParameters(
   }
 
   if (capabilityKey === 'image.text_to_image') {
-    parameters.ratio = step.imageParams?.ratio || '1:1';
-    parameters.resolution = step.imageParams?.resolution || '1K';
-    parameters.outputCount = 1;
+    const imageParams = step.imageParams;
+    const model = imageParams?.model || 'gpt-image-2';
+    parameters.model = model;
+    parameters.ratio = imageParams?.ratio || '1:1';
+    parameters.outputCount = model === 'mj-v8.1' ? 4 : 1;
+
+    if (model === 'mj-v8.1') {
+      delete parameters.resolution;
+      parameters.quality = imageParams?.quality || 'standard';
+      parameters.stylize = imageParams?.stylize ?? 100;
+      parameters.chaos = imageParams?.chaos ?? 0;
+      parameters.experimental = imageParams?.experimental ?? 0;
+      parameters.raw = imageParams?.raw ?? false;
+      parameters.referenceMode = imageParams?.referenceMode || 'image';
+      parameters.imageWeight = imageParams?.imageWeight ?? 1;
+      parameters.styleWeight = imageParams?.styleWeight ?? 100;
+      parameters.omniWeight = imageParams?.omniWeight ?? 100;
+      if (imageParams?.seed.trim()) parameters.seed = Number(imageParams.seed);
+    } else {
+      parameters.resolution = imageParams?.resolution || '1K';
+    }
   }
 
   return parameters;

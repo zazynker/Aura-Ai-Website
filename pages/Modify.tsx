@@ -127,8 +127,8 @@ export const Modify = () => {
   // UI State
   const [showLightbox, setShowLightbox] = useState(false);
   const [showVideoComingSoon, setShowVideoComingSoon] = useState(false);
-  // Replace Product is DEFAULT OPEN when image is selected
-  const [activeTool, setActiveTool] = useState<string | null>(hasSelectedImage ? 'replace' : null);
+  // Image Generation is the default Image-page workspace.
+  const [activeTool, setActiveTool] = useState<string | null>('text2img');
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
   
   // Replace Product Advanced Options
@@ -155,6 +155,7 @@ export const Modify = () => {
   const [t2iModel, setT2iModel] = useState<'gpt-image-2' | 'mj-v8.1'>('gpt-image-2');
   const [t2iPrompt, setT2iPrompt] = useState('');
   const [t2iFiles, setT2iFiles] = useState<File[]>([]);
+  const [t2iWorkflowReferenceUrls, setT2iWorkflowReferenceUrls] = useState<string[]>([]);
   const [t2iRatio, setT2iRatio] = useState('1:1');
   const [t2iSize, setT2iSize] = useState('1K');
   const [t2iOutputCount, setT2iOutputCount] = useState(1);
@@ -170,6 +171,7 @@ export const Modify = () => {
   const [t2iMjStyleWeight, setT2iMjStyleWeight] = useState(100);
   const [t2iMjOmniWeight, setT2iMjOmniWeight] = useState(100);
   const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | 'quality' | null>(null);
+  const t2iReferenceCount = Math.min(3, t2iWorkflowReferenceUrls.length + t2iFiles.length);
 
   // 🔧 CHANGED: Admin Demo Mode - persist to sessionStorage (survives route changes, clears on tab close)
   const [showFakeQueue, setShowFakeQueue] = useState(false);
@@ -282,13 +284,6 @@ export const Modify = () => {
     return sourceGenerations;
   }, [originalUploadedImage, generations, user, currentImageSource]);
 
-  // Auto-open Replace tool when image is selected
-  useEffect(() => {
-    if (hasSelectedImage && activeTool === null) {
-      setActiveTool('replace');
-    }
-  }, [hasSelectedImage]);
-
   // Clear navigation state after using it (so refresh doesn't re-apply)
   useEffect(() => {
       if (navigationState?.initialImage) {
@@ -310,18 +305,27 @@ export const Modify = () => {
         'image.upscale': ['source_image'],
         'image.text_to_image': ['reference_images'],
       };
-      const material = handoff.materials.find(
-        (item) => item.type === 'image' && preferredSlots[handoff.capability]?.includes(item.slot || ''),
-      ) || handoff.materials.find((item) => item.type === 'image');
-      if (material) {
-        const hasUserImage = currentImage !== DEFAULT_TEMPLATE_URL
-          && currentImage !== material.url;
-        if (handoff.action === 'materials' && hasUserImage && !window.confirm('Replace the image currently selected on this page with the template material?')) return;
-        setCurrentImage(material.url);
-        setOriginalUploadedImage(material.url);
-        setCurrentImageSource({ templateId: `workflow:${handoff.stepId}`, templateName: 'Workflow material' });
-        setHasSelectedImage(true);
-        setUploadedFile(null);
+      const matchingImageMaterials = handoff.materials.filter(
+        (item) => item.type === 'image' && (
+          preferredSlots[handoff.capability]?.includes(item.slot || '')
+          || !item.slot
+        ),
+      );
+      if (handoff.capability === 'image.text_to_image') {
+        setT2iWorkflowReferenceUrls(matchingImageMaterials.map((item) => item.url).slice(0, 3));
+        setT2iFiles([]);
+      } else {
+        const material = matchingImageMaterials[0] || handoff.materials.find((item) => item.type === 'image');
+        if (material) {
+          const hasUserImage = currentImage !== DEFAULT_TEMPLATE_URL
+            && currentImage !== material.url;
+          if (handoff.action === 'materials' && hasUserImage && !window.confirm('Replace the image currently selected on this page with the template material?')) return;
+          setCurrentImage(material.url);
+          setOriginalUploadedImage(material.url);
+          setCurrentImageSource({ templateId: `workflow:${handoff.stepId}`, templateName: 'Workflow material' });
+          setHasSelectedImage(true);
+          setUploadedFile(null);
+        }
       }
       if (handoff.action === 'materials') return;
     }
@@ -348,10 +352,25 @@ export const Modify = () => {
 
     setActiveTool(capabilityTool[handoff.capability] || 'replace');
     if (handoff.capability === 'image.text_to_image') {
+      const model = settings.model === 'mj-v8.1' ? 'mj-v8.1' : 'gpt-image-2';
       setT2iPrompt(nextPrompt);
+      setT2iModel(model);
+      setShowT2iAdvanced(model === 'mj-v8.1');
       if (typeof settings.ratio === 'string') setT2iRatio(settings.ratio);
-      if (typeof settings.resolution === 'string') setT2iSize(settings.resolution);
-      if (typeof settings.outputCount === 'number') setT2iOutputCount(settings.outputCount);
+      if (model === 'gpt-image-2' && typeof settings.resolution === 'string') setT2iSize(settings.resolution);
+      setT2iOutputCount(model === 'mj-v8.1' ? 4 : typeof settings.outputCount === 'number' ? settings.outputCount : 1);
+      if (settings.quality === 'hd' || settings.quality === 'standard') setT2iMjQuality(settings.quality);
+      if (typeof settings.stylize === 'number') setT2iMjStylize(settings.stylize);
+      if (typeof settings.chaos === 'number') setT2iMjChaos(settings.chaos);
+      if (typeof settings.experimental === 'number') setT2iMjExperimental(settings.experimental);
+      if (typeof settings.raw === 'boolean') setT2iMjRaw(settings.raw);
+      setT2iMjSeed(typeof settings.seed === 'number' || typeof settings.seed === 'string' ? String(settings.seed) : '');
+      if (settings.referenceMode === 'image' || settings.referenceMode === 'style' || settings.referenceMode === 'omni') {
+        setT2iMjReferenceMode(settings.referenceMode);
+      }
+      if (typeof settings.imageWeight === 'number') setT2iMjImageWeight(settings.imageWeight);
+      if (typeof settings.styleWeight === 'number') setT2iMjStyleWeight(settings.styleWeight);
+      if (typeof settings.omniWeight === 'number') setT2iMjOmniWeight(settings.omniWeight);
     } else if (handoff.capability === 'image.modify') {
       setModifyPrompt(nextPrompt);
     } else if (handoff.capability === 'image.change_ratio') {
@@ -939,6 +958,8 @@ export const Modify = () => {
         templateName: currentImageSource.templateName,
         imageUrl: imgUrl,
         creditsUsed: creditAllocations[imageIndex] || 0,
+        groupId: result.requestId || groupId,
+        requestId: result.requestId,
         prompt: displayPrompt,
         capability,
         templateRunId: result.templateRunId,
@@ -993,12 +1014,12 @@ export const Modify = () => {
     const estimatedCredits = isMidjourney
       ? estimateMjImageCredits(t2iMjQuality)
       : estimateFalImageCredits({
-          mode: t2iFiles.length > 0 ? 'edit' : 'text',
+          mode: t2iReferenceCount > 0 ? 'edit' : 'text',
           resolution: t2iResolution,
           aspectRatio: t2iRatio,
           imageCount: t2iOutputCount,
           quality: 'medium',
-          inputImageCount: t2iFiles.length,
+          inputImageCount: t2iReferenceCount,
         });
     if (user.credits < estimatedCredits) { 
       handleInsufficientCredits();
@@ -1057,10 +1078,10 @@ export const Modify = () => {
 
     try {
       // Upload reference images if any
-      let referenceImageUrls: string[] = [];
+      let referenceImageUrls: string[] = [...t2iWorkflowReferenceUrls];
       if (t2iFiles.length > 0) {
         setIsUploading(true);
-        for (const file of t2iFiles) {
+        for (const file of t2iFiles.slice(0, Math.max(0, 3 - referenceImageUrls.length))) {
           const result = await uploadUserImage(user.id, file);
           if (result.url) {
             referenceImageUrls.push(result.url);
@@ -1156,6 +1177,8 @@ export const Modify = () => {
         templateName: sourceName,
         imageUrl: imgUrl,
         creditsUsed: creditAllocations[imageIndex] || 0,
+        groupId: result.requestId || groupId,
+        requestId: result.requestId,
         prompt: t2iPrompt || 'Image Generation',
         capability: 'image.text_to_image' as const,
         templateRunId: result.templateRunId,
@@ -1164,6 +1187,7 @@ export const Modify = () => {
         inputAssets,
         generationParameters: {
           prompt: t2iPrompt,
+          model: t2iModel,
           ratio: t2iRatio,
           resolution: isMidjourney ? (t2iMjQuality === 'hd' ? 'HD' : 'Standard') : t2iSize,
           outputCount: isMidjourney ? 4 : t2iOutputCount,
@@ -1180,6 +1204,9 @@ export const Modify = () => {
             raw: t2iMjRaw,
             seed: t2iMjSeed || undefined,
             referenceMode: t2iMjReferenceMode,
+            imageWeight: t2iMjImageWeight,
+            styleWeight: t2iMjStyleWeight,
+            omniWeight: t2iMjOmniWeight,
           } : {}),
         },
     }));
@@ -1709,7 +1736,7 @@ export const Modify = () => {
                                                                 if (e.target.files) {
                                                                     const validFiles = validateAndFilterFiles(Array.from(e.target.files));
                                                                     if (validFiles.length > 0) {
-                                                                        setT2iFiles(prev => [...prev, ...validFiles].slice(0, 3));
+                                                                        setT2iFiles(prev => [...prev, ...validFiles].slice(0, Math.max(0, 3 - t2iWorkflowReferenceUrls.length)));
                                                                     }
                                                                     e.target.value = '';
                                                                 }
@@ -1735,7 +1762,7 @@ export const Modify = () => {
                                                                 </button>
                                                             </div>
                                                             {/* Add button */}
-                                                            {t2iFiles.length < 3 && (
+                                                            {t2iReferenceCount < 3 && (
                                                                 <div className="absolute -bottom-2 -right-2 w-7 h-7 bg-white dark:bg-slate-800 rounded-full shadow-md border border-slate-200 dark:border-white/10 flex items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 z-50 transition-transform hover:scale-110">
                                                                     <input 
                                                                         type="file" 
@@ -1745,7 +1772,7 @@ export const Modify = () => {
                                                                             if (e.target.files) {
                                                                                 const validFiles = validateAndFilterFiles(Array.from(e.target.files));
                                                                                 if (validFiles.length > 0) {
-                                                                                    setT2iFiles(prev => [...prev, ...validFiles].slice(0, 3));
+                                                                                    setT2iFiles(prev => [...prev, ...validFiles].slice(0, Math.max(0, 3 - t2iWorkflowReferenceUrls.length)));
                                                                                 }
                                                                                 e.target.value = '';
                                                                             }
@@ -1795,6 +1822,33 @@ export const Modify = () => {
                                                 />
                                             </div>
                                         </div>
+
+                                        {t2iWorkflowReferenceUrls.length > 0 && (
+                                            <div className="mb-4 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2.5 dark:border-orange-500/20 dark:bg-orange-500/5">
+                                                <div className="flex -space-x-2">
+                                                    {t2iWorkflowReferenceUrls.map((url, index) => (
+                                                        <img
+                                                            key={`${url}-${index}`}
+                                                            src={url}
+                                                            alt={`Workflow reference ${index + 1}`}
+                                                            className="h-9 w-9 rounded-lg border-2 border-white object-cover shadow-sm dark:border-slate-900"
+                                                        />
+                                                    ))}
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">Workflow reference images loaded</p>
+                                                    <p className="text-[11px] text-slate-500">These reusable template materials will be included automatically.</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setT2iWorkflowReferenceUrls([])}
+                                                    className="rounded-lg p-1.5 text-slate-400 hover:bg-white hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                                                    aria-label="Remove workflow reference images"
+                                                >
+                                                    <X className="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        )}
 
                                         {t2iModel === 'mj-v8.1' && showT2iAdvanced && (
                                             <div className="mb-4 rounded-xl border border-slate-200 dark:border-white/10 bg-slate-50/80 dark:bg-slate-800/50 p-4 animate-in slide-in-from-top-2">
@@ -1870,7 +1924,7 @@ export const Modify = () => {
                                                     </button>
                                                 </div>
 
-                                                {t2iFiles.length > 0 && (
+                                                {t2iReferenceCount > 0 && (
                                                     <div className="mt-4 space-y-3 border-t border-slate-200 pt-4 dark:border-white/10">
                                                         <div className="flex items-center justify-between">
                                                             <div>
@@ -1916,7 +1970,7 @@ export const Modify = () => {
                                                                 {t2iMjReferenceMode === 'image' ? t2iMjImageWeight : t2iMjReferenceMode === 'style' ? t2iMjStyleWeight : t2iMjOmniWeight}
                                                             </span>
                                                         </label>
-                                                        {t2iMjReferenceMode === 'omni' && t2iFiles.length > 1 && (
+                                                        {t2iMjReferenceMode === 'omni' && t2iReferenceCount > 1 && (
                                                             <p className="text-[11px] text-amber-600 dark:text-amber-400">Subject Reference uses the first uploaded image only.</p>
                                                         )}
                                                     </div>
@@ -2069,7 +2123,7 @@ export const Modify = () => {
                                                 {isGenerating || isUploading ? <Loader2 className="w-5 h-5 animate-spin"/> : <ArrowUp className="w-5 h-5" />}
                                                 <span>~{t2iModel === 'mj-v8.1'
                                                     ? estimateMjImageCredits(t2iMjQuality)
-                                                    : estimateFalImageCredits({ mode: t2iFiles.length > 0 ? 'edit' : 'text', resolution: t2iSize as Resolution, aspectRatio: t2iRatio, imageCount: t2iOutputCount, quality: 'medium', inputImageCount: t2iFiles.length })} credits</span>
+                                                    : estimateFalImageCredits({ mode: t2iReferenceCount > 0 ? 'edit' : 'text', resolution: t2iSize as Resolution, aspectRatio: t2iRatio, imageCount: t2iOutputCount, quality: 'medium', inputImageCount: t2iReferenceCount })} credits</span>
                                             </button>
                                         </div>
                                     </div>
@@ -2252,7 +2306,7 @@ export const Modify = () => {
                 )}
 
                 {/* 1. IMAGE GENERATION Tool */}
-                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'text2img' ? 'ring-1 ring-orange-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                <div className={`order-1 glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'text2img' ? 'ring-1 ring-orange-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button
                         onClick={() => {
                             setActiveTool(activeTool === 'text2img' ? null : 'text2img');
@@ -2277,8 +2331,8 @@ export const Modify = () => {
                     )}
                 </div>
 
-                {/* 2. REPLACE PRODUCT Tool */}
-                <div className={`glass-panel rounded-2xl p-1 transition-all duration-300 ${activeTool === 'replace' ? 'ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                {/* 3. REPLACE PRODUCT Tool */}
+                <div className={`order-3 glass-panel rounded-2xl p-1 transition-all duration-300 ${activeTool === 'replace' ? 'ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
                         onClick={() => setActiveTool(activeTool === 'replace' ? null : 'replace')}
@@ -2471,8 +2525,8 @@ export const Modify = () => {
                     )}
                 </div>
 
-                {/* 3. MODIFY Tool */}
-                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'modify' ? 'ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                {/* 2. MODIFY Tool */}
+                <div className={`order-2 glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'modify' ? 'ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
                         onClick={() => setActiveTool(activeTool === 'modify' ? null : 'modify')}
@@ -2600,7 +2654,7 @@ export const Modify = () => {
                 </div>
 
                 {/* 4. RATIO Tool */}
-                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'ratio' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                <div className={`order-4 glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'ratio' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
                         onClick={() => setActiveTool(activeTool === 'ratio' ? null : 'ratio')}
@@ -2666,7 +2720,7 @@ export const Modify = () => {
                 </div>
 
                 {/* 5. ENHANCE / UPSCALE Tool */}
-                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'enhance' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                <div className={`order-5 glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'enhance' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
                         onClick={() => setActiveTool(activeTool === 'enhance' ? null : 'enhance')}
@@ -2751,7 +2805,7 @@ export const Modify = () => {
                 </div>
 
                     {/* 6. GENERATE VIDEO Tool (Coming Soon) */}
-                    <div className="glass-panel rounded-2xl transition-all duration-300">
+                    <div className="order-6 glass-panel rounded-2xl transition-all duration-300">
                     <button 
                             onClick={() => {
                                 navigate('/video', { state: { initialImage: currentImage } });
@@ -2850,7 +2904,7 @@ export const Modify = () => {
                         }`}
                     >
                         <img src={gen.imageUrl} className="w-full h-full object-cover" loading="lazy" />
-                        {/* Only show badge for Upload and Text to Image, not for templates */}
+                        {/* Only show badge for Upload and Image Generation, not for templates */}
                         {(isModify || isT2I) && (
                         <div className={`absolute top-1 left-1 backdrop-blur-sm px-1.5 py-0.5 rounded text-[9px] font-medium border ${
                             isT2I

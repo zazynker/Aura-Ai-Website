@@ -166,6 +166,7 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   inputAssets: db.input_assets || undefined,
   generationParameters: db.generation_parameters || undefined,
   requestId: db.request_id || undefined,
+  groupId: db.media_type !== 'video' ? db.request_id || undefined : undefined,
 });
 
 /**

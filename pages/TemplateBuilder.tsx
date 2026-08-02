@@ -53,7 +53,7 @@ const VIDEO_FEATURES: FeatureType[] = [
 ];
 
 const FEATURE_REQUIRED_MATERIAL_TYPES: Record<FeatureType, Material['type'][]> = {
-  'Text to Image': [],
+  'Image Generation': [],
   'Replace Product': ['Image', 'Image'],
   'Modify Image': ['Image'],
   'Image to Video': ['Image'],
@@ -95,6 +95,22 @@ const getGenerationResolution = (value: unknown): '720p' | '1080p' =>
 const IMAGE_RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2'] as const;
 const IMAGE_RESOLUTIONS = ['1K', '2K', '4K'] as const;
 
+const createDefaultImageParams = (): NonNullable<WorkflowStep['imageParams']> => ({
+  model: 'gpt-image-2',
+  ratio: '1:1',
+  resolution: '1K',
+  quality: 'standard',
+  stylize: 100,
+  chaos: 0,
+  experimental: 0,
+  raw: false,
+  seed: '',
+  referenceMode: 'image',
+  imageWeight: 1,
+  styleWeight: 100,
+  omniWeight: 100,
+});
+
 const getGenerationImageRatio = (value: unknown): string =>
   typeof value === 'string' && IMAGE_RATIOS.includes(value as typeof IMAGE_RATIOS[number])
     ? value
@@ -104,6 +120,14 @@ const getGenerationImageResolution = (value: unknown): string =>
   typeof value === 'string' && IMAGE_RESOLUTIONS.includes(value as typeof IMAGE_RESOLUTIONS[number])
     ? value
     : '1K';
+
+const getGenerationImageModel = (parameters: Generation['generationParameters']): 'gpt-image-2' | 'mj-v8.1' => {
+  if (parameters?.model === 'mj-v8.1' || parameters?.provider === 'evolink-mj-v8.1') return 'mj-v8.1';
+  return 'gpt-image-2';
+};
+
+const getGenerationNumber = (value: unknown, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 
 const getMissingRequiredMaterialTypes = (
   step: WorkflowStep,
@@ -175,13 +199,13 @@ const ensureRequiredMaterialCards = (
 
 const createInitialStep = (): WorkflowStep => ({
   id: 'step-1',
-  feature: 'Text to Image',
+  feature: 'Image Generation',
   resultUrl: null,
   materials: [
     { id: 'mat-1', type: 'Image', url: null, allowDownload: true },
   ],
   prompt: '',
-  imageParams: { ratio: '1:1', resolution: '1K' },
+  imageParams: createDefaultImageParams(),
 });
 
 export const TemplateBuilder = () => {
@@ -421,11 +445,11 @@ export const TemplateBuilder = () => {
   const addStep = () => {
     const newStep: WorkflowStep = {
       id: `step-${Date.now()}`,
-      feature: 'Text to Image',
+      feature: 'Image Generation',
       resultUrl: null,
       materials: [{ id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }],
       prompt: '',
-      imageParams: { ratio: '1:1', resolution: '1K' },
+      imageParams: createDefaultImageParams(),
     };
     setSteps([...steps, newStep]);
     setActiveStepId(newStep.id);
@@ -451,13 +475,13 @@ export const TemplateBuilder = () => {
     });
   };
 
-  const updateTextToImageSettings = (
+  const updateImageGenerationSettings = (
     updates: Partial<NonNullable<WorkflowStep['imageParams']>>,
   ) => {
     updateActiveStep({
       imageParams: {
-        ratio: activeStep.imageParams?.ratio || '1:1',
-        resolution: activeStep.imageParams?.resolution || '1K',
+        ...createDefaultImageParams(),
+        ...activeStep.imageParams,
         ...updates,
       },
     });
@@ -648,7 +672,7 @@ export const TemplateBuilder = () => {
       typeof generation.generationParameters?.extraBlend === 'boolean' ||
       typeof generation.generationParameters?.productSizePercent === 'number';
     if (hasReplaceInputs || hasReplaceParameters) return 'Replace Product';
-    if (generation.templateId === 'text-to-image') return 'Text to Image';
+    if (generation.templateId === 'text-to-image') return 'Image Generation';
     if (
       !generation.videoUrl &&
       generation.mediaType !== 'video' &&
@@ -722,11 +746,12 @@ export const TemplateBuilder = () => {
     const parameterResolution = generation.generationParameters?.resolution;
     const parameterGenerateAudio = generation.generationParameters?.generateAudio;
     const parameterRatio = generation.generationParameters?.ratio;
+    const imageModel = getGenerationImageModel(generation.generationParameters);
 
     const nextFeature: FeatureType = feature ?? (
       generation.videoUrl || generation.mediaType === 'video'
         ? 'Image to Video'
-        : 'Text to Image'
+        : 'Image Generation'
     );
     const nextMaterials = ensureRequiredMaterialCards(
       nextFeature,
@@ -742,10 +767,28 @@ export const TemplateBuilder = () => {
               : true,
         }
       : undefined;
-    const nextImageParams = nextFeature === 'Text to Image'
+    const nextImageParams = nextFeature === 'Image Generation'
       ? {
+          ...createDefaultImageParams(),
+          model: imageModel,
           ratio: getGenerationImageRatio(parameterRatio),
           resolution: getGenerationImageResolution(parameterResolution),
+          quality: generation.generationParameters?.quality === 'hd' ? 'hd' as const : 'standard' as const,
+          stylize: getGenerationNumber(generation.generationParameters?.stylize, 100),
+          chaos: getGenerationNumber(generation.generationParameters?.chaos, 0),
+          experimental: getGenerationNumber(generation.generationParameters?.experimental, 0),
+          raw: generation.generationParameters?.raw === true,
+          seed: generation.generationParameters?.seed === undefined
+            ? ''
+            : String(generation.generationParameters.seed),
+          referenceMode:
+            generation.generationParameters?.referenceMode === 'style'
+            || generation.generationParameters?.referenceMode === 'omni'
+              ? generation.generationParameters.referenceMode
+              : 'image' as const,
+          imageWeight: getGenerationNumber(generation.generationParameters?.imageWeight, 1),
+          styleWeight: getGenerationNumber(generation.generationParameters?.styleWeight, 100),
+          omniWeight: getGenerationNumber(generation.generationParameters?.omniWeight, 100),
         }
       : undefined;
     const nextStep: WorkflowStep = {
@@ -1418,7 +1461,7 @@ export const TemplateBuilder = () => {
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {([
-                  'Text to Image',
+                  'Image Generation',
                   'Replace Product',
                   'Modify Image',
                   'Image to Video',
@@ -1437,10 +1480,10 @@ export const TemplateBuilder = () => {
                           ? activeStep.videoParams
                           : { duration: '3s', resolution: '720p', generateAudio: true }
                         : undefined,
-                      imageParams: feature === 'Text to Image'
-                        ? activeStep.feature === 'Text to Image' && activeStep.imageParams
+                      imageParams: feature === 'Image Generation'
+                        ? activeStep.feature === 'Image Generation' && activeStep.imageParams
                           ? activeStep.imageParams
-                          : { ratio: '1:1', resolution: '1K' }
+                          : createDefaultImageParams()
                         : undefined,
                     })}
                     className={`p-4 rounded-xl border text-left transition-all ${
@@ -1672,46 +1715,225 @@ export const TemplateBuilder = () => {
                   </div>
                 )}
 
-                {activeStep.feature === 'Text to Image' && (
-                  <div className="grid gap-5 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/30 sm:grid-cols-2">
+                {activeStep.feature === 'Image Generation' && (
+                  <div className="space-y-5 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/30">
                     <div>
-                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Aspect ratio</label>
-                      <div className="grid grid-cols-4 gap-2">
-                        {IMAGE_RATIOS.map((ratio) => (
+                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Model</label>
+                      <div className="grid grid-cols-2 gap-2 rounded-xl border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-800/60">
+                        {([
+                          { value: 'gpt-image-2', label: 'GPT Image 2' },
+                          { value: 'mj-v8.1', label: 'Midjourney V8.1' },
+                        ] as const).map((model) => (
                           <button
-                            key={ratio}
+                            key={model.value}
                             type="button"
-                            onClick={() => updateTextToImageSettings({ ratio })}
-                            className={`rounded-lg px-2 py-2 text-xs font-medium transition-all ${
-                              (activeStep.imageParams?.ratio || '1:1') === ratio
-                                ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
-                                : 'border border-slate-200 bg-white text-slate-500 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400 dark:hover:text-slate-200'
-                            }`}
-                          >
-                            {ratio}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Resolution</label>
-                      <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800/60">
-                        {IMAGE_RESOLUTIONS.map((resolution) => (
-                          <button
-                            key={resolution}
-                            type="button"
-                            onClick={() => updateTextToImageSettings({ resolution })}
-                            className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all ${
-                              (activeStep.imageParams?.resolution || '1K') === resolution
+                            onClick={() => updateImageGenerationSettings({ model: model.value })}
+                            className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
+                              (activeStep.imageParams?.model || 'gpt-image-2') === model.value
                                 ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
                                 : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
                             }`}
                           >
-                            {resolution}
+                            {model.label}
                           </button>
                         ))}
                       </div>
                     </div>
+
+                    <div className="grid gap-5 sm:grid-cols-2">
+                      <div>
+                        <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Aspect ratio</label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {IMAGE_RATIOS.map((ratio) => (
+                            <button
+                              key={ratio}
+                              type="button"
+                              onClick={() => updateImageGenerationSettings({ ratio })}
+                              className={`rounded-lg px-2 py-2 text-xs font-medium transition-all ${
+                                (activeStep.imageParams?.ratio || '1:1') === ratio
+                                  ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
+                                  : 'border border-slate-200 bg-white text-slate-500 hover:text-slate-700 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400 dark:hover:text-slate-200'
+                              }`}
+                            >
+                              {ratio}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {(activeStep.imageParams?.model || 'gpt-image-2') === 'gpt-image-2' ? (
+                        <div>
+                          <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Resolution</label>
+                          <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800/60">
+                            {IMAGE_RESOLUTIONS.map((resolution) => (
+                              <button
+                                key={resolution}
+                                type="button"
+                                onClick={() => updateImageGenerationSettings({ resolution })}
+                                className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                                  (activeStep.imageParams?.resolution || '1K') === resolution
+                                    ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
+                                    : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                                }`}
+                              >
+                                {resolution}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <div>
+                            <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Quality</label>
+                            <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 dark:border-slate-700 dark:bg-slate-800/60">
+                              {(['standard', 'hd'] as const).map((quality) => (
+                                <button
+                                  key={quality}
+                                  type="button"
+                                  onClick={() => updateImageGenerationSettings({ quality })}
+                                  className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-all ${
+                                    (activeStep.imageParams?.quality || 'standard') === quality
+                                      ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
+                                      : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                                  }`}
+                                >
+                                  {quality === 'hd' ? 'HD' : 'Standard'}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400">
+                            Variations: <span className="font-semibold text-slate-800 dark:text-slate-200">4 (locked)</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {(activeStep.imageParams?.model || 'gpt-image-2') === 'mj-v8.1' && (
+                      <div className="space-y-5 rounded-xl border border-orange-200 bg-orange-50/50 p-4 dark:border-orange-500/20 dark:bg-orange-500/5">
+                        <div>
+                          <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Advanced Settings</h4>
+                          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">These Midjourney parameters are saved with the workflow and restored in Workdock.</p>
+                        </div>
+
+                        <div className="grid gap-4 sm:grid-cols-2">
+                          {([
+                            { key: 'stylize', label: 'Stylize', hint: '--s', min: 0, max: 1000, fallback: 100 },
+                            { key: 'chaos', label: 'Chaos', hint: '--chaos', min: 0, max: 100, fallback: 0 },
+                            { key: 'experimental', label: 'Experimental', hint: '--exp', min: 0, max: 100, fallback: 0 },
+                          ] as const).map((setting) => {
+                            const value = activeStep.imageParams?.[setting.key] ?? setting.fallback;
+                            return (
+                              <label key={setting.key} className="space-y-2">
+                                <span className="flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300">
+                                  <span>{setting.label} <span className="font-mono text-[10px] text-slate-400">{setting.hint}</span></span>
+                                  <input
+                                    type="number"
+                                    min={setting.min}
+                                    max={setting.max}
+                                    value={value}
+                                    onChange={(event) => updateImageGenerationSettings({ [setting.key]: Math.min(setting.max, Math.max(setting.min, Number(event.target.value) || 0)) })}
+                                    className="h-8 w-20 rounded-md border border-slate-200 bg-white px-2 text-right text-xs dark:border-slate-700 dark:bg-slate-900"
+                                  />
+                                </span>
+                                <input
+                                  type="range"
+                                  min={setting.min}
+                                  max={setting.max}
+                                  value={value}
+                                  onChange={(event) => updateImageGenerationSettings({ [setting.key]: Number(event.target.value) })}
+                                  className="w-full accent-orange-500"
+                                />
+                              </label>
+                            );
+                          })}
+
+                          <label className="space-y-2">
+                            <span className="flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300">
+                              <span>Seed <span className="font-mono text-[10px] text-slate-400">--seed</span></span>
+                              <span className="text-[10px] text-slate-400">Blank = random</span>
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              max="4294967295"
+                              value={activeStep.imageParams?.seed || ''}
+                              onChange={(event) => updateImageGenerationSettings({ seed: event.target.value })}
+                              placeholder="Random"
+                              className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+                            />
+                          </label>
+                        </div>
+
+                        <label className="flex cursor-pointer items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5 dark:border-slate-700 dark:bg-slate-900">
+                          <div>
+                            <p className="text-xs font-medium text-slate-800 dark:text-slate-200">Raw Mode <span className="font-mono text-[10px] text-slate-400">--raw</span></p>
+                            <p className="text-[11px] text-slate-500">Reduce automatic styling for closer prompt adherence.</p>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={activeStep.imageParams?.raw ?? false}
+                            onChange={(event) => updateImageGenerationSettings({ raw: event.target.checked })}
+                            className="h-4 w-4 cursor-pointer accent-orange-500"
+                          />
+                        </label>
+
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between gap-4">
+                            <div>
+                              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">Reference Type</p>
+                              <p className="text-[11px] text-slate-500">Controls how reusable reference images guide the result.</p>
+                            </div>
+                            <div className="flex rounded-lg bg-white p-1 dark:bg-slate-900">
+                              {([
+                                { value: 'image', label: 'Image' },
+                                { value: 'style', label: 'Style' },
+                                { value: 'omni', label: 'Subject' },
+                              ] as const).map((mode) => (
+                                <button
+                                  key={mode.value}
+                                  type="button"
+                                  onClick={() => updateImageGenerationSettings({ referenceMode: mode.value })}
+                                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
+                                    (activeStep.imageParams?.referenceMode || 'image') === mode.value
+                                      ? 'bg-orange-50 text-orange-600 shadow-sm ring-1 ring-orange-300 dark:bg-orange-500/15 dark:text-orange-300'
+                                      : 'text-slate-500'
+                                  }`}
+                                >
+                                  {mode.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          {(() => {
+                            const mode = activeStep.imageParams?.referenceMode || 'image';
+                            const key = mode === 'image' ? 'imageWeight' : mode === 'style' ? 'styleWeight' : 'omniWeight';
+                            const min = mode === 'omni' ? 1 : 0;
+                            const max = mode === 'image' ? 3 : 1000;
+                            const step = mode === 'image' ? 0.1 : 1;
+                            const fallback = mode === 'image' ? 1 : 100;
+                            const value = activeStep.imageParams?.[key] ?? fallback;
+                            return (
+                              <label className="flex items-center gap-3">
+                                <span className="min-w-24 text-xs font-medium text-slate-700 dark:text-slate-300">
+                                  {mode === 'image' ? 'Image Weight' : mode === 'style' ? 'Style Weight' : 'Omni Weight'}
+                                </span>
+                                <input
+                                  type="range"
+                                  min={min}
+                                  max={max}
+                                  step={step}
+                                  value={value}
+                                  onChange={(event) => updateImageGenerationSettings({ [key]: Number(event.target.value) })}
+                                  className="flex-1 accent-orange-500"
+                                />
+                                <span className="w-12 text-right text-xs tabular-nums text-slate-600 dark:text-slate-300">{value}</span>
+                              </label>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

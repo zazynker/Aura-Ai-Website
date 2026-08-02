@@ -130,7 +130,7 @@ interface SavedAssetRow {
 }
 
 const CAPABILITY_TO_FEATURE: Record<string, BuilderFeatureType> = {
-  'image.text_to_image': 'Text to Image',
+  'image.text_to_image': 'Image Generation',
   'image.replace_product': 'Replace Product',
   'image.modify': 'Modify Image',
   'video.image_to_video': 'Image to Video',
@@ -140,7 +140,7 @@ const CAPABILITY_TO_FEATURE: Record<string, BuilderFeatureType> = {
 };
 
 const DEFAULT_MATERIAL_TYPES: Record<BuilderFeatureType, BuilderMaterial['type'][]> = {
-  'Text to Image': ['Image'],
+  'Image Generation': ['Image'],
   'Replace Product': ['Image', 'Image'],
   'Modify Image': ['Image'],
   'Image to Video': ['Image'],
@@ -155,6 +155,15 @@ const VIDEO_FEATURES = new Set<BuilderFeatureType>([
   'Image Lip Sync',
   'Video Lip Sync',
 ]);
+
+const readNumberParameter = (
+  parameters: Record<string, unknown>,
+  key: string,
+  fallback: number,
+): number => {
+  const value = parameters[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+};
 
 function newUuid(): string {
   if (!globalThis.crypto?.randomUUID) {
@@ -923,10 +932,24 @@ export async function loadTemplateDraft(
             generateAudio: parameters.generateAudio !== false,
           }
         : undefined,
-      imageParams: feature === 'Text to Image'
+      imageParams: feature === 'Image Generation'
         ? {
+            model: parameters.model === 'mj-v8.1' ? 'mj-v8.1' as const : 'gpt-image-2' as const,
             ratio: String(parameters.ratio || '1:1'),
             resolution: String(parameters.resolution || '1K'),
+            quality: parameters.quality === 'hd' ? 'hd' as const : 'standard' as const,
+            stylize: readNumberParameter(parameters, 'stylize', 100),
+            chaos: readNumberParameter(parameters, 'chaos', 0),
+            experimental: readNumberParameter(parameters, 'experimental', 0),
+            raw: parameters.raw === true,
+            seed: parameters.seed === undefined ? '' : String(parameters.seed),
+            referenceMode:
+              parameters.referenceMode === 'style' || parameters.referenceMode === 'omni'
+                ? parameters.referenceMode
+                : 'image' as const,
+            imageWeight: readNumberParameter(parameters, 'imageWeight', 1),
+            styleWeight: readNumberParameter(parameters, 'styleWeight', 100),
+            omniWeight: readNumberParameter(parameters, 'omniWeight', 100),
           }
         : undefined,
       inputBindings: workflowStep.inputs.map((input) => ({ ...input })),

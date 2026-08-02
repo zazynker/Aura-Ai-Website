@@ -46,7 +46,7 @@ export interface Template {
 // ============================================
 
 export type WorkflowFeature =
-  | 'Text to Image'
+  | 'Image Generation'
   | 'Replace Product'
   | 'Modify Image'
   | 'Image to Video'

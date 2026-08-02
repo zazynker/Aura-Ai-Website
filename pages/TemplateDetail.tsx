@@ -58,8 +58,19 @@ const formatSettingLabel = (key: string) => key
   .replace(/[_-]+/g, ' ')
   .replace(/^./, (letter) => letter.toUpperCase());
 
-const formatSettingValue = (value: unknown) => {
+const formatSettingValue = (key: string, value: unknown) => {
   if (typeof value === 'boolean') return value ? 'On' : 'Off';
+  if (key === 'model') {
+    if (value === 'mj-v8.1') return 'Midjourney V8.1';
+    if (value === 'gpt-image-2') return 'GPT Image 2';
+  }
+  if (key === 'quality' && value === 'hd') return 'HD';
+  if (key === 'quality' && value === 'standard') return 'Standard';
+  if (key === 'referenceMode') {
+    if (value === 'omni') return 'Subject';
+    if (value === 'style') return 'Style';
+    if (value === 'image') return 'Image';
+  }
   return String(value);
 };
 
@@ -824,7 +835,7 @@ export const TemplateDetail = () => {
                                     {formatSettingLabel(key)}
                                   </p>
                                   <p className="mt-0.5 text-sm font-medium text-slate-800 dark:text-slate-200">
-                                    {formatSettingValue(value)}
+                                    {formatSettingValue(key, value)}
                                   </p>
                                 </div>
                               ))}

@@ -59,16 +59,22 @@ function errorResponse(res: VercelResponse, status: number, message: string) {
   return res.status(status).json({ success: false, error: message });
 }
 
-function safeSettings(parameters: Record<string, unknown> | undefined) {
-  if (!parameters) return {};
-  return Object.fromEntries(
-    Object.entries(parameters).filter(([key, value]) => (
+function safeSettings(
+  parameters: Record<string, unknown> | undefined,
+  capability: string,
+) {
+  const settings = Object.fromEntries(
+    Object.entries(parameters || {}).filter(([key, value]) => (
       key !== 'prompt'
       && (typeof value === 'string'
         || typeof value === 'number'
         || typeof value === 'boolean')
     )),
   );
+  if (capability === 'image.text_to_image' && !settings.model) {
+    settings.model = 'gpt-image-2';
+  }
+  return settings;
 }
 
 function safeImageUrl(value: string | null | undefined) {
@@ -278,7 +284,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         prompt: isFirst
           ? (typeof step.parameters?.prompt === 'string' ? step.parameters.prompt : step.instruction || '')
           : '',
-        settings: isFirst ? safeSettings(step.parameters) : {},
+        settings: isFirst ? safeSettings(step.parameters, step.capability) : {},
         results: isFirst && firstStepResult ? [firstStepResult] : [],
       };
     });

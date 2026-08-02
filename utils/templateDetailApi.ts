@@ -67,16 +67,22 @@ const FEATURE_NAMES: Record<string, string> = {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const VIDEO_URL_PATTERN = /\.(mp4|webm|mov|m4v)(?:$|[?#])/i;
 
-function displaySettings(parameters: Record<string, unknown> | undefined) {
-  if (!parameters) return {};
-  return Object.fromEntries(
-    Object.entries(parameters).filter(([key, value]) => (
+function displaySettings(
+  parameters: Record<string, unknown> | undefined,
+  capability: string,
+) {
+  const settings = Object.fromEntries(
+    Object.entries(parameters || {}).filter(([key, value]) => (
       key !== 'prompt'
       && (typeof value === 'string'
         || typeof value === 'number'
         || typeof value === 'boolean')
     )),
   );
+  if (capability === 'image.text_to_image' && !settings.model) {
+    settings.model = 'gpt-image-2';
+  }
+  return settings;
 }
 
 export async function fetchPublicTemplateDetail(
@@ -269,7 +275,7 @@ export async function fetchTemplateDetail(
       featureName: FEATURE_NAMES[step.capability] || step.capability,
       materials,
       prompt,
-      settings: displaySettings(step.parameters),
+      settings: displaySettings(step.parameters, step.capability),
       results,
     };
   });
