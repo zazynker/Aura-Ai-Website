@@ -2849,9 +2849,9 @@ export const Modify = () => {
             isOpen={showT2iMjReferencePicker}
             onClose={() => setShowT2iMjReferencePicker(false)}
             title="Midjourney Reference Images"
-            className="max-w-4xl"
+            size="lg"
           >
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-3 gap-2.5 sm:gap-4">
               {([
                 { role: 'image', title: 'Image Reference', flag: '--iw', description: 'Guides composition and visual content.', min: 0, max: 3, step: 0.1 },
                 { role: 'style', title: 'Style Reference', flag: '--sw', description: 'Transfers the visual style and treatment.', min: 0, max: 1000, step: 1 },
@@ -2861,10 +2861,13 @@ export const Modify = () => {
                 const url = file ? URL.createObjectURL(file) : t2iMjWorkflowReferenceUrls[item.role];
                 const value = item.role === 'image' ? t2iMjImageWeight : item.role === 'style' ? t2iMjStyleWeight : t2iMjOmniWeight;
                 return (
-                  <div key={item.role} className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-slate-900/60">
+                  <div key={item.role} className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-white/10 dark:bg-slate-900/60 sm:p-4">
                     <div className="mb-3">
-                      <p className="text-sm font-semibold text-slate-900 dark:text-white">{item.title} <span className="font-mono text-[10px] text-orange-500">{item.flag}</span></p>
-                      <p className="mt-1 min-h-8 text-xs text-slate-500">{item.description}</p>
+                      <p className="flex h-4 items-center gap-1 whitespace-nowrap text-[11px] font-semibold leading-4 text-slate-900 dark:text-white sm:text-sm">
+                        <span>{item.title}</span>
+                        <span className="font-mono text-[9px] text-orange-500 sm:text-[10px]">{item.flag}</span>
+                      </p>
+                      <p className="mt-1 h-12 overflow-hidden text-[10px] leading-4 text-slate-500 sm:text-xs">{item.description}</p>
                     </div>
                     <div className="relative mb-4 aspect-square overflow-hidden rounded-xl border-2 border-dashed border-slate-200 bg-white dark:border-white/10 dark:bg-slate-950">
                       {url ? (
