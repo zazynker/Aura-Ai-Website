@@ -1656,13 +1656,13 @@ export const Modify = () => {
                     // --- TEXT TO IMAGE STATE ---
                     <>
                         <div className="absolute inset-0 overflow-y-auto custom-scrollbar animate-in zoom-in-95 duration-300">
-                            <div className="min-h-full w-full flex items-start justify-center p-4 sm:p-8">
+                            <div className="min-h-full w-full grid place-items-center p-4 sm:p-8">
                                 <div className="w-full max-w-2xl space-y-6">
-                                    <div className="sticky top-0 z-40 mx-auto w-full max-w-md rounded-2xl border border-slate-200 dark:border-white/10 bg-slate-100/95 dark:bg-slate-800/95 p-1.5 shadow-sm backdrop-blur">
-                                        <div className="grid grid-cols-2 gap-1.5" aria-label="Image generation model">
+                                    <div className="sticky top-0 z-40 mx-auto w-full max-w-md rounded-xl border border-slate-200 dark:border-white/10 bg-slate-100/95 dark:bg-slate-800/95 p-1 shadow-sm backdrop-blur">
+                                        <div className="grid grid-cols-2 gap-1" aria-label="Image generation model">
                                             {([
-                                                { id: 'gpt-image-2', label: 'GPT Image 2', detail: 'Precise & editable' },
-                                                { id: 'mj-v8.1', label: 'Midjourney V8.1', detail: 'Creative · 4 images' },
+                                                { id: 'gpt-image-2', label: 'GPT Image 2' },
+                                                { id: 'mj-v8.1', label: 'Midjourney V8.1' },
                                             ] as const).map((model) => (
                                                 <button
                                                     key={model.id}
@@ -1672,7 +1672,7 @@ export const Modify = () => {
                                                         setT2iOutputCount(model.id === 'mj-v8.1' ? 4 : 1);
                                                         setOpenDropdown(null);
                                                     }}
-                                                    className={`rounded-xl px-4 py-3 text-left transition-all ${
+                                                    className={`rounded-lg px-4 py-2 text-center transition-all ${
                                                         t2iModel === model.id
                                                             ? 'bg-white dark:bg-slate-700 shadow-sm ring-1 ring-orange-500/30'
                                                             : 'hover:bg-white/70 dark:hover:bg-slate-700/60'
@@ -1681,7 +1681,6 @@ export const Modify = () => {
                                                     <span className={`block text-sm font-semibold ${t2iModel === model.id ? 'text-orange-600 dark:text-orange-400' : 'text-slate-800 dark:text-slate-200'}`}>
                                                         {model.label}
                                                     </span>
-                                                    <span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">{model.detail}</span>
                                                 </button>
                                             ))}
                                         </div>
@@ -1865,9 +1864,9 @@ export const Modify = () => {
                                                         role="switch"
                                                         aria-checked={t2iMjRaw}
                                                         onClick={() => setT2iMjRaw((value) => !value)}
-                                                        className={`relative h-6 w-11 rounded-full transition-colors ${t2iMjRaw ? 'bg-orange-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+                                                        className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full p-0 transition-colors ${t2iMjRaw ? 'bg-orange-500' : 'bg-slate-300 dark:bg-slate-600'}`}
                                                     >
-                                                        <span className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${t2iMjRaw ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                                        <span className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${t2iMjRaw ? 'translate-x-5' : 'translate-x-0'}`} />
                                                     </button>
                                                 </div>
 
@@ -2252,7 +2251,33 @@ export const Modify = () => {
                     </div>
                 )}
 
-                {/* 1. REPLACE PRODUCT Tool - DEFAULT OPEN */}
+                {/* 1. IMAGE GENERATION Tool */}
+                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'text2img' ? 'ring-1 ring-orange-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
+                    <button
+                        onClick={() => {
+                            setActiveTool(activeTool === 'text2img' ? null : 'text2img');
+                            if (activeTool !== 'text2img') {
+                                setT2iOutputCount(t2iModel === 'mj-v8.1' ? 4 : 1);
+                            }
+                        }}
+                        className="w-full p-4 flex items-center justify-between text-left"
+                    >
+                        <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
+                            <Type className="w-5 h-5 text-orange-500 dark:text-orange-400" />
+                            Image Generation
+                        </span>
+                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeTool === 'text2img' ? 'rotate-180' : ''}`}/>
+                    </button>
+                    {activeTool === 'text2img' && (
+                        <div className="px-4 pb-4 space-y-3 animate-in slide-in-from-top-2">
+                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                                Describe what you want to create. Add reference images if needed.
+                            </p>
+                        </div>
+                    )}
+                </div>
+
+                {/* 2. REPLACE PRODUCT Tool */}
                 <div className={`glass-panel rounded-2xl p-1 transition-all duration-300 ${activeTool === 'replace' ? 'ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
@@ -2446,7 +2471,7 @@ export const Modify = () => {
                     )}
                 </div>
 
-                {/* 2. MODIFY Tool */}
+                {/* 3. MODIFY Tool */}
                 <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'modify' ? 'ring-1 ring-purple-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
@@ -2574,7 +2599,7 @@ export const Modify = () => {
                     )}
                 </div>
 
-                {/* 3. RATIO Tool */}
+                {/* 4. RATIO Tool */}
                 <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'ratio' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
@@ -2640,7 +2665,7 @@ export const Modify = () => {
                     )}
                 </div>
 
-                {/* 4. ENHANCE / UPSCALE Tool */}
+                {/* 5. ENHANCE / UPSCALE Tool */}
                 <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'enhance' ? 'ring-1 ring-pink-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
                     <button 
                         disabled={!hasSelectedImage}
@@ -2725,32 +2750,6 @@ export const Modify = () => {
                     )}
                 </div>
 
-                {/* 5. TEXT TO IMAGE Tool */}
-                <div className={`glass-panel rounded-2xl transition-all duration-300 ${activeTool === 'text2img' ? 'ring-1 ring-orange-500/50 bg-white dark:bg-slate-800/50' : ''}`}>
-                    <button 
-                        onClick={() => {
-                            setActiveTool(activeTool === 'text2img' ? null : 'text2img');
-                            if (activeTool !== 'text2img') {
-                                setT2iOutputCount(t2iModel === 'mj-v8.1' ? 4 : 1);
-                            }
-                        }}
-                        className="w-full p-4 flex items-center justify-between text-left"
-                    >
-                        <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-3">
-                            <Type className="w-5 h-5 text-orange-500 dark:text-orange-400" /> 
-                            Image Generation
-                        </span>
-                        <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeTool === 'text2img' ? 'rotate-180' : ''}`}/>
-                    </button>
-                    {activeTool === 'text2img' && (
-                        <div className="px-4 pb-4 space-y-3 animate-in slide-in-from-top-2">
-                            <p className="text-sm text-slate-500 dark:text-slate-400">
-                                Describe what you want to create. Add reference images if needed.
-                            </p>
-                        </div>
-                    )}
-                    </div>
-    
                     {/* 6. GENERATE VIDEO Tool (Coming Soon) */}
                     <div className="glass-panel rounded-2xl transition-all duration-300">
                     <button 
