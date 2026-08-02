@@ -26,6 +26,7 @@ export interface BuilderMaterial {
   allowDownload: boolean;
   templateAssetId?: string;
   sourceGenerationId?: string;
+  referenceRole?: 'image' | 'style' | 'omni';
 }
 
 export interface BuilderInputSelection {
@@ -140,7 +141,6 @@ function buildParameters(
       parameters.chaos = imageParams?.chaos ?? 0;
       parameters.experimental = imageParams?.experimental ?? 0;
       parameters.raw = imageParams?.raw ?? false;
-      parameters.referenceMode = imageParams?.referenceMode || 'image';
       parameters.imageWeight = imageParams?.imageWeight ?? 1;
       parameters.styleWeight = imageParams?.styleWeight ?? 100;
       parameters.omniWeight = imageParams?.omniWeight ?? 100;
@@ -182,7 +182,11 @@ function buildInputBindings(
   let previousStepUsed = false;
   const usedMaterialIds = new Set<string>();
 
-  return capability.inputs
+  const capabilityInputs = capabilityKey === 'image.text_to_image'
+    ? capability.inputs.filter((slot) => slot.key !== 'reference_images')
+    : capability.inputs;
+
+  return capabilityInputs
     .filter(
       (slot) =>
         slot.required ||
@@ -193,11 +197,18 @@ function buildInputBindings(
         ),
     )
     .map((slot): WorkflowInputBinding => {
+      const roleForSlot = capabilityKey === 'image.text_to_image'
+        ? slot.key === 'image_reference' ? 'image'
+          : slot.key === 'style_reference' ? 'style'
+            : slot.key === 'omni_reference' ? 'omni'
+              : undefined
+        : undefined;
       const material = step.materials.find(
         (candidate) =>
           !usedMaterialIds.has(candidate.id) &&
           Boolean(candidate.url) &&
-          candidate.type.toLowerCase() === slot.assetType,
+          candidate.type.toLowerCase() === slot.assetType &&
+          (!roleForSlot || !candidate.referenceRole || candidate.referenceRole === roleForSlot),
       );
       if (
         material?.templateAssetId &&

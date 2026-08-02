@@ -111,6 +111,7 @@ export const Modify = () => {
 
   // Modals
   const [showImagePicker, setShowImagePicker] = useState(false);
+  const [showT2iMjReferencePicker, setShowT2iMjReferencePicker] = useState(false);
   const [imagePickerTab, setImagePickerTab] = useState<'all' | 'upload' | 'collection'>('upload');
 
   // Generation Configuration - DEFAULT TO 4
@@ -156,6 +157,8 @@ export const Modify = () => {
   const [t2iPrompt, setT2iPrompt] = useState('');
   const [t2iFiles, setT2iFiles] = useState<File[]>([]);
   const [t2iWorkflowReferenceUrls, setT2iWorkflowReferenceUrls] = useState<string[]>([]);
+  const [t2iMjReferenceFiles, setT2iMjReferenceFiles] = useState<Partial<Record<'image' | 'style' | 'omni', File>>>({});
+  const [t2iMjWorkflowReferenceUrls, setT2iMjWorkflowReferenceUrls] = useState<Partial<Record<'image' | 'style' | 'omni', string>>>({});
   const [t2iRatio, setT2iRatio] = useState('1:1');
   const [t2iSize, setT2iSize] = useState('1K');
   const [t2iOutputCount, setT2iOutputCount] = useState(1);
@@ -166,12 +169,14 @@ export const Modify = () => {
   const [t2iMjExperimental, setT2iMjExperimental] = useState(0);
   const [t2iMjRaw, setT2iMjRaw] = useState(false);
   const [t2iMjSeed, setT2iMjSeed] = useState('');
-  const [t2iMjReferenceMode, setT2iMjReferenceMode] = useState<'image' | 'style' | 'omni'>('image');
   const [t2iMjImageWeight, setT2iMjImageWeight] = useState(1);
   const [t2iMjStyleWeight, setT2iMjStyleWeight] = useState(100);
   const [t2iMjOmniWeight, setT2iMjOmniWeight] = useState(100);
   const [openDropdown, setOpenDropdown] = useState<'count' | 'ratio' | 'size' | 'quality' | null>(null);
   const t2iReferenceCount = Math.min(3, t2iWorkflowReferenceUrls.length + t2iFiles.length);
+  const t2iMjReferenceCount = (['image', 'style', 'omni'] as const).filter(
+    (role) => t2iMjReferenceFiles[role] || t2iMjWorkflowReferenceUrls[role],
+  ).length;
 
   // 🔧 CHANGED: Admin Demo Mode - persist to sessionStorage (survives route changes, clears on tab close)
   const [showFakeQueue, setShowFakeQueue] = useState(false);
@@ -303,7 +308,7 @@ export const Modify = () => {
         'image.change_ratio': ['source_image'],
         'image.enhance': ['source_image'],
         'image.upscale': ['source_image'],
-        'image.text_to_image': ['reference_images'],
+        'image.text_to_image': ['reference_images', 'image_reference', 'style_reference', 'omni_reference'],
       };
       const matchingImageMaterials = handoff.materials.filter(
         (item) => item.type === 'image' && (
@@ -312,8 +317,23 @@ export const Modify = () => {
         ),
       );
       if (handoff.capability === 'image.text_to_image') {
-        setT2iWorkflowReferenceUrls(matchingImageMaterials.map((item) => item.url).slice(0, 3));
+        const typedReferences: Partial<Record<'image' | 'style' | 'omni', string>> = {};
+        matchingImageMaterials.forEach((item) => {
+          if (item.slot === 'image_reference') typedReferences.image = item.url;
+          if (item.slot === 'style_reference') typedReferences.style = item.url;
+          if (item.slot === 'omni_reference') typedReferences.omni = item.url;
+        });
+        const legacyReferences = matchingImageMaterials.filter((item) => !item.slot || item.slot === 'reference_images');
+        const legacyMode = handoff.settings.referenceMode === 'style' || handoff.settings.referenceMode === 'omni'
+          ? handoff.settings.referenceMode
+          : 'image';
+        if (!typedReferences[legacyMode] && legacyReferences[0]) {
+          typedReferences[legacyMode] = legacyReferences[0].url;
+        }
+        setT2iMjWorkflowReferenceUrls(typedReferences);
+        setT2iWorkflowReferenceUrls(legacyReferences.map((item) => item.url).slice(0, 3));
         setT2iFiles([]);
+        setT2iMjReferenceFiles({});
       } else {
         const material = matchingImageMaterials[0] || handoff.materials.find((item) => item.type === 'image');
         if (material) {
@@ -365,9 +385,6 @@ export const Modify = () => {
       if (typeof settings.experimental === 'number') setT2iMjExperimental(settings.experimental);
       if (typeof settings.raw === 'boolean') setT2iMjRaw(settings.raw);
       setT2iMjSeed(typeof settings.seed === 'number' || typeof settings.seed === 'string' ? String(settings.seed) : '');
-      if (settings.referenceMode === 'image' || settings.referenceMode === 'style' || settings.referenceMode === 'omni') {
-        setT2iMjReferenceMode(settings.referenceMode);
-      }
       if (typeof settings.imageWeight === 'number') setT2iMjImageWeight(settings.imageWeight);
       if (typeof settings.styleWeight === 'number') setT2iMjStyleWeight(settings.styleWeight);
       if (typeof settings.omniWeight === 'number') setT2iMjOmniWeight(settings.omniWeight);
@@ -1078,8 +1095,27 @@ export const Modify = () => {
 
     try {
       // Upload reference images if any
-      let referenceImageUrls: string[] = [...t2iWorkflowReferenceUrls];
-      if (t2iFiles.length > 0) {
+      let referenceImageUrls: string[] = isMidjourney ? [] : [...t2iWorkflowReferenceUrls];
+      const mjReferenceUrls: Partial<Record<'image' | 'style' | 'omni', string>> = isMidjourney
+        ? { ...t2iMjWorkflowReferenceUrls }
+        : {};
+      if (isMidjourney && Object.keys(t2iMjReferenceFiles).length > 0) {
+        setIsUploading(true);
+        for (const role of ['image', 'style', 'omni'] as const) {
+          const file = t2iMjReferenceFiles[role];
+          if (!file) continue;
+          const result = await uploadUserImage(user.id, file);
+          if (result.url) mjReferenceUrls[role] = result.url;
+        }
+        setIsUploading(false);
+        referenceImageUrls = (['image', 'style', 'omni'] as const)
+          .map((role) => mjReferenceUrls[role])
+          .filter((url): url is string => Boolean(url));
+      } else if (isMidjourney) {
+        referenceImageUrls = (['image', 'style', 'omni'] as const)
+          .map((role) => mjReferenceUrls[role])
+          .filter((url): url is string => Boolean(url));
+      } else if (t2iFiles.length > 0) {
         setIsUploading(true);
         for (const file of t2iFiles.slice(0, Math.max(0, 3 - referenceImageUrls.length))) {
           const result = await uploadUserImage(user.id, file);
@@ -1109,9 +1145,9 @@ export const Modify = () => {
         prompt: fullPrompt,
         capability: 'image.text_to_image',
         provider: isMidjourney ? 'evolink-mj-v8.1' : undefined,
-        imageUrl: referenceImageUrls[0], // First reference as base
-        productImageUrl: referenceImageUrls[1], // Second reference if available
-        referenceImageUrls,
+        imageUrl: isMidjourney ? undefined : referenceImageUrls[0], // GPT edit base image
+        productImageUrl: isMidjourney ? undefined : referenceImageUrls[1],
+        referenceImageUrls: isMidjourney ? undefined : referenceImageUrls,
         numberOfImages: isMidjourney ? 4 : t2iOutputCount,
         imageSize: t2iSize as '1K' | '2K' | '4K',
         aspectRatio: t2iRatio,
@@ -1123,10 +1159,12 @@ export const Modify = () => {
           experimental: t2iMjExperimental,
           raw: t2iMjRaw,
           seed: t2iMjSeed === '' ? undefined : Number(t2iMjSeed),
-          referenceMode: t2iMjReferenceMode,
           imageWeight: t2iMjImageWeight,
           styleWeight: t2iMjStyleWeight,
           omniWeight: t2iMjOmniWeight,
+          imageReferenceUrl: mjReferenceUrls.image,
+          styleReferenceUrl: mjReferenceUrls.style,
+          omniReferenceUrl: mjReferenceUrls.omni,
         } : undefined,
       });
 
@@ -1163,13 +1201,16 @@ export const Modify = () => {
       console.log('Credit allocations:', creditAllocations);
 
       // Create Generation records
-      const inputAssets: GenerationInputAssetSnapshot[] = referenceImageUrls.map(
-        (url, index) => ({
-          key: index === 0 ? 'reference_images' : `reference_images_${index + 1}`,
-          assetType: 'image',
-          url,
-        }),
-      );
+      const inputAssets: GenerationInputAssetSnapshot[] = isMidjourney
+        ? (['image', 'style', 'omni'] as const).flatMap((role) => {
+            const url = mjReferenceUrls[role];
+            return url ? [{ key: `${role === 'omni' ? 'omni' : role}_reference`, assetType: 'image' as const, url }] : [];
+          })
+        : referenceImageUrls.map((url, index) => ({
+            key: index === 0 ? 'reference_images' : `reference_images_${index + 1}`,
+            assetType: 'image' as const,
+            url,
+          }));
 
       const newGenerations = newImages.map((imgUrl, imageIndex) => ({
         userId: user?.id || '',
@@ -1203,7 +1244,6 @@ export const Modify = () => {
             experimental: t2iMjExperimental,
             raw: t2iMjRaw,
             seed: t2iMjSeed || undefined,
-            referenceMode: t2iMjReferenceMode,
             imageWeight: t2iMjImageWeight,
             styleWeight: t2iMjStyleWeight,
             omniWeight: t2iMjOmniWeight,
@@ -1726,7 +1766,30 @@ export const Modify = () => {
                                         <div className="flex flex-col md:flex-row mb-4">
                                             {/* Left: Upload (max 3) */}
                                             <div className="flex gap-2 mb-4 md:mb-0 md:mr-4 shrink-0 group/stack relative">
-                                                {t2iFiles.length === 0 ? (
+                                                {t2iModel === 'mj-v8.1' ? (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setShowT2iMjReferencePicker(true)}
+                                                        className="relative flex h-24 w-24 items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/50 transition-colors hover:border-orange-500/50 hover:bg-orange-50/50 dark:border-white/10 dark:bg-slate-950/50 dark:hover:bg-orange-900/20"
+                                                        aria-label="Add Midjourney reference images"
+                                                    >
+                                                        {t2iMjReferenceCount > 0 ? (
+                                                            <div className="grid h-full w-full grid-cols-2 gap-0.5 p-1">
+                                                                {(['image', 'style', 'omni'] as const).map((role) => {
+                                                                    const file = t2iMjReferenceFiles[role];
+                                                                    const url = file ? URL.createObjectURL(file) : t2iMjWorkflowReferenceUrls[role];
+                                                                    return url ? <img key={role} src={url} alt={`${role} reference`} className="h-full min-h-0 w-full rounded object-cover" /> : null;
+                                                                })}
+                                                                <span className="flex items-center justify-center rounded bg-white/90 dark:bg-slate-800/90"><Plus className="h-4 w-4 text-orange-500" /></span>
+                                                            </div>
+                                                        ) : (
+                                                            <Plus className="h-6 w-6 text-slate-400" />
+                                                        )}
+                                                        {t2iMjReferenceCount > 0 && (
+                                                            <span className="absolute bottom-1 right-1 rounded-full bg-slate-900/75 px-1.5 py-0.5 text-[10px] font-semibold text-white">{t2iMjReferenceCount}/3</span>
+                                                        )}
+                                                    </button>
+                                                ) : t2iFiles.length === 0 ? (
                                                     <div className="w-24 h-24 rounded-xl border-2 border-dashed border-slate-200 dark:border-white/10 flex items-center justify-center hover:border-orange-500/50 hover:bg-orange-50/50 dark:hover:bg-orange-900/20 transition-colors relative cursor-pointer bg-slate-50/50 dark:bg-slate-950/50">
                                                         <input 
                                                             type="file" 
@@ -1823,7 +1886,7 @@ export const Modify = () => {
                                             </div>
                                         </div>
 
-                                        {t2iWorkflowReferenceUrls.length > 0 && (
+                                        {t2iModel === 'gpt-image-2' && t2iWorkflowReferenceUrls.length > 0 && (
                                             <div className="mb-4 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2.5 dark:border-orange-500/20 dark:bg-orange-500/5">
                                                 <div className="flex -space-x-2">
                                                     {t2iWorkflowReferenceUrls.map((url, index) => (
@@ -1924,57 +1987,17 @@ export const Modify = () => {
                                                     </button>
                                                 </div>
 
-                                                {t2iReferenceCount > 0 && (
-                                                    <div className="mt-4 space-y-3 border-t border-slate-200 pt-4 dark:border-white/10">
-                                                        <div className="flex items-center justify-between">
-                                                            <div>
-                                                                <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">Reference Type</p>
-                                                                <p className="text-[11px] text-slate-500">Choose how uploaded images guide the result.</p>
-                                                            </div>
-                                                            <div className="flex rounded-lg bg-slate-100 p-1 dark:bg-slate-800">
-                                                                {([
-                                                                    { id: 'image', label: 'Image' },
-                                                                    { id: 'style', label: 'Style' },
-                                                                    { id: 'omni', label: 'Subject' },
-                                                                ] as const).map((mode) => (
-                                                                    <button
-                                                                        key={mode.id}
-                                                                        type="button"
-                                                                        onClick={() => setT2iMjReferenceMode(mode.id)}
-                                                                        className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${t2iMjReferenceMode === mode.id ? 'bg-white text-orange-600 shadow-sm dark:bg-slate-700 dark:text-orange-400' : 'text-slate-500'}`}
-                                                                    >
-                                                                        {mode.label}
-                                                                    </button>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                        <label className="flex items-center gap-3">
-                                                            <span className="min-w-24 text-xs font-medium text-slate-700 dark:text-slate-300">
-                                                                {t2iMjReferenceMode === 'image' ? 'Image Weight' : t2iMjReferenceMode === 'style' ? 'Style Weight' : 'Omni Weight'}
-                                                            </span>
-                                                            <input
-                                                                type="range"
-                                                                min={t2iMjReferenceMode === 'image' ? 0 : t2iMjReferenceMode === 'omni' ? 1 : 0}
-                                                                max={t2iMjReferenceMode === 'image' ? 3 : 1000}
-                                                                step={t2iMjReferenceMode === 'image' ? 0.1 : 1}
-                                                                value={t2iMjReferenceMode === 'image' ? t2iMjImageWeight : t2iMjReferenceMode === 'style' ? t2iMjStyleWeight : t2iMjOmniWeight}
-                                                                onChange={(event) => {
-                                                                    const value = Number(event.target.value);
-                                                                    if (t2iMjReferenceMode === 'image') setT2iMjImageWeight(value);
-                                                                    else if (t2iMjReferenceMode === 'style') setT2iMjStyleWeight(value);
-                                                                    else setT2iMjOmniWeight(value);
-                                                                }}
-                                                                className="flex-1 accent-orange-500"
-                                                            />
-                                                            <span className="w-12 text-right text-xs tabular-nums text-slate-600 dark:text-slate-300">
-                                                                {t2iMjReferenceMode === 'image' ? t2iMjImageWeight : t2iMjReferenceMode === 'style' ? t2iMjStyleWeight : t2iMjOmniWeight}
-                                                            </span>
-                                                        </label>
-                                                        {t2iMjReferenceMode === 'omni' && t2iReferenceCount > 1 && (
-                                                            <p className="text-[11px] text-amber-600 dark:text-amber-400">Subject Reference uses the first uploaded image only.</p>
-                                                        )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowT2iMjReferencePicker(true)}
+                                                    className="mt-4 flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-left transition hover:border-orange-300 dark:border-white/10 dark:bg-slate-900"
+                                                >
+                                                    <div>
+                                                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">Reference Images</p>
+                                                        <p className="text-[11px] text-slate-500">Image, style and subject references use independent weights.</p>
                                                     </div>
-                                                )}
+                                                    <span className="text-xs font-semibold text-orange-600 dark:text-orange-400">{t2iMjReferenceCount}/3 · Edit</span>
+                                                </button>
                                             </div>
                                         )}
 
@@ -2822,6 +2845,89 @@ export const Modify = () => {
                 </div>
               </div>
     
+          <Modal
+            isOpen={showT2iMjReferencePicker}
+            onClose={() => setShowT2iMjReferencePicker(false)}
+            title="Midjourney Reference Images"
+            className="max-w-4xl"
+          >
+            <div className="grid gap-4 md:grid-cols-3">
+              {([
+                { role: 'image', title: 'Image Reference', flag: '--iw', description: 'Guides composition and visual content.', min: 0, max: 3, step: 0.1 },
+                { role: 'style', title: 'Style Reference', flag: '--sw', description: 'Transfers the visual style and treatment.', min: 0, max: 1000, step: 1 },
+                { role: 'omni', title: 'Subject Reference', flag: '--ow', description: 'Keeps the main person or object consistent.', min: 1, max: 1000, step: 1 },
+              ] as const).map((item) => {
+                const file = t2iMjReferenceFiles[item.role];
+                const url = file ? URL.createObjectURL(file) : t2iMjWorkflowReferenceUrls[item.role];
+                const value = item.role === 'image' ? t2iMjImageWeight : item.role === 'style' ? t2iMjStyleWeight : t2iMjOmniWeight;
+                return (
+                  <div key={item.role} className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-white/10 dark:bg-slate-900/60">
+                    <div className="mb-3">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-white">{item.title} <span className="font-mono text-[10px] text-orange-500">{item.flag}</span></p>
+                      <p className="mt-1 min-h-8 text-xs text-slate-500">{item.description}</p>
+                    </div>
+                    <div className="relative mb-4 aspect-square overflow-hidden rounded-xl border-2 border-dashed border-slate-200 bg-white dark:border-white/10 dark:bg-slate-950">
+                      {url ? (
+                        <>
+                          <img src={url} alt={item.title} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setT2iMjReferenceFiles((current) => { const next = { ...current }; delete next[item.role]; return next; });
+                              setT2iMjWorkflowReferenceUrls((current) => { const next = { ...current }; delete next[item.role]; return next; });
+                            }}
+                            className="absolute right-2 top-2 rounded-full bg-black/65 p-1.5 text-white hover:bg-red-500"
+                            aria-label={`Remove ${item.title}`}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </>
+                      ) : (
+                        <label className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2 text-slate-500 hover:text-orange-500">
+                          <Plus className="h-7 w-7" />
+                          <span className="text-xs font-medium">Upload one image</span>
+                          <input
+                            type="file"
+                            accept="image/png,image/jpeg,image/webp"
+                            className="hidden"
+                            onChange={(event) => {
+                              const selected = event.target.files?.[0];
+                              const valid = selected ? validateAndFilterFiles([selected])[0] : undefined;
+                              if (valid) setT2iMjReferenceFiles((current) => ({ ...current, [item.role]: valid }));
+                              event.target.value = '';
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                    <label className="space-y-2">
+                      <span className="flex items-center justify-between text-xs font-medium text-slate-700 dark:text-slate-300">
+                        <span>Weight</span><span className="tabular-nums">{value}</span>
+                      </span>
+                      <input
+                        type="range"
+                        min={item.min}
+                        max={item.max}
+                        step={item.step}
+                        value={value}
+                        onChange={(event) => {
+                          const next = Number(event.target.value);
+                          if (item.role === 'image') setT2iMjImageWeight(next);
+                          else if (item.role === 'style') setT2iMjStyleWeight(next);
+                          else setT2iMjOmniWeight(next);
+                        }}
+                        className="w-full accent-orange-500"
+                      />
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-5 flex justify-end">
+              <Button onClick={() => setShowT2iMjReferencePicker(false)}>Done</Button>
+            </div>
+          </Modal>
+
           {/* Video Coming Soon Modal */}
           <Modal isOpen={showVideoComingSoon} onClose={() => setShowVideoComingSoon(false)} title="Generate Video">
             <div className="text-center space-y-4 py-4">

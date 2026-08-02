@@ -29,6 +29,9 @@ export interface GenerateOptions {
     imageWeight?: number;
     styleWeight?: number;
     omniWeight?: number;
+    imageReferenceUrl?: string;
+    styleReferenceUrl?: string;
+    omniReferenceUrl?: string;
   };
 }
 

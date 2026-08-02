@@ -88,6 +88,9 @@ export const getWorkflowTargetRoute = (capability: string): string => {
   return capability.startsWith('video.') ? '/video' : '/modify';
 };
 
+const getWorkflowFeatureName = (capability: string, fallback?: string): string =>
+  capability === 'image.text_to_image' ? 'Image Generation' : fallback || capability;
+
 const buildSessionFromRun = (
   run: StartedTemplateRun,
   existingSession?: WorkflowSession | null,
@@ -132,7 +135,10 @@ const buildSessionFromRun = (
       runStepId: runStep.id,
       stepNumber: runStep.stepOrder,
       capability: runStep.capability,
-      feature: existingStep?.feature || savedStep?.title || runStep.capability,
+      feature: getWorkflowFeatureName(
+        runStep.capability,
+        existingStep?.feature || savedStep?.title,
+      ),
       targetRoute: getWorkflowTargetRoute(runStep.capability),
       reusableMaterials: stepMaterials.length > 0 || existingStep?.reusableMaterials || false,
       materials: stepMaterials.length > 0 ? stepMaterials : existingStep?.materials || [],

@@ -271,7 +271,7 @@ export async function fetchTemplateDetail(
       : step.instruction || '';
     return {
       id: step.id,
-      name: step.title || `Step ${stepIndex + 1}`,
+      name: FEATURE_NAMES[step.capability] || step.title || `Step ${stepIndex + 1}`,
       featureName: FEATURE_NAMES[step.capability] || step.capability,
       materials,
       prompt,

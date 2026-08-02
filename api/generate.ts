@@ -171,6 +171,9 @@ type GenerateRequestBody = {
     imageWeight?: number;
     styleWeight?: number;
     omniWeight?: number;
+    imageReferenceUrl?: string;
+    styleReferenceUrl?: string;
+    omniReferenceUrl?: string;
   };
   requestId?: string;
   recoverOnly?: boolean;
@@ -830,15 +833,27 @@ function buildEvoLinkMjPrompt(body: GenerateRequestBody): string {
   const seed = params.seed === undefined || params.seed === null
     ? undefined
     : Math.round(clampNumber(params.seed, 0, 4_294_967_295, 0));
-  const referenceMode: MjReferenceMode = ["style", "omni"].includes(
-    String(params.referenceMode),
-  )
+  const referenceUrls = normalizeReferenceUrls(body);
+  const validReferenceUrl = (value: unknown): string | undefined =>
+    typeof value === "string" && (value.startsWith("https://") || value.startsWith("data:"))
+      ? value
+      : undefined;
+  const legacyReferenceMode: MjReferenceMode = ["style", "omni"].includes(String(params.referenceMode))
     ? params.referenceMode as MjReferenceMode
     : "image";
-  const referenceUrls = normalizeReferenceUrls(body);
-  const prefix = referenceMode === "image" && referenceUrls.length > 0
-    ? `${referenceUrls.join(" ")} `
-    : "";
+  const typedImageReferenceUrl = validReferenceUrl(params.imageReferenceUrl);
+  const typedStyleReferenceUrl = validReferenceUrl(params.styleReferenceUrl);
+  const typedOmniReferenceUrl = validReferenceUrl(params.omniReferenceUrl);
+  const hasTypedReferences = Boolean(
+    typedImageReferenceUrl || typedStyleReferenceUrl || typedOmniReferenceUrl,
+  );
+  const imageReferenceUrl = typedImageReferenceUrl
+    || (!hasTypedReferences && legacyReferenceMode === "image" ? referenceUrls[0] : undefined);
+  const styleReferenceUrl = typedStyleReferenceUrl
+    || (!hasTypedReferences && legacyReferenceMode === "style" ? referenceUrls[0] : undefined);
+  const omniReferenceUrl = typedOmniReferenceUrl
+    || (!hasTypedReferences && legacyReferenceMode === "omni" ? referenceUrls[0] : undefined);
+  const prefix = imageReferenceUrl ? `${imageReferenceUrl} ` : "";
   const suffixes = [`--ar ${aspectRatio}`, `--s ${stylize}`];
 
   if (chaos > 0) suffixes.push(`--chaos ${chaos}`);
@@ -846,17 +861,20 @@ function buildEvoLinkMjPrompt(body: GenerateRequestBody): string {
   if (params.raw) suffixes.push("--raw");
   if (seed !== undefined) suffixes.push(`--seed ${seed}`);
 
-  if (referenceUrls.length > 0) {
-    if (referenceMode === "image") {
-      const imageWeight = clampNumber(params.imageWeight, 0, 3, 1);
-      suffixes.push(`--iw ${imageWeight}`);
-    } else if (referenceMode === "style") {
-      const styleWeight = Math.round(clampNumber(params.styleWeight, 0, 1000, 100));
-      suffixes.push(`--sref ${referenceUrls.join(" ")}`, `--sw ${styleWeight}`);
-    } else {
-      const omniWeight = Math.round(clampNumber(params.omniWeight, 1, 1000, 100));
-      suffixes.push(`--oref ${referenceUrls[0]}`, `--ow ${omniWeight}`);
-    }
+  if (imageReferenceUrl) {
+    suffixes.push(`--iw ${clampNumber(params.imageWeight, 0, 3, 1)}`);
+  }
+  if (styleReferenceUrl) {
+    suffixes.push(
+      `--sref ${styleReferenceUrl}`,
+      `--sw ${Math.round(clampNumber(params.styleWeight, 0, 1000, 100))}`,
+    );
+  }
+  if (omniReferenceUrl) {
+    suffixes.push(
+      `--oref ${omniReferenceUrl}`,
+      `--ow ${Math.round(clampNumber(params.omniWeight, 1, 1000, 100))}`,
+    );
   }
 
   return `${prefix}${prompt} ${suffixes.join(" ")}`.trim();

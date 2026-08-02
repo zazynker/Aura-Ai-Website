@@ -94,6 +94,21 @@ const getGenerationResolution = (value: unknown): '720p' | '1080p' =>
 
 const IMAGE_RATIOS = ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2'] as const;
 const IMAGE_RESOLUTIONS = ['1K', '2K', '4K'] as const;
+const MJ_REFERENCE_ROLES = [
+  { value: 'image', label: 'Image Reference', flag: '--iw' },
+  { value: 'style', label: 'Style Reference', flag: '--sw' },
+  { value: 'omni', label: 'Subject Reference', flag: '--ow' },
+] as const;
+
+const assignMjReferenceRoles = (materials: Material[]): Material[] => {
+  const used = new Set(materials.map((material) => material.referenceRole).filter(Boolean));
+  return materials.map((material) => {
+    if (material.type !== 'Image' || material.referenceRole) return material;
+    const role = MJ_REFERENCE_ROLES.find((item) => !used.has(item.value))?.value;
+    if (role) used.add(role);
+    return role ? { ...material, referenceRole: role } : material;
+  });
+};
 
 const createDefaultImageParams = (): NonNullable<WorkflowStep['imageParams']> => ({
   model: 'gpt-image-2',
@@ -487,6 +502,49 @@ export const TemplateBuilder = () => {
     });
   };
 
+  const selectImageGenerationModel = (model: 'gpt-image-2' | 'mj-v8.1') => {
+    updateActiveStep({
+      imageParams: {
+        ...createDefaultImageParams(),
+        ...activeStep.imageParams,
+        model,
+      },
+      materials: model === 'mj-v8.1'
+        ? assignMjReferenceRoles(activeStep.materials)
+        : activeStep.materials,
+      inputBindings: undefined,
+    });
+  };
+
+  const addMjReferenceMaterial = () => {
+    const materials = assignMjReferenceRoles(activeStep.materials);
+    const used = new Set(materials.map((material) => material.referenceRole).filter(Boolean));
+    const role = MJ_REFERENCE_ROLES.find((item) => !used.has(item.value))?.value;
+    if (!role) return;
+    updateActiveStep({
+      materials: [...materials, {
+        id: `mat-${Date.now()}-${role}`,
+        type: 'Image',
+        url: null,
+        allowDownload: true,
+        referenceRole: role,
+      }],
+      inputBindings: undefined,
+    });
+  };
+
+  const setMjReferenceRole = (materialId: string, referenceRole: 'image' | 'style' | 'omni') => {
+    updateActiveStep({
+      materials: activeStep.materials.map((material) => {
+        if (material.id === materialId) return { ...material, type: 'Image', referenceRole };
+        return material.referenceRole === referenceRole
+          ? { ...material, referenceRole: undefined }
+          : material;
+      }),
+      inputBindings: undefined,
+    });
+  };
+
   const addMaterial = () => {
     updateActiveStep({
       materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }],
@@ -704,6 +762,11 @@ export const TemplateBuilder = () => {
       url: asset.url,
       allowDownload: true,
       sourceGenerationId: generation.id,
+      referenceRole:
+        asset.key === 'style_reference' ? 'style' as const
+          : asset.key === 'omni_reference' ? 'omni' as const
+            : asset.key === 'image_reference' || asset.key.startsWith('reference_images') ? 'image' as const
+              : undefined,
     })) ?? [];
     const legacySourceUrl =
       generation.videoUrl &&
@@ -753,10 +816,10 @@ export const TemplateBuilder = () => {
         ? 'Image to Video'
         : 'Image Generation'
     );
-    const nextMaterials = ensureRequiredMaterialCards(
-      nextFeature,
-      restoredMaterials,
-    );
+    const requiredMaterials = ensureRequiredMaterialCards(nextFeature, restoredMaterials);
+    const nextMaterials = nextFeature === 'Image Generation' && imageModel === 'mj-v8.1'
+      ? assignMjReferenceRoles(requiredMaterials)
+      : requiredMaterials;
     const nextVideoParams = nextFeature === 'Image to Video'
       ? {
           duration: `${getGenerationDuration(parameterDuration, generation.videoDuration)}s`,
@@ -1608,6 +1671,28 @@ export const TemplateBuilder = () => {
                         </div>
                       </div>
 
+                      {activeStep.feature === 'Image Generation'
+                        && (activeStep.imageParams?.model || 'gpt-image-2') === 'mj-v8.1'
+                        && material.type === 'Image' && (
+                          <div>
+                            <label className="mb-2 block text-xs font-medium text-slate-500 dark:text-slate-400">Midjourney Reference</label>
+                            <div className="flex flex-wrap gap-2">
+                              {MJ_REFERENCE_ROLES.map((role) => (
+                                <button
+                                  key={role.value}
+                                  type="button"
+                                  onClick={() => setMjReferenceRole(material.id, role.value)}
+                                  className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${material.referenceRole === role.value
+                                    ? 'bg-green-50 text-green-700 ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300'
+                                    : 'border border-slate-200 bg-white text-slate-500 dark:border-slate-700 dark:bg-slate-900'}`}
+                                >
+                                  {role.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
                       {/* Allow Download Toggle */}
                       <label className="flex items-center gap-3 cursor-pointer">
                         <div className="relative">
@@ -1727,7 +1812,7 @@ export const TemplateBuilder = () => {
                           <button
                             key={model.value}
                             type="button"
-                            onClick={() => updateImageGenerationSettings({ model: model.value })}
+                            onClick={() => selectImageGenerationModel(model.value)}
                             className={`rounded-lg px-3 py-2.5 text-sm font-medium transition-all ${
                               (activeStep.imageParams?.model || 'gpt-image-2') === model.value
                                 ? 'bg-green-50 text-green-700 shadow-sm ring-1 ring-green-400 dark:bg-green-500/15 dark:text-green-300 dark:ring-green-400/70'
@@ -1810,7 +1895,7 @@ export const TemplateBuilder = () => {
                     </div>
 
                     {(activeStep.imageParams?.model || 'gpt-image-2') === 'mj-v8.1' && (
-                      <div className="space-y-5 rounded-xl border border-orange-200 bg-orange-50/50 p-4 dark:border-orange-500/20 dark:bg-orange-500/5">
+                      <div className="space-y-5 rounded-xl border border-green-200 bg-green-50/50 p-4 dark:border-green-500/20 dark:bg-green-500/5">
                         <div>
                           <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Advanced Settings</h4>
                           <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">These Midjourney parameters are saved with the workflow and restored in Workdock.</p>
@@ -1842,7 +1927,7 @@ export const TemplateBuilder = () => {
                                   max={setting.max}
                                   value={value}
                                   onChange={(event) => updateImageGenerationSettings({ [setting.key]: Number(event.target.value) })}
-                                  className="w-full accent-orange-500"
+                                  className="w-full accent-green-500"
                                 />
                               </label>
                             );
@@ -1874,63 +1959,65 @@ export const TemplateBuilder = () => {
                             type="checkbox"
                             checked={activeStep.imageParams?.raw ?? false}
                             onChange={(event) => updateImageGenerationSettings({ raw: event.target.checked })}
-                            className="h-4 w-4 cursor-pointer accent-orange-500"
+                            className="h-4 w-4 cursor-pointer accent-green-500"
                           />
                         </label>
 
-                        <div className="space-y-3">
+                        <div className="space-y-3 border-t border-green-200 pt-4 dark:border-green-500/20">
                           <div className="flex items-center justify-between gap-4">
                             <div>
-                              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">Reference Type</p>
-                              <p className="text-[11px] text-slate-500">Controls how reusable reference images guide the result.</p>
+                              <p className="text-xs font-semibold text-slate-800 dark:text-slate-200">Reference Images</p>
+                              <p className="text-[11px] text-slate-500">These are the same reusable images shown in Materials I Uploaded.</p>
                             </div>
-                            <div className="flex rounded-lg bg-white p-1 dark:bg-slate-900">
-                              {([
-                                { value: 'image', label: 'Image' },
-                                { value: 'style', label: 'Style' },
-                                { value: 'omni', label: 'Subject' },
-                              ] as const).map((mode) => (
-                                <button
-                                  key={mode.value}
-                                  type="button"
-                                  onClick={() => updateImageGenerationSettings({ referenceMode: mode.value })}
-                                  className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${
-                                    (activeStep.imageParams?.referenceMode || 'image') === mode.value
-                                      ? 'bg-orange-50 text-orange-600 shadow-sm ring-1 ring-orange-300 dark:bg-orange-500/15 dark:text-orange-300'
-                                      : 'text-slate-500'
-                                  }`}
-                                >
-                                  {mode.label}
-                                </button>
-                              ))}
-                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={addMjReferenceMaterial}
+                              disabled={activeStep.materials.filter((material) => material.referenceRole).length >= 3}
+                            >
+                              <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Reference
+                            </Button>
                           </div>
-                          {(() => {
-                            const mode = activeStep.imageParams?.referenceMode || 'image';
-                            const key = mode === 'image' ? 'imageWeight' : mode === 'style' ? 'styleWeight' : 'omniWeight';
-                            const min = mode === 'omni' ? 1 : 0;
-                            const max = mode === 'image' ? 3 : 1000;
-                            const step = mode === 'image' ? 0.1 : 1;
-                            const fallback = mode === 'image' ? 1 : 100;
-                            const value = activeStep.imageParams?.[key] ?? fallback;
-                            return (
-                              <label className="flex items-center gap-3">
-                                <span className="min-w-24 text-xs font-medium text-slate-700 dark:text-slate-300">
-                                  {mode === 'image' ? 'Image Weight' : mode === 'style' ? 'Style Weight' : 'Omni Weight'}
-                                </span>
-                                <input
-                                  type="range"
-                                  min={min}
-                                  max={max}
-                                  step={step}
-                                  value={value}
-                                  onChange={(event) => updateImageGenerationSettings({ [key]: Number(event.target.value) })}
-                                  className="flex-1 accent-orange-500"
-                                />
-                                <span className="w-12 text-right text-xs tabular-nums text-slate-600 dark:text-slate-300">{value}</span>
-                              </label>
-                            );
-                          })()}
+                          <div className="space-y-3">
+                            {MJ_REFERENCE_ROLES.map((role) => {
+                              const material = activeStep.materials.find((item) => item.referenceRole === role.value);
+                              if (!material) return null;
+                              const key = role.value === 'image' ? 'imageWeight' : role.value === 'style' ? 'styleWeight' : 'omniWeight';
+                              const min = role.value === 'omni' ? 1 : 0;
+                              const max = role.value === 'image' ? 3 : 1000;
+                              const step = role.value === 'image' ? 0.1 : 1;
+                              const value = activeStep.imageParams?.[key] ?? (role.value === 'image' ? 1 : 100);
+                              return (
+                                <div key={role.value} className="rounded-lg border border-green-200 bg-white p-3 dark:border-green-500/20 dark:bg-slate-900">
+                                  <div className="flex items-center gap-3">
+                                    <label htmlFor={`material-upload-${material.id}`} className="flex h-14 w-14 shrink-0 cursor-pointer items-center justify-center overflow-hidden rounded-lg border border-dashed border-green-300 bg-green-50 dark:border-green-500/30 dark:bg-green-500/10">
+                                      {material.url
+                                        ? <img src={material.url} alt={role.label} className="h-full w-full object-cover" />
+                                        : <Plus className="h-5 w-5 text-green-600" />}
+                                    </label>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="mb-2 flex items-center justify-between">
+                                        <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">{role.label} <span className="font-mono text-[10px] text-green-600">{role.flag}</span></span>
+                                        <button type="button" onClick={() => removeMaterial(material.id)} className="rounded p-1 text-slate-400 hover:bg-red-50 hover:text-red-500" aria-label={`Remove ${role.label}`}><Trash2 className="h-3.5 w-3.5" /></button>
+                                      </div>
+                                      <label className="flex items-center gap-3">
+                                        <input
+                                          type="range"
+                                          min={min}
+                                          max={max}
+                                          step={step}
+                                          value={value}
+                                          onChange={(event) => updateImageGenerationSettings({ [key]: Number(event.target.value) })}
+                                          className="flex-1 accent-green-500"
+                                        />
+                                        <span className="w-12 text-right text-xs tabular-nums text-slate-600 dark:text-slate-300">{value}</span>
+                                      </label>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
                     )}

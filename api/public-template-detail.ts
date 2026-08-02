@@ -277,7 +277,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const isFirst = index === 0;
       return {
         id: step.id,
-        name: step.title || `Step ${index + 1}`,
+        name: FEATURE_NAMES[step.capability] || step.title || `Step ${index + 1}`,
         featureName: FEATURE_NAMES[step.capability] || step.capability,
         locked: !isFirst,
         materials: isFirst ? firstMaterials.filter(Boolean) : [],

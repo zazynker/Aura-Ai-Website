@@ -889,6 +889,7 @@ export async function loadTemplateDraft(
       if (stored && asset.source_kind === 'upload') {
         persistedMaterials[materialId] = stored;
       }
+      const input = workflowStep.inputs.find((candidate) => candidate.templateAssetId === asset.id);
       return {
         id: materialId,
         type: `${asset.asset_type[0].toUpperCase()}${asset.asset_type.slice(1)}` as BuilderMaterial['type'],
@@ -896,6 +897,11 @@ export async function loadTemplateDraft(
         allowDownload: Boolean(asset.is_reusable),
         templateAssetId: asset.id,
         sourceGenerationId: asset.generation_id || undefined,
+        referenceRole:
+          input?.slot === 'style_reference' ? 'style'
+            : input?.slot === 'omni_reference' ? 'omni'
+              : input?.slot === 'image_reference' || input?.slot === 'reference_images' ? 'image'
+                : undefined,
       };
     });
     if (materials.length === 0) {
