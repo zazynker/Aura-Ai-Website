@@ -12,6 +12,7 @@ import {
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
+import { peekNextFakeVideo } from '../../utils/fakeVideoQueue';
 import { estimateVideoCredits } from '../../context/StoreContext';
 import type { WorkflowHandoff } from '../workflow/workflowManager';
 import { MediaLightbox } from './MediaLightbox';
@@ -129,6 +130,8 @@ export const MotionControl: React.FC<MotionControlProps> = ({ onGenerate, onUpda
     label: 'character-image' | 'driver-video'
   ): Promise<string | undefined> => {
     if (!previewUrl) return undefined;
+    // Admin demo mode: a fake video is queued, so skip the real storage upload entirely
+    if (peekNextFakeVideo()) return previewUrl;
     if (!file || !previewUrl.startsWith('blob:')) return previewUrl;
 
     const timestamp = Date.now();

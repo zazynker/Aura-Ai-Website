@@ -6,6 +6,7 @@ import {
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
+import { peekNextFakeVideo } from '../../utils/fakeVideoQueue';
 import { estimateVideoCredits } from '../../context/StoreContext';
 import type { WorkflowHandoff } from '../workflow/workflowManager';
 import { MediaLightbox } from './MediaLightbox';
@@ -118,6 +119,8 @@ export const ImageToVideo: React.FC<ImageToVideoProps> = ({ onGenerate, onUpdate
     label: 'start' | 'end'
   ): Promise<string | undefined> => {
     if (!selectedUrl) return undefined;
+    // Admin demo mode: a fake video is queued, so skip the real storage upload entirely
+    if (peekNextFakeVideo()) return selectedUrl;
     if (!file || !selectedUrl.startsWith('blob:')) return selectedUrl;
 
     const timestamp = Date.now();

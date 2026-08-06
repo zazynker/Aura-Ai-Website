@@ -15,6 +15,7 @@ import {
 import { VideoResult } from '../../utils/video';
 import { generateVideo, getPendingVideoJob, pollPendingVideoJob, PendingVideoJob } from '../../utils/generateService';
 import { supabase } from '../../utils/supabase';
+import { peekNextFakeVideo } from '../../utils/fakeVideoQueue';
 import { estimateVideoCredits } from '../../context/StoreContext';
 import type { WorkflowHandoff } from '../workflow/workflowManager';
 import { MediaLightbox } from './MediaLightbox';
@@ -302,6 +303,8 @@ export const LipSync: React.FC<LipSyncProps> = ({ onGenerate, onUpdate, initialI
   }, [selectedMedia?.url, selectedMedia?.type]);
 
   const uploadFileIfNeeded = async (url: string, file: File | undefined | null, label: string): Promise<string> => {
+    // Admin demo mode: a fake video is queued, so skip the real storage upload entirely
+    if (peekNextFakeVideo()) return url;
     if (!file || !url.startsWith('blob:')) return url;
 
     const fileExt = file.name.split('.').pop() || (file.type.startsWith('audio/') ? 'mp3' : file.type.startsWith('video/') ? 'mp4' : 'jpg');
