@@ -1,6 +1,7 @@
 // utils/generateService.ts
 
 import { supabase } from "./supabase";
+import { FAKE_VIDEO_DELAY_MS, takeNextFakeVideo } from "./fakeVideoQueue";
 import {
   beginActiveTemplateGeneration,
   failTemplateGeneration,
@@ -725,6 +726,24 @@ export async function generateVideo(
   console.log("=== generateVideo called ===");
   console.log("Mode:", mode);
   console.log("Prompt:", prompt?.substring(0, 100));
+
+  // === Admin Demo Mode: serve the next uploaded video instead of calling the real API ===
+  // The queue is only fillable from the hidden admin entry on the Video page.
+  // No Fal request, no credit deduction, no pending job registered.
+  const fakeVideo = takeNextFakeVideo();
+  if (fakeVideo) {
+    console.log("[generateVideo] Admin demo mode: returning uploaded video, real API skipped:", fakeVideo.name);
+    await new Promise((resolve) => setTimeout(resolve, FAKE_VIDEO_DELAY_MS));
+    return {
+      success: true,
+      videoUrl: fakeVideo.url,
+      duration,
+      creditsUsed: 0,
+      creditsDeducted: 0,
+      requestId: `fake-${Date.now()}`,
+      status: "completed",
+    };
+  }
 
   let templateContext: TemplateGenerationContext | null = null;
 

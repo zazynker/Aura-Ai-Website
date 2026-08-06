@@ -7,6 +7,8 @@ import {
   ImagePlus,
   Trash2,
   AlertTriangle,
+  Loader2,
+  Sparkles,
 } from 'lucide-react';
 import {
   VideoResult,
@@ -198,6 +200,8 @@ export const Video: React.FC = () => {
   const [showWelcomeGift, setShowWelcomeGift] = useState(false);
   const [showAuthGate, setShowAuthGate] = useState(false);
   const [downloadingVideoId, setDownloadingVideoId] = useState<string | null>(null);
+  // Synthetic progress for the in-card loading UI (mirrors the image page)
+  const [pendingProgress, setPendingProgress] = useState<Record<string, number>>({});
   const { addGeneration, user, generations } = useStore();
   const savedVideoKeysRef = useRef<Set<string>>(new Set());
   const autoResumedRequestIdsRef = useRef<Set<string>>(new Set());
@@ -269,13 +273,16 @@ export const Video: React.FC = () => {
       const resolved = typeof next === 'function' ? next(prev) : next;
       const deduped = dedupeVideoResults(resolved);
       resultsRef.current = deduped;
-      if (user?.id) saveCachedVideoResults(user.id, deduped);
+      // Admin demo videos are local blob: URLs — never persist them (they die on refresh)
+      if (user?.id) saveCachedVideoResults(user.id, deduped.filter((item) => !item.videoUrl?.startsWith('blob:')));
       return deduped;
     });
   };
 
   const saveCompletedVideo = (result: VideoResult) => {
     if (!user || !result.videoUrl) return;
+    // Admin demo videos are local blob: URLs — do not write them to the database
+    if (result.videoUrl.startsWith('blob:') || result.videoUrl.startsWith('data:')) return;
 
     const possibleKeys = [result.videoUrl, result.requestId, result.id].filter(Boolean) as string[];
     if (possibleKeys.some((key) => savedVideoKeysRef.current.has(key))) return;
@@ -497,6 +504,27 @@ export const Video: React.FC = () => {
     return () => window.clearTimeout(timer);
   }, [results, user?.id]);
 
+  // Drive the synthetic progress bar for every card that is still generating
+  useEffect(() => {
+    const pendingIds = results.filter((item) => item.status === 'pending').map((item) => item.id);
+    if (!pendingIds.length) {
+      setPendingProgress((prev) => (Object.keys(prev).length ? {} : prev));
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setPendingProgress((prev) => {
+        const next = { ...prev };
+        pendingIds.forEach((id) => {
+          next[id] = Math.min((next[id] ?? 0) + Math.random() * 8, 92);
+        });
+        return next;
+      });
+    }, 500);
+
+    return () => window.clearInterval(timer);
+  }, [results]);
+
   const renderStatusPill = (gen: VideoResult) => {
     if (gen.status === 'pending') {
       return (
@@ -525,7 +553,7 @@ export const Video: React.FC = () => {
     <div className="mt-16 flex min-h-[calc(100vh-64px)] w-full flex-col overflow-visible bg-white dark:bg-slate-900 lg:h-[calc(100vh-64px)] lg:flex-row lg:overflow-hidden">
       <div className="relative z-10 flex min-h-[calc(100vh-64px)] w-full shrink-0 flex-col border-b border-slate-200 bg-white/80 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-900/80 lg:min-h-0 lg:w-[480px] lg:border-b-0 lg:border-r">
         <div className="p-5 border-b border-slate-200 dark:border-slate-800 shrink-0 relative z-50">
-          <FeatureSwitcher activeFeature={activeFeature} onChange={setActiveFeature} />
+          <FeatureSwitcher activeFeature={activeFeature} onChange={setActiveFeature} isAdmin={Boolean(user?.isAdmin)} />
         </div>
 
         {activeFeature === 'image-to-video' && (
@@ -629,10 +657,19 @@ export const Video: React.FC = () => {
                     )}
 
                     {gen.status === 'pending' && (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 text-white backdrop-blur-sm">
-                        <RefreshCw className="mb-3 h-8 w-8 animate-spin" />
-                        <p className="text-sm font-semibold">Generating video...</p>
-                        <p className="mt-1 text-xs text-white/70">You may leave this page. This job can be resumed later.</p>
+                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-4 bg-black/60 text-white backdrop-blur-sm">
+                        <div className="relative h-24 w-24">
+                          <Loader2 className="h-24 w-24 animate-spin text-purple-500" />
+                          <Sparkles className="absolute inset-0 m-auto h-10 w-10 text-white animate-pulse" />
+                        </div>
+                        <p className="text-lg font-semibold text-white">Generating your magic...</p>
+                        <div className="h-2 w-48 overflow-hidden rounded-full bg-white/20">
+                          <div
+                            className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-300"
+                            style={{ width: `${pendingProgress[gen.id] ?? 5}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-white/70">You may leave this page. This job can be resumed later.</p>
                       </div>
                     )}
 
