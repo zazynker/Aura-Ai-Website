@@ -193,6 +193,9 @@ export const Modify = () => {
       } catch { return 0; }
   });
 
+  // 🔧 Admin Demo Mode: fake results shown in the sidebar history (local only, never written to Supabase)
+  const [fakeGenerations, setFakeGenerations] = useState<Generation[]>([]);
+
   // Templates cache for collections (fetched from Supabase)
   const [templatesCache, setTemplatesCache] = useState<Map<string, Template>>(new Map());
 
@@ -266,7 +269,7 @@ export const Modify = () => {
     const sourceId = currentImageSource.templateId;
     
     // Filter generations by current source
-    const sourceGenerations = generations
+    const sourceGenerations = [...generations, ...fakeGenerations]
         .filter(g => g.templateId === sourceId)
         .sort((a, b) => b.createdAt - a.createdAt);
     
@@ -287,7 +290,7 @@ export const Modify = () => {
     }
     
     return sourceGenerations;
-  }, [originalUploadedImage, generations, user, currentImageSource]);
+  }, [originalUploadedImage, generations, fakeGenerations, user, currentImageSource]);
 
   // Clear navigation state after using it (so refresh doesn't re-apply)
   useEffect(() => {
@@ -433,6 +436,27 @@ export const Modify = () => {
 
   // --- Logic: Session & Navigation ---
   
+  // 🔧 Admin Demo Mode: inject fake results into the local sidebar history
+  // (no Supabase write, no credit deduction — demo only)
+  const pushFakeGenerations = (images: string[], promptLabel: string) => {
+    if (!images.length) return;
+    const now = Date.now();
+    const gid = `fake_${now}`;
+    const records: Generation[] = images.map((url, index) => ({
+      id: `${gid}_${index}`,
+      userId: user?.id || 'demo',
+      templateId: currentImageSource.templateId,
+      templateName: currentImageSource.templateName,
+      imageUrl: url,
+      createdAt: now + index,
+      creditsUsed: 0,
+      prompt: promptLabel || 'Generated',
+      isSessionOnly: true,
+      ...(images.length > 1 ? { groupId: gid } : {}),
+    }));
+    setFakeGenerations(prev => [...prev, ...records]);
+  };
+
   const resetSession = () => {
     setHasSelectedImage(false);
     setCurrentImage('');
@@ -676,8 +700,11 @@ export const Modify = () => {
 
       const fakeImages = currentItem.images;
       
+      pushFakeGenerations(fakeImages, promptText || toolName);
+
       setTimeout(() => {
         setIsGenerating(false);
+        setHasSelectedImage(true);
         setCurrentImage(fakeImages[0]);
         setProgress(0);
         if (fakeImages.length > 1) {
@@ -1068,9 +1095,13 @@ export const Modify = () => {
 
       const fakeImages = currentItem.images;
 
+      pushFakeGenerations(fakeImages, t2iPrompt);
+
       setTimeout(() => {
         setIsGenerating(false);
+        setHasSelectedImage(true);
         setCurrentImage(fakeImages[0]);
+        setActiveTool(null); // 与真实流程一致：生成成功后收起 Image Generation 面板
         setProgress(0);
         if (fakeImages.length > 1) {
           setGeneratedResults(fakeImages);
@@ -1681,9 +1712,9 @@ export const Modify = () => {
                 ) : (
                     // ALL HISTORY VIEW
                     <>
-                    {generations.length > 0 ? (
+                    {(generations.length + fakeGenerations.length) > 0 ? (
                         <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                            {[...generations].sort((a, b) => b.createdAt - a.createdAt).map((gen) => (
+                            {[...generations, ...fakeGenerations].sort((a, b) => b.createdAt - a.createdAt).map((gen) => (
                                 <div
                                     key={gen.id}
                                     onClick={() => handleAllHistoryClick(gen)}
@@ -2289,7 +2320,7 @@ export const Modify = () => {
                 )}
 
                 {/* Results Tray */}
-                <div className={`absolute bottom-0 left-4 right-4 glass-panel border border-slate-500/20 dark:border-white/10 p-6 rounded-t-2xl transition-transform duration-500 ease-out z-40 shadow-2xl bg-white/60 dark:bg-slate-900/70 backdrop-blur-2xl ${showResults ? 'translate-y-0' : 'translate-y-[120%]'}`}>
+                <div className={`absolute bottom-0 left-4 right-4 glass-panel border border-slate-500/20 dark:border-white/10 p-6 rounded-t-2xl transition-transform duration-500 ease-out z-[60] shadow-2xl bg-white/60 dark:bg-slate-900/70 backdrop-blur-2xl ${showResults ? 'translate-y-0' : 'translate-y-[120%]'}`}>
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
                         <Sparkles className="w-5 h-5 text-purple-500 dark:text-purple-400" /> 
@@ -2306,7 +2337,14 @@ export const Modify = () => {
                             const imgUrl = typeof item === 'string' ? item : item.imageUrl;
                             return (
                                 <div key={idx} className="space-y-2 group">
-                                    <div className={`aspect-square rounded-xl overflow-hidden border-2 relative cursor-pointer transition-all ${currentImage === imgUrl ? 'border-purple-500 ring-2 ring-purple-500/20' : 'border-slate-200 dark:border-white/10 hover:border-purple-500/50'}`} onClick={() => setCurrentImage(imgUrl)}>
+                                    <div className={`aspect-square rounded-xl overflow-hidden border-2 relative cursor-pointer transition-all ${currentImage === imgUrl ? 'border-purple-500 ring-2 ring-purple-500/20' : 'border-slate-200 dark:border-white/10 hover:border-purple-500/50'}`} onClick={() => {
+                                        setCurrentImage(imgUrl);
+                                        setHasSelectedImage(true);
+                                        setActiveTool(null);
+                                        setShowResults(false);
+                                        setSelectedGroup(null);
+                                        setImageDimensions({ width: 0, height: 0 });
+                                    }}>
                                         <img src={imgUrl} className="w-full h-full object-cover transition-transform group-hover:scale-105" alt={`Result ${idx}`} />
                                     </div>
                                 </div>
