@@ -41,6 +41,7 @@ import {
   createRunIdempotencyKey,
   startTemplateRun,
 } from '../utils/templateRunApi';
+import { trackPopupImpression } from '../utils/popupAnalytics';
 
 const getFeatureIcon = (featureName: string) => {
   if (featureName.includes('Lip Sync')) return Mic;
@@ -138,6 +139,7 @@ export const TemplateDetail = () => {
   const [pendingGuestAction, setPendingGuestAction] = useState('');
   const startingRunRef = useRef(false);
   const startKeyRef = useRef<string | null>(null);
+  const authGateImpressionTrackedRef = useRef(false);
   const guestVideoRef = useRef<HTMLVideoElement | null>(null);
   const [guestVideoPlaying, setGuestVideoPlaying] = useState(false);
 
@@ -217,6 +219,18 @@ export const TemplateDetail = () => {
   useEffect(() => {
     if (user) setShowAuthGate(false);
   }, [user]);
+
+  useEffect(() => {
+    if (showAuthGate && !user) {
+      if (!authGateImpressionTrackedRef.current) {
+        authGateImpressionTrackedRef.current = true;
+        void trackPopupImpression();
+      }
+      return;
+    }
+
+    authGateImpressionTrackedRef.current = false;
+  }, [showAuthGate, user]);
 
   useEffect(() => {
     setModalVideoReady(false);
@@ -906,7 +920,7 @@ export const TemplateDetail = () => {
             if (event.currentTarget === event.target) setShowAuthGate(false);
           }}
         >
-          <div className="relative my-auto w-full max-w-[460px] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-[28px] border border-white/70 bg-white px-6 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-2xl dark:border-white/10 dark:bg-slate-900 sm:px-8 sm:py-7">
+          <div className="relative my-auto w-full max-w-[560px] max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-[32px] border border-white/80 bg-white px-6 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-[0_32px_90px_-28px_rgba(15,23,42,0.55)] dark:border-white/10 dark:bg-slate-900 sm:px-10 sm:py-9">
             <button
               type="button"
               onClick={() => setShowAuthGate(false)}
@@ -915,54 +929,56 @@ export const TemplateDetail = () => {
             >
               <X className="h-5 w-5" />
             </button>
-            <div className="relative mb-5 flex h-20 w-20 items-center justify-center rounded-[26px] bg-gradient-to-br from-purple-500 via-fuchsia-500 to-pink-500 shadow-xl shadow-purple-500/25">
+            <div className="relative mb-7 flex h-20 w-20 items-center justify-center rounded-[26px] bg-gradient-to-br from-purple-500 via-fuchsia-500 to-pink-500 shadow-xl shadow-purple-500/25">
               <div className="absolute inset-1 rounded-[22px] bg-white/15" />
               <Gift className="relative h-10 w-10 text-white" strokeWidth={1.8} />
               <Sparkles className="absolute -right-5 top-1 h-5 w-5 text-fuchsia-400 opacity-80 animate-pulse" strokeWidth={1.8} />
               <span className="absolute -bottom-2 -left-4 text-lg text-pink-400 opacity-75 animate-pulse">✦</span>
             </div>
-            <h2 id="workflow-auth-title" className="pr-8 text-2xl font-bold text-slate-900 dark:text-white">
-              See the complete workflow
+            <h2 id="workflow-auth-title" className="max-w-[470px] pr-8 text-[28px] font-extrabold leading-tight tracking-[-0.025em] text-slate-950 dark:text-white sm:text-[32px]">
+              Quick sign in. Keep exploring.
             </h2>
-            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
-              Create a free account to view every step, prompt and reference.
+            <p className="mt-3 max-w-[470px] text-[15px] leading-6 text-slate-500 dark:text-slate-300 sm:text-base">
+              Create a free account in seconds and continue browsing.
             </p>
-            <div className="mt-5 grid grid-cols-[132px_minmax(0,1fr)] gap-4 rounded-2xl border border-purple-200/90 bg-gradient-to-br from-purple-50 via-white to-pink-50 p-4 dark:border-purple-700/50 dark:from-purple-950/40 dark:via-slate-900 dark:to-pink-950/25">
-              <div className="border-r border-purple-200/80 pr-4 dark:border-purple-700/50">
-                <p className="bg-gradient-to-r from-violet-600 via-fuchsia-500 to-pink-500 bg-clip-text text-5xl font-black leading-none tracking-tight text-transparent">
+            <div className="mt-7 grid gap-5 rounded-[22px] border border-purple-200/90 bg-gradient-to-br from-purple-50/90 via-white to-pink-50/80 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] dark:border-purple-700/50 dark:from-purple-950/40 dark:via-slate-900 dark:to-pink-950/25 sm:grid-cols-[150px_minmax(0,1fr)] sm:gap-6 sm:p-6">
+              <div className="border-b border-purple-200/80 pb-5 dark:border-purple-700/50 sm:border-b-0 sm:border-r sm:pb-0 sm:pr-6">
+                <p className="bg-gradient-to-r from-violet-600 via-fuchsia-500 to-pink-500 bg-clip-text text-[56px] font-black leading-none tracking-tight text-transparent">
                   120
                 </p>
-                <p className="mt-1 text-xs font-bold tracking-[0.15em] text-purple-700 dark:text-purple-300">
+                <p className="mt-2 text-xs font-extrabold tracking-[0.16em] text-purple-700 dark:text-purple-300">
                   FREE CREDITS
                 </p>
               </div>
               <div className="flex flex-col justify-center">
-                <p className="text-sm font-semibold leading-5 text-purple-900 dark:text-purple-100">
-                  A welcome gift when you sign up
+                <p className="text-sm font-extrabold uppercase leading-5 tracking-[0.08em] text-purple-800 dark:text-purple-200">
+                  For generating images &amp; videos
                 </p>
-                <p className="mt-1 text-xs leading-5 text-purple-700 dark:text-purple-300">
-                  No credit card required.
+                <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                  A welcome gift when you create an account. No credit card required.
                 </p>
               </div>
             </div>
-            <div className="mt-5 grid gap-3">
+            <div className="mt-6 grid gap-3">
               <Button
                 variant="gradient"
-                className="w-full"
+                size="lg"
+                className="w-full text-base font-bold"
                 onClick={() => continueToAuth('signup')}
               >
-                Create account — Get 120 Credits
+                Create free account — Get 120 credits
               </Button>
               <Button
                 variant="secondary"
-                className="w-full"
+                size="lg"
+                className="w-full text-base font-semibold"
                 onClick={() => continueToAuth('login')}
               >
                 Log in
               </Button>
             </div>
-            <p className="mt-4 text-center text-xs text-slate-500 dark:text-slate-400">
-              You’ll return to this workflow after signing in.
+            <p className="mt-5 text-center text-xs text-slate-500 dark:text-slate-400">
+              You’ll return right where you left off.
             </p>
           </div>
         </div>

@@ -191,6 +191,41 @@ export async function adminGetStats(): Promise<{
 }
 
 /**
+ * Get the cumulative impression count for a tracked popup (admin only).
+ */
+export async function adminGetPopupImpressionCount(
+  popupKey: string,
+): Promise<{
+  data: { impressionCount: number; lastShownAt: string | null } | null;
+  error: string | null;
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_get_popup_impression_count', {
+      p_popup_key: popupKey,
+    });
+
+    if (error) {
+      console.error('Error fetching popup impression count:', error);
+      return { data: null, error: error.message };
+    }
+    if (!data?.success) {
+      return { data: null, error: data?.error || 'Unknown error' };
+    }
+
+    return {
+      data: {
+        impressionCount: Number(data.impression_count || 0),
+        lastShownAt: data.last_shown_at || null,
+      },
+      error: null,
+    };
+  } catch (err) {
+    console.error('Unexpected error:', err);
+    return { data: null, error: 'Failed to fetch popup impression count' };
+  }
+}
+
+/**
  * 获取模板使用统计（管理员专用）- 排除特殊模板，包含缩略图
  */
 export async function adminGetTemplateStats(
@@ -394,54 +429,6 @@ export async function adminGetUserGenerations(
     return { data: null, error: 'Failed to fetch user generations' };
   }
 }
-/**
- * 获取视频兴趣点击统计（管理员专用）
- */
-export async function adminGetVideoInterestStats(
-  searchEmail: string = '',
-  dateFrom: string | null = null,
-  dateTo: string | null = null
-): Promise<{
-  data: {
-    total_clicks: number;
-    unique_users: number;
-    grouped_users: Array<{
-      email: string;
-      click_count: number;
-      last_clicked_at: string;
-      first_clicked_at: string;
-      click_times: string[];
-    }>;
-  } | null;
-  error: string | null;
-}> {
-  try {
-    const { data, error } = await supabase.rpc('admin_get_video_interest_stats', {
-      search_email: searchEmail,
-      date_from: dateFrom,
-      date_to: dateTo,
-    });
-    if (error) {
-      console.error('Error fetching video interest stats:', error);
-      return { data: null, error: error.message };
-    }
-    if (!data?.success) {
-      return { data: null, error: data?.error || 'Unknown error' };
-    }
-    return {
-      data: {
-        total_clicks: data.total_clicks || 0,
-        unique_users: data.unique_users || 0,
-        grouped_users: data.grouped_users || [],
-      },
-      error: null,
-    };
-  } catch (err) {
-    console.error('Unexpected error:', err);
-    return { data: null, error: 'Failed to fetch video interest stats' };
-  }
-}
-
 export interface AdminReviewMaterial {
   id: string;
   type: 'image' | 'video' | 'audio';

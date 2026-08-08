@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { 
   Shield, Users, TrendingUp, Zap, Search, Crown, 
   ChevronLeft, ChevronRight, Loader2, AlertCircle,
-  Settings, BarChart3, RefreshCw, Image, AlertTriangle, Video,
+  Settings, BarChart3, RefreshCw, Image, AlertTriangle,
   Eye, X, CheckCircle, MessageSquare, ChevronDown, ChevronUp, Layers,
   PlayCircle, Maximize2, Music, Gift, Sparkles
 } from 'lucide-react';
@@ -14,11 +14,11 @@ import {
   checkIsAdmin, 
   adminGetUsers, 
   adminGetStats, 
+  adminGetPopupImpressionCount,
   adminGetTemplateStats,
   adminGetUnusedTemplates,
   adminUpdateCredits,
   adminUpdatePlan,
-  adminGetVideoInterestStats,
   adminGetUserGenerations,
   adminGetTemplateReviews,
   adminReviewTemplate,
@@ -28,10 +28,11 @@ import {
   AdminReviewTemplate,
   AdminReviewedTemplate,
 } from '../utils/adminApi';
+import { TEMPLATE_DETAIL_AUTH_GATE_KEY } from '../utils/popupAnalytics';
 import { announceCreatorRewardAvailable } from '../utils/notificationsApi';
 import { AdminUser, AdminStats, TemplateStats, UnusedTemplate } from '../types';
 
-type TabType = 'overview' | 'users' | 'templates' | 'rewards' | 'unused' | 'video' | 'review';
+type TabType = 'overview' | 'users' | 'templates' | 'rewards' | 'unused' | 'review';
 
 const VIRTUAL_USERNAME_SUGGESTIONS = [
   'Bananapiepie', 'MochiStudio', 'PeachyNova', 'CocoCanvas',
@@ -69,6 +70,10 @@ export const Admin = () => {
   // Stats state
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
+  const [popupImpressions, setPopupImpressions] = useState<{
+    impressionCount: number;
+    lastShownAt: string | null;
+  } | null>(null);
 
   // Users state
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -94,13 +99,6 @@ export const Admin = () => {
   // Unused templates state
   const [unusedTemplates, setUnusedTemplates] = useState<UnusedTemplate[]>([]);
   const [unusedTemplatesLoading, setUnusedTemplatesLoading] = useState(false);
-
-  // Video interest state
-  const [videoInterestStats, setVideoInterestStats] = useState<{ total_clicks: number; unique_users: number; grouped_users: Array<{ email: string; click_count: number; last_clicked_at: string; first_clicked_at: string; click_times: string[] }> } | null>(null);
-  const [videoInterestLoading, setVideoInterestLoading] = useState(false);
-  const [videoSearchEmail, setVideoSearchEmail] = useState('');
-  const [videoDateRange, setVideoDateRange] = useState<'all' | '7d' | '30d' | '90d'>('all');
-  const [expandedVideoUsers, setExpandedVideoUsers] = useState<Set<string>>(new Set());
 
   // Edit user modal state
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
@@ -142,11 +140,19 @@ export const Admin = () => {
   // Load stats
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
-    const { data, error } = await adminGetStats();
-    if (error) {
-      addToast('error', `Failed to load stats: ${error}`);
-    } else if (data) {
-      setStats(data);
+    const [statsResult, popupResult] = await Promise.all([
+      adminGetStats(),
+      adminGetPopupImpressionCount(TEMPLATE_DETAIL_AUTH_GATE_KEY),
+    ]);
+    if (statsResult.error) {
+      addToast('error', `Failed to load stats: ${statsResult.error}`);
+    } else if (statsResult.data) {
+      setStats(statsResult.data);
+    }
+    if (popupResult.error) {
+      addToast('error', `Failed to load popup analytics: ${popupResult.error}`);
+    } else if (popupResult.data) {
+      setPopupImpressions(popupResult.data);
     }
     setStatsLoading(false);
   }, [addToast]);
@@ -239,31 +245,10 @@ export const Admin = () => {
       loadTemplateStats();
     } else if (activeTab === 'unused' && unusedTemplates.length === 0) {
       loadUnusedTemplates();
-    } else if (activeTab === 'video' && !videoInterestStats) {
-      loadVideoInterestStats(videoSearchEmail, videoDateRange);
     } else if (activeTab === 'review' && !reviewsLoaded && !reviewsLoading) {
       loadTemplateReviews();
     }
-  }, [activeTab, isAdmin, stats, users.length, templateStats.length, unusedTemplates.length, videoInterestStats, reviewsLoaded, reviewsLoading, loadStats, loadUsers, loadTemplateStats, loadUnusedTemplates, loadTemplateReviews]);
-
-  // Load video interest stats
-  const loadVideoInterestStats = useCallback(async (email: string = '', range: 'all' | '7d' | '30d' | '90d' = 'all') => {
-    setVideoInterestLoading(true);
-    let dateFrom: string | null = null;
-    if (range !== 'all') {
-      const days = range === '7d' ? 7 : range === '30d' ? 30 : 90;
-      const d = new Date();
-      d.setDate(d.getDate() - days);
-      dateFrom = d.toISOString();
-    }
-    const { data, error } = await adminGetVideoInterestStats(email, dateFrom, null);
-    if (error) {
-      addToast('error', `Failed to load video interest stats: ${error}`);
-    } else if (data) {
-      setVideoInterestStats(data);
-    }
-    setVideoInterestLoading(false);
-  }, [addToast]);
+  }, [activeTab, isAdmin, stats, users.length, templateStats.length, unusedTemplates.length, reviewsLoaded, reviewsLoading, loadStats, loadUsers, loadTemplateStats, loadUnusedTemplates, loadTemplateReviews]);
 
   // Handle user search
   const handleUserSearch = () => {
@@ -497,14 +482,13 @@ export const Admin = () => {
         {/* Tabs */}
         <div className="flex gap-2 mb-6 border-b border-slate-200 dark:border-white/10 overflow-x-auto">
           {[
-            { id: 'overview', label: 'Overview', icon: BarChart3 },
-            { id: 'users', label: 'Users', icon: Users },
-            { id: 'templates', label: 'Top Templates', icon: TrendingUp },
-            { id: 'rewards', label: 'Creator Rewards', icon: Gift },
-            { id: 'unused', label: 'Low Usage', icon: AlertTriangle },
-            { id: 'video', label: 'Video Interest', icon: Video },
-            { id: 'review', label: 'Template Review', icon: Layers },
-          ].map(tab => (
+            { id: 'overview', label: 'Overview', icon: BarChart3, visible: true },
+            { id: 'users', label: 'Users', icon: Users, visible: true },
+            { id: 'templates', label: 'Top Templates', icon: TrendingUp, visible: false },
+            { id: 'rewards', label: 'Creator Rewards', icon: Gift, visible: true },
+            { id: 'unused', label: 'Low Usage', icon: AlertTriangle, visible: false },
+            { id: 'review', label: 'Template Review', icon: Layers, visible: true },
+          ].filter(tab => tab.visible).map(tab => (
             <button
               key={tab.id}
               onClick={() => {
@@ -580,6 +564,15 @@ export const Admin = () => {
                   value={stats.total_credits_used.toLocaleString()} 
                   icon={Zap}
                   color="orange"
+                />
+                <StatCard
+                  title="Auth Popup Views"
+                  value={popupImpressions?.impressionCount ?? 'Unavailable'}
+                  icon={Eye}
+                  color="purple"
+                  subtitle={popupImpressions?.lastShownAt
+                    ? `Last shown ${new Date(popupImpressions.lastShownAt).toLocaleString()}`
+                    : 'Template detail sign-in popup'}
                 />
               </div>
             ) : null}
@@ -982,167 +975,6 @@ export const Admin = () => {
           </div>
         )}
       </div>
-
-      {/* Video Interest Tab */}
-      {activeTab === 'video' && (
-          <div className="space-y-6">
-            {/* Header */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                Video Feature Interest
-              </h2>
-              <Button 
-                variant="secondary" 
-                size="sm" 
-                onClick={() => { setVideoInterestStats(null); loadVideoInterestStats(videoSearchEmail, videoDateRange); }}
-                disabled={videoInterestLoading}
-              >
-                <RefreshCw className={`w-4 h-4 mr-2 ${videoInterestLoading ? 'animate-spin' : ''}`} />
-                Refresh
-              </Button>
-            </div>
-
-            {/* Search & Filter Bar */}
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Search by email..."
-                  value={videoSearchEmail}
-                  onChange={(e) => setVideoSearchEmail(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      setVideoInterestStats(null);
-                      loadVideoInterestStats(videoSearchEmail, videoDateRange);
-                    }
-                  }}
-                  className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 dark:border-white/10 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-              <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg">
-                {([['all', 'All'], ['7d', '7 Days'], ['30d', '30 Days'], ['90d', '90 Days']] as const).map(([val, label]) => (
-                  <button
-                    key={val}
-                    onClick={() => {
-                      setVideoDateRange(val);
-                      setVideoInterestStats(null);
-                      loadVideoInterestStats(videoSearchEmail, val);
-                    }}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
-                      videoDateRange === val
-                        ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
-                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <Button
-                variant="gradient"
-                size="sm"
-                onClick={() => {
-                  setVideoInterestStats(null);
-                  loadVideoInterestStats(videoSearchEmail, videoDateRange);
-                }}
-              >
-                <Search className="w-4 h-4 mr-1" /> Search
-              </Button>
-            </div>
-
-            {videoInterestLoading && !videoInterestStats ? (
-              <div className="flex justify-center py-12">
-                <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
-              </div>
-            ) : videoInterestStats ? (
-              <>
-                {/* Stat Cards */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="glass-panel rounded-xl p-6 border border-slate-200 dark:border-white/10">
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Total Clicks</p>
-                    <p className="text-3xl font-bold text-slate-900 dark:text-white">{videoInterestStats.total_clicks}</p>
-                  </div>
-                  <div className="glass-panel rounded-xl p-6 border border-slate-200 dark:border-white/10">
-                    <p className="text-sm text-slate-500 dark:text-slate-400 mb-1">Unique Users</p>
-                    <p className="text-3xl font-bold text-slate-900 dark:text-white">{videoInterestStats.unique_users}</p>
-                  </div>
-                </div>
-
-                {/* Grouped Users Table */}
-                <div className="glass-panel rounded-xl overflow-hidden border border-slate-200 dark:border-white/10">
-                  <table className="w-full">
-                    <thead>
-                      <tr className="border-b border-slate-200 dark:border-white/10 bg-slate-50 dark:bg-white/5">
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase w-8"></th>
-                        <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase">User</th>
-                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Clicks</th>
-                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">First Click</th>
-                        <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase">Last Click</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {videoInterestStats.grouped_users.map((userGroup) => {
-                        const isExpanded = expandedVideoUsers.has(userGroup.email);
-                        return (
-                          <React.Fragment key={userGroup.email}>
-                            <tr
-                              onClick={() => {
-                                setExpandedVideoUsers(prev => {
-                                  const next = new Set(prev);
-                                  if (next.has(userGroup.email)) {
-                                    next.delete(userGroup.email);
-                                  } else {
-                                    next.add(userGroup.email);
-                                  }
-                                  return next;
-                                });
-                              }}
-                              className="border-b border-slate-100 dark:border-white/5 hover:bg-slate-50 dark:hover:bg-white/5 cursor-pointer"
-                            >
-                              <td className="px-4 py-3">
-                                <ChevronRight className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
-                              </td>
-                              <td className="px-4 py-3 text-sm font-medium text-slate-900 dark:text-white">{userGroup.email}</td>
-                              <td className="px-4 py-3 text-sm text-right">
-                                <span className="px-2 py-0.5 bg-purple-100 dark:bg-purple-500/20 text-purple-600 dark:text-purple-400 rounded-full font-bold text-xs">
-                                  {userGroup.click_count}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-sm text-right text-slate-500">{new Date(userGroup.first_clicked_at).toLocaleDateString()}</td>
-                              <td className="px-4 py-3 text-sm text-right text-slate-500">{new Date(userGroup.last_clicked_at).toLocaleString()}</td>
-                            </tr>
-                            {isExpanded && (
-                              <tr>
-                                <td colSpan={5} className="px-4 py-0">
-                                  <div className="ml-8 py-2 space-y-1 border-l-2 border-purple-200 dark:border-purple-500/30 pl-4 mb-2">
-                                    <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Click History</p>
-                                    {userGroup.click_times.map((time, i) => (
-                                      <p key={i} className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                                        <span className="w-1.5 h-1.5 rounded-full bg-purple-400 dark:bg-purple-500 inline-block"></span>
-                                        {new Date(time).toLocaleString()}
-                                      </p>
-                                    ))}
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </React.Fragment>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                  {videoInterestStats.grouped_users.length === 0 && (
-                    <div className="text-center py-12 text-slate-500">
-                      <Video className="w-12 h-12 mx-auto mb-4 text-slate-300" />
-                      <p>No clicks recorded yet.</p>
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : null}
-          </div>
-        )}
 
         {/* Template Review Tab */}
         {activeTab === 'review' && (
