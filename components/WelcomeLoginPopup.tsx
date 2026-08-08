@@ -82,7 +82,7 @@ export const WelcomeLoginPopup: React.FC<WelcomeLoginPopupProps> = ({ isOpen, on
         aria-hidden="true"
       />
 
-      <div className="relative z-10 flex w-full max-w-sm flex-col overflow-hidden rounded-2xl bg-white shadow-2xl animate-in zoom-in-95 duration-200">
+      <div className="relative z-10 flex w-full max-w-sm origin-center scale-[0.64] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl animate-in zoom-in-95 duration-200">
         <button
           type="button"
           onClick={onClose}
