@@ -9,6 +9,10 @@ import { Footer } from './components/Footer';
 import { WorkflowDock } from './components/workflow/WorkflowDock';
 import { clearWorkflow, restoreActiveWorkflow } from './components/workflow/workflowManager';
 import { RewardCelebrationModal } from './components/RewardCelebrationModal';
+import {
+  WelcomeLoginPopup,
+  WELCOME_LOGIN_POPUP_SEEN_KEY,
+} from './components/WelcomeLoginPopup';
 import { useStore } from './context/StoreContext';
 import {
   claimCreatorRewardCelebration,
@@ -65,6 +69,7 @@ const AppContent = () => {
   const navigate = useNavigate();
   const { user, authLoading } = useStore();
   const [rewardCelebration, setRewardCelebration] = React.useState<CreatorRewardCelebration | null>(null);
+  const [welcomeLoginOpen, setWelcomeLoginOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (authLoading || !user) {
@@ -154,6 +159,17 @@ const AppContent = () => {
   const isTemplateDetailPage = /^\/templates\/[^/]+$/.test(location.pathname);
   const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage || isVideoPage || isBuilderPage || isTemplateDetailPage;
 
+  React.useEffect(() => {
+    if (authLoading || user || location.pathname !== '/') {
+      setWelcomeLoginOpen(false);
+      return;
+    }
+    if (sessionStorage.getItem(WELCOME_LOGIN_POPUP_SEEN_KEY) === '1') return;
+
+    sessionStorage.setItem(WELCOME_LOGIN_POPUP_SEEN_KEY, '1');
+    setWelcomeLoginOpen(true);
+  }, [authLoading, user?.id, location.pathname]);
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
       {!isAuthPage && <Navbar />}
@@ -162,6 +178,10 @@ const AppContent = () => {
       <RewardCelebrationModal
         celebration={rewardCelebration}
         onClose={() => setRewardCelebration(null)}
+      />
+      <WelcomeLoginPopup
+        isOpen={welcomeLoginOpen}
+        onClose={() => setWelcomeLoginOpen(false)}
       />
       <Analytics
         beforeSend={(event) => {
