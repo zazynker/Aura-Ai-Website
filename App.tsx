@@ -9,16 +9,14 @@ import { Footer } from './components/Footer';
 import { WorkflowDock } from './components/workflow/WorkflowDock';
 import { clearWorkflow, restoreActiveWorkflow } from './components/workflow/workflowManager';
 import { RewardCelebrationModal } from './components/RewardCelebrationModal';
-import {
-  WelcomeLoginPopup,
-  WELCOME_LOGIN_POPUP_SEEN_KEY,
-} from './components/WelcomeLoginPopup';
+import { WelcomeLoginPopup } from './components/WelcomeLoginPopup';
 import { useStore } from './context/StoreContext';
 import {
   claimCreatorRewardCelebration,
   CREATOR_REWARD_AVAILABLE_EVENT,
 } from './utils/notificationsApi';
 import type { CreatorRewardCelebration } from './types';
+import { trackPopupImpression } from './utils/popupAnalytics';
 
 const pendingCelebrationClaims = new Map<string, Promise<CreatorRewardCelebration | null>>();
 
@@ -162,13 +160,14 @@ const AppContent = () => {
   React.useEffect(() => {
     if (authLoading || user || location.pathname !== '/') {
       setWelcomeLoginOpen(false);
-      return;
     }
-    if (sessionStorage.getItem(WELCOME_LOGIN_POPUP_SEEN_KEY) === '1') return;
-
-    sessionStorage.setItem(WELCOME_LOGIN_POPUP_SEEN_KEY, '1');
-    setWelcomeLoginOpen(true);
   }, [authLoading, user?.id, location.pathname]);
+
+  const handleGuestTemplateClick = React.useCallback(() => {
+    if (authLoading || user || welcomeLoginOpen) return;
+    setWelcomeLoginOpen(true);
+    void trackPopupImpression();
+  }, [authLoading, user, welcomeLoginOpen]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
@@ -199,7 +198,7 @@ const AppContent = () => {
       />
       <Suspense fallback={<PageLoader />}>
         <Routes>
-          <Route path="/" element={<Home />} />
+          <Route path="/" element={<Home onGuestTemplateClick={handleGuestTemplateClick} />} />
           <Route path="/template/:id" element={<Navigate to="/" replace />} />
           <Route
             path="/templates/create"

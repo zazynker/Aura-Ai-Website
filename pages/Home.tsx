@@ -167,38 +167,28 @@ const TemplateCardItem: React.FC<{
   t: Template; 
   onClick: () => void; 
   onAction: (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => void;
-  navigate: ReturnType<typeof useNavigate>;
   user: any;
-  saveBrowsingState: any;
 }> = ({ 
   t, 
   onClick, 
   onAction,
-  navigate,
-  user,
-  saveBrowsingState
+  user
 }) => {
   const handleUseWorkflow = (e: React.MouseEvent) => {
     e.stopPropagation();
-    const detailPath = '/templates/' + (t.slug || t.id);
-    // M5-8 will create the real run. Until then, never start the old mock
-    // workflow; open the published workflow details instead.
-    navigate(detailPath);
+    onClick();
   };
 
   const handleViewDetails = (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigate('/templates/' + (t.slug || t.id));
+    onClick();
   };
 
   return (
     <div
       onClick={(e) => {
-        if (!t.isWorkflow) {
-          onClick();
-        } else {
-          handleViewDetails(e);
-        }
+        if (t.isWorkflow) handleViewDetails(e);
+        else onClick();
       }}
       className="group relative break-inside-avoid rounded-2xl overflow-hidden cursor-pointer bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/5 hover:border-purple-500/30 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-900/10"
     >
@@ -258,7 +248,13 @@ const TemplateCardItem: React.FC<{
             </div>
             
             <div className="absolute bottom-3 left-0 right-0 flex justify-center opacity-0 group-hover:opacity-100 translate-y-4 group-hover:translate-y-0 transition-all duration-300 z-10">
-              <div onClick={onClick} className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 px-4 py-2.5 rounded-xl shadow-lg shadow-purple-900/30 hover:shadow-purple-900/50 hover:scale-105 transition-all duration-200 cursor-pointer pointer-events-auto">
+              <div
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onClick();
+                }}
+                className="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 px-4 py-2.5 rounded-xl shadow-lg shadow-purple-900/30 hover:shadow-purple-900/50 hover:scale-105 transition-all duration-200 cursor-pointer pointer-events-auto"
+              >
                 <svg className="w-4 h-4 text-white shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                 <span className="text-sm font-medium text-white whitespace-nowrap">Replace with my product</span>
               </div>
@@ -287,7 +283,11 @@ const TemplateCardItem: React.FC<{
   );
 };
 
-export const Home = () => {
+interface HomeProps {
+  onGuestTemplateClick?: () => void;
+}
+
+export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const navigate = useNavigate();
   const { browsing, saveBrowsingState, addToast, user, collections, addToCollection, createCollection } = useStore();
   
@@ -483,6 +483,17 @@ export const Home = () => {
   const activeFilterCount = [activeScene, activeModel, activeMood, activeHoliday].filter(f => f !== 'All').length;
 
   const handleTemplateClick = (t: Template) => {
+    if (!user) {
+      saveBrowsingState({
+        scrollY: window.scrollY,
+        searchQuery: search,
+        category: activeCategory,
+        lastViewedTemplate: t.id,
+      });
+      onGuestTemplateClick?.();
+      return;
+    }
+
     // Pro Permission Check
     const isProUser = user?.plan === 'Pro' || user?.plan === 'Enterprise';
     if (user && t.isPro && !isProUser) {
@@ -491,6 +502,11 @@ export const Home = () => {
     }
 
     saveBrowsingState({ scrollY: window.scrollY, searchQuery: search, category: activeCategory, lastViewedTemplate: t.id });
+
+    if (t.isWorkflow) {
+      navigate('/templates/' + (t.slug || t.id));
+      return;
+    }
     
     // Navigate to Modify with template as initial image
     navigate('/modify', {
@@ -732,9 +748,7 @@ export const Home = () => {
                   t={t}
                   onClick={() => handleTemplateClick(t)}
                   onAction={handleAction}
-                  navigate={navigate}
                   user={user}
-                  saveBrowsingState={saveBrowsingState}
                 />
               ))}
             </div>
