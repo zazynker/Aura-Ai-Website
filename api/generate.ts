@@ -343,6 +343,7 @@ function toFalImageSize(
   aspectRatio: string | undefined,
   mode: FalImageMode,
 ): FalImageSize {
+  if (aspectRatio === "auto") return "auto";
   if (mode === "edit" && !aspectRatio) return "auto";
 
   if (imageSize === "1K") {
@@ -848,15 +849,16 @@ async function finalizeFalPendingGeneration(
   }
 }
 
-const MJ_ASPECT_RATIOS = new Set([
-  "1:1",
-  "3:4",
-  "4:3",
-  "9:16",
-  "16:9",
-  "2:3",
-  "3:2",
-]);
+function normalizeMjAspectRatio(value: unknown): string {
+  const match = String(value || "").trim().match(/^([1-9]\d{0,2}):([1-9]\d{0,2})$/);
+  if (!match) return "1:1";
+  const width = Number(match[1]);
+  const height = Number(match[2]);
+  const greatestCommonDivisor = (a: number, b: number): number =>
+    b === 0 ? a : greatestCommonDivisor(b, a % b);
+  const divisor = greatestCommonDivisor(width, height);
+  return `${width / divisor}:${height / divisor}`;
+}
 
 const clampNumber = (
   value: unknown,
@@ -903,9 +905,7 @@ function buildEvoLinkMjPrompt(body: GenerateRequestBody): string {
     );
   }
 
-  const aspectRatio = MJ_ASPECT_RATIOS.has(String(body.aspectRatio))
-    ? String(body.aspectRatio)
-    : "1:1";
+  const aspectRatio = normalizeMjAspectRatio(body.aspectRatio);
   const params = body.mjParams || {};
   const stylize = Math.round(clampNumber(params.stylize, 0, 1000, 100));
   const chaos = Math.round(clampNumber(params.chaos, 0, 100, 0));
@@ -1525,6 +1525,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     if (useEvoLinkMj) {
       let assembledPrompt: string;
+      const normalizedMjAspectRatio = normalizeMjAspectRatio(aspectRatio);
       try {
         assembledPrompt = buildEvoLinkMjPrompt(body);
       } catch (error) {
@@ -1538,7 +1539,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       console.log("Submitting EvoLink Midjourney V8.1 request:", {
         requestId,
         quality: normalizedMjQuality,
-        aspectRatio: MJ_ASPECT_RATIOS.has(String(aspectRatio)) ? aspectRatio : "1:1",
+        aspectRatio: normalizedMjAspectRatio,
         requestedImages: 4,
         referenceImageCount: normalizeReferenceUrls(body).length,
       });
@@ -1554,7 +1555,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         evolinkTaskId,
         submittedAt: new Date().toISOString(),
         quality: normalizedMjQuality,
-        aspectRatio: MJ_ASPECT_RATIOS.has(String(aspectRatio)) ? String(aspectRatio) : "1:1",
+        aspectRatio: normalizedMjAspectRatio,
         requestedImages: 4,
         templateRunId: body.templateRunId,
         templateStepId: body.templateStepId,

@@ -159,7 +159,11 @@ export const Modify = () => {
   const [t2iWorkflowReferenceUrls, setT2iWorkflowReferenceUrls] = useState<string[]>([]);
   const [t2iMjReferenceFiles, setT2iMjReferenceFiles] = useState<Partial<Record<'image' | 'style' | 'omni', File>>>({});
   const [t2iMjWorkflowReferenceUrls, setT2iMjWorkflowReferenceUrls] = useState<Partial<Record<'image' | 'style' | 'omni', string>>>({});
-  const [t2iRatio, setT2iRatio] = useState('1:1');
+  const [t2iGptRatio, setT2iGptRatio] = useState('1:1');
+  const [t2iMjRatio, setT2iMjRatio] = useState('4:3');
+  const [t2iMjCustomRatioEnabled, setT2iMjCustomRatioEnabled] = useState(false);
+  const [t2iMjCustomRatioWidth, setT2iMjCustomRatioWidth] = useState('4');
+  const [t2iMjCustomRatioHeight, setT2iMjCustomRatioHeight] = useState('3');
   const [t2iSize, setT2iSize] = useState('1K');
   const [t2iOutputCount, setT2iOutputCount] = useState(1);
   const [t2iMjQuality, setT2iMjQuality] = useState<'standard' | 'hd'>('standard');
@@ -177,6 +181,12 @@ export const Modify = () => {
   const t2iMjReferenceCount = (['image', 'style', 'omni'] as const).filter(
     (role) => t2iMjReferenceFiles[role] || t2iMjWorkflowReferenceUrls[role],
   ).length;
+  const t2iMjCustomRatio = `${t2iMjCustomRatioWidth || '1'}:${t2iMjCustomRatioHeight || '1'}`;
+  const t2iRatio = t2iModel === 'gpt-image-2'
+    ? t2iGptRatio
+    : t2iMjCustomRatioEnabled
+      ? t2iMjCustomRatio
+      : t2iMjRatio;
 
   // 🔧 CHANGED: Admin Demo Mode - persist to sessionStorage (survives route changes, clears on tab close)
   const [showFakeQueue, setShowFakeQueue] = useState(false);
@@ -379,7 +389,22 @@ export const Modify = () => {
       setT2iPrompt(nextPrompt);
       setT2iModel(model);
       setShowT2iAdvanced(model === 'mj-v8.1');
-      if (typeof settings.ratio === 'string') setT2iRatio(settings.ratio);
+      if (typeof settings.ratio === 'string') {
+        if (model === 'gpt-image-2') {
+          setT2iGptRatio(settings.ratio);
+        } else {
+          const customRatioMatch = settings.ratio.match(/^([1-9]\d{0,2}):([1-9]\d{0,2})$/);
+          const presetRatios = ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2'];
+          if (presetRatios.includes(settings.ratio)) {
+            setT2iMjRatio(settings.ratio);
+            setT2iMjCustomRatioEnabled(false);
+          } else if (customRatioMatch) {
+            setT2iMjCustomRatioWidth(customRatioMatch[1]);
+            setT2iMjCustomRatioHeight(customRatioMatch[2]);
+            setT2iMjCustomRatioEnabled(true);
+          }
+        }
+      }
       if (model === 'gpt-image-2' && typeof settings.resolution === 'string') setT2iSize(settings.resolution);
       setT2iOutputCount(model === 'mj-v8.1' ? 4 : typeof settings.outputCount === 'number' ? settings.outputCount : 1);
       if (settings.quality === 'hd' || settings.quality === 'standard') setT2iMjQuality(settings.quality);
@@ -1074,6 +1099,14 @@ export const Modify = () => {
       addToast('error', 'Please enter a prompt');
       return;
     }
+    if (
+      isMidjourney &&
+      t2iMjCustomRatioEnabled &&
+      (!/^[1-9]\d{0,2}$/.test(t2iMjCustomRatioWidth) || !/^[1-9]\d{0,2}$/.test(t2iMjCustomRatioHeight))
+    ) {
+      addToast('error', 'Custom ratio values must be whole numbers from 1 to 999.');
+      return;
+    }
 
     // === Admin Fake Generation: intercept before real API ===
     if (user?.isAdmin && fakeQueue.length > 0 && fakeQueueIndex < fakeQueue.length) {
@@ -1357,6 +1390,22 @@ export const Modify = () => {
     }
     
     return validFiles;
+  };
+
+  const appendT2iReferenceFiles = (files: File[]) => {
+    const validFiles = validateAndFilterFiles(files);
+    if (validFiles.length === 0) return;
+
+    // Windows' multi-select picker reports Ctrl-clicked files with the most
+    // recently selected file first. Reverse only a multi-file batch so the
+    // first selected/uploaded image remains Image 1, matching separate uploads.
+    const filesInUploadOrder = validFiles.length > 1
+      ? [...validFiles].reverse()
+      : validFiles;
+    setT2iFiles((current) =>
+      [...current, ...filesInUploadOrder]
+        .slice(0, Math.max(0, 3 - t2iWorkflowReferenceUrls.length))
+    );
   };
 
   const handleDownload = async () => {
@@ -1828,10 +1877,7 @@ export const Modify = () => {
                                                             accept="image/png, image/jpeg, image/webp"
                                                             onChange={(e) => {
                                                                 if (e.target.files) {
-                                                                    const validFiles = validateAndFilterFiles(Array.from(e.target.files));
-                                                                    if (validFiles.length > 0) {
-                                                                        setT2iFiles(prev => [...prev, ...validFiles].slice(0, Math.max(0, 3 - t2iWorkflowReferenceUrls.length)));
-                                                                    }
+                                                                    appendT2iReferenceFiles(Array.from(e.target.files));
                                                                     e.target.value = '';
                                                                 }
                                                             }}
@@ -1844,7 +1890,10 @@ export const Modify = () => {
                                                         {/* First image container */}
                                                         <div className="relative z-30 shrink-0">
                                                             <div className="w-24 h-24 rounded-xl overflow-hidden border border-slate-200 dark:border-white/10 shadow-sm">
-                                                                <img src={URL.createObjectURL(t2iFiles[0])} className="w-full h-full object-cover" alt="reference" />
+                                                                <img src={URL.createObjectURL(t2iFiles[0])} className="w-full h-full object-cover" alt={`Image ${t2iWorkflowReferenceUrls.length + 1}`} />
+                                                                <span className="absolute bottom-1 left-1 rounded bg-slate-950/75 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                                                                    Image {t2iWorkflowReferenceUrls.length + 1}
+                                                                </span>
                                                                 <button 
                                                                     onClick={(e) => {
                                                                         e.preventDefault();
@@ -1864,10 +1913,7 @@ export const Modify = () => {
                                                                         accept="image/png, image/jpeg, image/webp"
                                                                         onChange={(e) => {
                                                                             if (e.target.files) {
-                                                                                const validFiles = validateAndFilterFiles(Array.from(e.target.files));
-                                                                                if (validFiles.length > 0) {
-                                                                                    setT2iFiles(prev => [...prev, ...validFiles].slice(0, Math.max(0, 3 - t2iWorkflowReferenceUrls.length)));
-                                                                                }
+                                                                                appendT2iReferenceFiles(Array.from(e.target.files));
                                                                                 e.target.value = '';
                                                                             }
                                                                         }}
@@ -1889,7 +1935,10 @@ export const Modify = () => {
                                                                         ${actualIdx === 2 ? 'z-10 translate-x-4 translate-y-4 group-hover/stack:relative group-hover/stack:translate-x-0 group-hover/stack:translate-y-0 group-hover/stack:ml-2' : ''}
                                                                     `}
                                                                 >
-                                                                    <img src={URL.createObjectURL(file)} className="w-full h-full object-cover" alt="reference" />
+                                                                    <img src={URL.createObjectURL(file)} className="w-full h-full object-cover" alt={`Image ${t2iWorkflowReferenceUrls.length + actualIdx + 1}`} />
+                                                                    <span className="absolute bottom-1 left-1 rounded bg-slate-950/75 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                                                                        Image {t2iWorkflowReferenceUrls.length + actualIdx + 1}
+                                                                    </span>
                                                                     <button 
                                                                         onClick={(e) => {
                                                                             e.preventDefault();
@@ -1921,12 +1970,12 @@ export const Modify = () => {
                                             <div className="mb-4 flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50/60 px-3 py-2.5 dark:border-orange-500/20 dark:bg-orange-500/5">
                                                 <div className="flex -space-x-2">
                                                     {t2iWorkflowReferenceUrls.map((url, index) => (
-                                                        <img
+                                                         <img
                                                             key={`${url}-${index}`}
                                                             src={url}
-                                                            alt={`Workflow reference ${index + 1}`}
+                                                            alt={`Image ${index + 1}`}
                                                             className="h-9 w-9 rounded-lg border-2 border-white object-cover shadow-sm dark:border-slate-900"
-                                                        />
+                                                          />
                                                     ))}
                                                 </div>
                                                 <div className="min-w-0 flex-1">
@@ -2081,21 +2130,70 @@ export const Modify = () => {
                                                         onClick={() => setOpenDropdown(openDropdown === 'ratio' ? null : 'ratio')}
                                                         className="flex items-center gap-2 px-3 h-9 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-white/5 shadow-sm text-sm font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                                                     >
-                                                        <span>Ratio: {t2iRatio}</span>
+                                                        <span>Ratio: {t2iRatio === 'auto' ? 'Auto' : t2iRatio}</span>
                                                         <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${openDropdown === 'ratio' ? 'rotate-180' : ''}`} />
                                                     </button>
                                                     {openDropdown === 'ratio' && (
-                                                        <div className="absolute top-full left-0 mt-2 w-40 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-xl shadow-xl z-50 animate-in fade-in slide-in-from-top-2 p-1">
+                                                        <div className="absolute top-full left-0 mt-2 w-48 bg-white dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-xl shadow-xl z-50 animate-in fade-in slide-in-from-top-2 p-1">
                                                             <div className="grid grid-cols-2 gap-1">
-                                                                {['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2'].map(ratio => (
+                                                                {(t2iModel === 'gpt-image-2'
+                                                                    ? ['auto', '1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2']
+                                                                    : ['1:1', '3:4', '4:3', '9:16', '16:9', '2:3', '3:2']
+                                                                ).map(ratio => (
                                                                     <button
                                                                         key={ratio}
-                                                                        onClick={() => { setT2iRatio(ratio); setOpenDropdown(null); }}
-                                                                        className={`px-3 py-2 text-sm text-center rounded-md transition-colors ${ratio === '1:1' ? 'col-span-2' : ''} ${t2iRatio === ratio ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 font-medium' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
+                                                                        onClick={() => {
+                                                                            if (t2iModel === 'gpt-image-2') {
+                                                                                setT2iGptRatio(ratio);
+                                                                            } else {
+                                                                                setT2iMjRatio(ratio);
+                                                                                setT2iMjCustomRatioEnabled(false);
+                                                                            }
+                                                                            setOpenDropdown(null);
+                                                                        }}
+                                                                        className={`px-3 py-2 text-sm text-center rounded-md transition-colors ${ratio === 'auto' || (t2iModel === 'mj-v8.1' && ratio === '1:1') ? 'col-span-2' : ''} ${(t2iModel === 'gpt-image-2' ? t2iGptRatio === ratio : !t2iMjCustomRatioEnabled && t2iMjRatio === ratio) ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 font-medium' : 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}
                                                                     >
-                                                                        {ratio}
+                                                                        {ratio === 'auto' ? 'Auto' : ratio}
                                                                     </button>
                                                                 ))}
+                                                                {t2iModel === 'mj-v8.1' && (
+                                                                    <div className={`order-first col-span-2 mb-1 rounded-lg border p-2 ${t2iMjCustomRatioEnabled ? 'border-orange-300 bg-orange-50/70 dark:border-orange-500/40 dark:bg-orange-900/20' : 'border-slate-200 dark:border-white/10'}`}>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setT2iMjCustomRatioEnabled(true)}
+                                                                            className="mb-2 w-full text-left text-xs font-semibold text-slate-700 dark:text-slate-200"
+                                                                        >
+                                                                            Custom ratio
+                                                                        </button>
+                                                                        <div className="flex items-center justify-center gap-2">
+                                                                            <input
+                                                                                type="number"
+                                                                                min="1"
+                                                                                max="999"
+                                                                                inputMode="numeric"
+                                                                                aria-label="Custom ratio width"
+                                                                                value={t2iMjCustomRatioWidth}
+                                                                                onFocus={() => setT2iMjCustomRatioEnabled(true)}
+                                                                                onChange={(e) => setT2iMjCustomRatioWidth(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                                                                                onBlur={() => { if (!Number(t2iMjCustomRatioWidth)) setT2iMjCustomRatioWidth('1'); }}
+                                                                                className="h-9 w-16 rounded-md border border-slate-200 bg-white px-2 text-center text-sm font-semibold text-slate-800 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                                                                            />
+                                                                            <span className="font-semibold text-slate-400">:</span>
+                                                                            <input
+                                                                                type="number"
+                                                                                min="1"
+                                                                                max="999"
+                                                                                inputMode="numeric"
+                                                                                aria-label="Custom ratio height"
+                                                                                value={t2iMjCustomRatioHeight}
+                                                                                onFocus={() => setT2iMjCustomRatioEnabled(true)}
+                                                                                onChange={(e) => setT2iMjCustomRatioHeight(e.target.value.replace(/\D/g, '').slice(0, 3))}
+                                                                                onBlur={() => { if (!Number(t2iMjCustomRatioHeight)) setT2iMjCustomRatioHeight('1'); }}
+                                                                                className="h-9 w-16 rounded-md border border-slate-200 bg-white px-2 text-center text-sm font-semibold text-slate-800 outline-none focus:border-orange-400 dark:border-white/10 dark:bg-slate-900 dark:text-white"
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     )}
