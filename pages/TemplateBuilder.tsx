@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw, Upload, Maximize2 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
@@ -30,10 +30,64 @@ import {
   type UploadedTemplateObject,
 } from '../utils/templateStorage';
 import { getWorkflowCapability } from '../workflows/registry';
+import {
+  deriveQuickUseCandidates,
+  createQuickUseCandidateId,
+} from '../workflows/quickUseCandidates';
+import {
+  addQuickUsePromptVariable,
+  createEmptyQuickUseDefinition,
+  removeQuickUsePromptVariable,
+  setQuickUseMaterialReplaceable,
+} from '../workflows/quickUseAuthoring';
+import type {
+  QuickUseDefinition,
+  QuickUsePromptInputKind,
+  QuickUseSettingCandidate,
+} from '../workflows/quickUseTypes';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import { AuthGateModal } from '../components/AuthGateModal';
 
 type WorkflowGeneration = Generation;
+
+interface PromptVariableSelection {
+  stepId: string;
+  start: number;
+  end: number;
+  text: string;
+  key: string;
+  label: string;
+  inputKind: QuickUsePromptInputKind;
+  required: boolean;
+}
+
+const stableTextHash = (value: string): string => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+};
+
+const suggestPromptVariableKey = (
+  text: string,
+  stepId: string,
+  start: number,
+  existingKeys: Set<string>,
+): string => {
+  const slug = text
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  const base = /^[a-z]/.test(slug)
+    ? slug
+    : `variable_${stableTextHash(text).slice(0, 8)}`;
+  if (!existingKeys.has(base)) return base;
+  return `${base.slice(0, 54)}_${stableTextHash(`${stepId}:${start}:${text}`).slice(0, 8)}`;
+};
 
 const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
   Object.entries(BUILDER_FEATURE_TO_CAPABILITY).map(([feature, capability]) => [
@@ -273,6 +327,9 @@ export const TemplateBuilder = () => {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
   const [reviewState, setReviewState] = useState<'idle' | 'submitting' | 'submitted' | 'failed'>('idle');
   const [draftLoadState, setDraftLoadState] = useState<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
+  const [isAdminTemplateMode, setIsAdminTemplateMode] = useState(false);
+  const [quickUseDefinition, setQuickUseDefinition] = useState<QuickUseDefinition | null>(null);
+  const [promptVariableSelection, setPromptVariableSelection] = useState<PromptVariableSelection | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultFileInputRef = useRef<HTMLInputElement>(null);
@@ -319,6 +376,9 @@ export const TemplateBuilder = () => {
         setResultFiles({});
         setPersistedMaterials(draft.materials);
         setMaterialFiles({});
+        setQuickUseDefinition(draft.quickUseDefinition);
+        setIsAdminTemplateMode(Boolean(user.isAdmin && draft.quickUseDefinition));
+        setPromptVariableSelection(null);
         setSaveState('saved');
         setReviewState('idle');
         setDraftLoadState('loaded');
@@ -332,6 +392,42 @@ export const TemplateBuilder = () => {
   }, [requestedTemplateId, user, addToast]);
 
   const activeStep = steps.find(s => s.id === activeStepId) || steps[0];
+  const workflowConversion = useMemo(
+    () => convertAndValidateBuilderWorkflow(steps),
+    [steps],
+  );
+  const adminDefinition = useMemo(
+    () => quickUseDefinition || createEmptyQuickUseDefinition(templateTitle, templateDescription),
+    [quickUseDefinition, templateTitle, templateDescription],
+  );
+  const quickUseCandidates = useMemo(
+    () => deriveQuickUseCandidates(workflowConversion.workflow, adminDefinition),
+    [workflowConversion.workflow, adminDefinition],
+  );
+  const settingCandidates = useMemo(
+    () => quickUseCandidates.candidates.filter(
+      (candidate): candidate is QuickUseSettingCandidate => candidate.kind === 'setting',
+    ),
+    [quickUseCandidates.candidates],
+  );
+  const activeWorkflowStep = workflowConversion.workflow.steps.find(
+    (step) => step.id === activeStepId,
+  );
+  const activeCapability = activeWorkflowStep
+    ? getWorkflowCapability(activeWorkflowStep.capability)
+    : null;
+  const replaceableInputOptions = activeWorkflowStep && activeCapability
+    ? activeWorkflowStep.inputs.flatMap((input) => {
+        const slot = activeCapability.inputs.find((candidate) => candidate.key === input.slot);
+        if (!slot?.allowedSources.includes('user_upload') || input.source === 'previous_step') {
+          return [];
+        }
+        return [{ input, slot }];
+      })
+    : [];
+  const activePromptTemplate = adminDefinition.promptTemplates.find(
+    (template) => template.stepId === activeStepId && template.parameterKey === 'prompt',
+  );
   const activeResultGeneration = generations.find(
     (generation) => generation.id === activeStep.resultGenerationId,
   );
@@ -475,6 +571,103 @@ export const TemplateBuilder = () => {
     setBuilderError(null);
     setSaveState('idle');
     setSteps(steps.map(s => s.id === activeStepId ? { ...s, ...updates } : s));
+  };
+
+  const ensureAdminDefinition = (
+    current: QuickUseDefinition | null,
+  ): QuickUseDefinition => current || createEmptyQuickUseDefinition(
+    templateTitle,
+    templateDescription,
+  );
+
+  const handleAdminTemplateModeToggle = () => {
+    if (!user?.isAdmin) return;
+    setIsAdminTemplateMode((enabled) => {
+      const next = !enabled;
+      if (next) {
+        setQuickUseDefinition((current) => ensureAdminDefinition(current));
+      } else {
+        setPromptVariableSelection(null);
+      }
+      return next;
+    });
+  };
+
+  const handleReplaceableInputChange = (slot: string, replaceable: boolean) => {
+    if (!activeWorkflowStep) return;
+    setQuickUseDefinition((current) => setQuickUseMaterialReplaceable(
+      ensureAdminDefinition(current),
+      { kind: 'workflow_input', stepId: activeWorkflowStep.id, slot },
+      replaceable,
+    ));
+    setSaveState('idle');
+    setBuilderError(null);
+  };
+
+  const handlePromptSelection = (event: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    if (!isAdminTemplateMode || !activeStep) return;
+    const target = event.currentTarget;
+    const start = target.selectionStart;
+    const end = target.selectionEnd;
+    if (end <= start) {
+      setPromptVariableSelection(null);
+      return;
+    }
+    const text = activeStep.prompt.slice(start, end);
+    if (!text.trim()) {
+      setPromptVariableSelection(null);
+      return;
+    }
+    const existingKeys = new Set<string>(
+      (activePromptTemplate?.variables || []).map((variable) => variable.key),
+    );
+    setPromptVariableSelection({
+      stepId: activeStep.id,
+      start,
+      end,
+      text,
+      key: suggestPromptVariableKey(text, activeStep.id, start, existingKeys),
+      label: text.trim().length <= 48 ? text.trim() : 'Prompt variable',
+      inputKind: text.trim().length > 160 ? 'textarea' : 'text',
+      required: true,
+    });
+  };
+
+  const handleMakePromptSelectionEditable = () => {
+    if (!promptVariableSelection || promptVariableSelection.stepId !== activeStep.id) return;
+    try {
+      const next = addQuickUsePromptVariable(
+        ensureAdminDefinition(quickUseDefinition),
+        {
+          stepId: activeStep.id,
+          parameterKey: 'prompt',
+          workflowPrompt: activeStep.prompt,
+          selectionStart: promptVariableSelection.start,
+          selectionEnd: promptVariableSelection.end,
+          key: promptVariableSelection.key,
+          label: promptVariableSelection.label,
+          inputKind: promptVariableSelection.inputKind,
+          required: promptVariableSelection.required,
+        },
+      );
+      setQuickUseDefinition(next);
+      setPromptVariableSelection(null);
+      setSaveState('idle');
+      setBuilderError(null);
+      addToast('success', 'Prompt variable added.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not create this prompt variable.';
+      setBuilderError(message);
+      addToast('error', message);
+    }
+  };
+
+  const handleRemovePromptVariable = (variableKey: string) => {
+    setQuickUseDefinition((current) => current
+      ? removeQuickUsePromptVariable(current, activeStep.id, 'prompt', variableKey)
+      : current);
+    setPromptVariableSelection(null);
+    setSaveState('idle');
   };
 
   const updateImageToVideoSettings = (
@@ -1039,6 +1232,7 @@ export const TemplateBuilder = () => {
         persistedResultPosters,
         materialFiles,
         persistedMaterials,
+        quickUseDefinition,
       });
       setDraftIdentity(saved.identity);
       setPersistedCover(saved.cover);
@@ -1047,6 +1241,7 @@ export const TemplateBuilder = () => {
       setPersistedResults(saved.results);
       setPersistedResultPosters(saved.resultPosters);
       setPersistedMaterials(saved.materials);
+      setQuickUseDefinition(saved.quickUseDefinition);
       setSteps((currentSteps) =>
         currentSteps.map((step) => ({
           ...step,
@@ -1140,6 +1335,9 @@ export const TemplateBuilder = () => {
     setPersistedResultPosters({});
     setMaterialFiles({});
     setPersistedMaterials({});
+    setQuickUseDefinition(null);
+    setIsAdminTemplateMode(false);
+    setPromptVariableSelection(null);
     setSaveState('idle');
     setReviewState('idle');
     setDraftLoadState('idle');
@@ -1158,6 +1356,19 @@ export const TemplateBuilder = () => {
             <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Build a workflow template</h1>
           </div>
           <div className="flex items-center gap-4">
+            {user?.isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleAdminTemplateModeToggle}
+                disabled={reviewState === 'submitted'}
+                className={isAdminTemplateMode
+                  ? 'border-purple-400 bg-purple-50 text-purple-700 dark:border-purple-500/60 dark:bg-purple-500/10 dark:text-purple-200'
+                  : undefined}
+              >
+                Admin Template Mode
+              </Button>
+            )}
             {reviewState === 'submitted' && (
               <Button variant="outline" size="sm" onClick={handleBuildAnother}>
                 <Plus className="h-4 w-4" />
@@ -1205,6 +1416,32 @@ export const TemplateBuilder = () => {
           </div>
         </div>
       </div>
+
+      {isAdminTemplateMode && (
+        <div className="border-b border-purple-200 bg-purple-50 dark:border-purple-500/20 dark:bg-purple-500/10">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
+            <div>
+              <div className="text-sm font-semibold text-purple-950 dark:text-purple-100">
+                Admin Template Mode
+              </div>
+              <div className="mt-0.5 text-xs text-purple-700 dark:text-purple-300">
+                Define user-replaceable inputs and prompt variables here. Quick Use layout is configured separately.
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 text-xs font-medium text-purple-800 dark:text-purple-200">
+              <span className="rounded-full bg-white/80 px-3 py-1 dark:bg-slate-900/60">
+                {adminDefinition.replaceableMaterials.length} materials
+              </span>
+              <span className="rounded-full bg-white/80 px-3 py-1 dark:bg-slate-900/60">
+                {adminDefinition.promptTemplates.reduce((count, template) => count + template.variables.length, 0)} prompt variables
+              </span>
+              <span className="rounded-full bg-white/80 px-3 py-1 dark:bg-slate-900/60">
+                {settingCandidates.length} registry settings
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {reviewState === 'submitted' && (
         <div className="bg-amber-50 dark:bg-amber-500/10 border-b border-amber-200 dark:border-amber-500/20">
@@ -1573,7 +1810,55 @@ export const TemplateBuilder = () => {
                   Add Material
                 </Button>
               </div>
-             
+
+              {isAdminTemplateMode && (
+                <div className="mb-4 rounded-xl border border-purple-200 bg-purple-50/70 p-4 dark:border-purple-500/20 dark:bg-purple-500/5">
+                  <div className="mb-3">
+                    <div className="text-sm font-semibold text-purple-950 dark:text-purple-100">User-replaceable workflow inputs</div>
+                    <div className="mt-1 text-xs text-purple-700 dark:text-purple-300">
+                      Inputs come from the active capability contract. Previous-step inputs cannot be exposed as uploads.
+                    </div>
+                  </div>
+                  {replaceableInputOptions.length > 0 ? (
+                    <div className="space-y-2">
+                      {replaceableInputOptions.map(({ input, slot }) => {
+                        const candidateId = createQuickUseCandidateId({
+                          kind: 'workflow_input',
+                          stepId: activeWorkflowStep!.id,
+                          slot: input.slot,
+                        });
+                        const checked = adminDefinition.replaceableMaterials.some(
+                          (definition) => createQuickUseCandidateId(definition.binding) === candidateId,
+                        );
+                        return (
+                          <label
+                            key={candidateId}
+                            className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-purple-100 bg-white px-3 py-2.5 dark:border-purple-500/15 dark:bg-slate-900/70"
+                          >
+                            <span>
+                              <span className="block text-sm font-medium text-slate-800 dark:text-slate-200">{slot.label}</span>
+                              <span className="block text-[11px] text-slate-500">
+                                {slot.assetType} · {input.source === 'template_asset' ? 'template default attached' : 'user upload input'}
+                              </span>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={(event) => handleReplaceableInputChange(input.slot, event.target.checked)}
+                              className="h-4 w-4 cursor-pointer accent-purple-600"
+                            />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-dashed border-purple-200 px-3 py-3 text-xs text-purple-700 dark:border-purple-500/20 dark:text-purple-300">
+                      This step has no eligible upload input yet. Add the required material or choose a capability that accepts user uploads.
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="space-y-4">
                 {activeStep.materials.map((material, idx) => (
                   <div
@@ -1729,9 +2014,104 @@ export const TemplateBuilder = () => {
                   <textarea 
                     value={activeStep.prompt}
                     onChange={(e) => updateActiveStep({ prompt: e.target.value })}
+                    onSelect={handlePromptSelection}
                     placeholder="Enter the prompt used for this step..."
                     className="w-full h-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
                   />
+                  {isAdminTemplateMode && (
+                    <div className="mt-3 space-y-3">
+                      <p className="text-xs text-purple-700 dark:text-purple-300">
+                        Select text in the prompt to create a stable Prompt Variable. The workflow prompt itself remains unchanged.
+                      </p>
+                      {promptVariableSelection?.stepId === activeStep.id && (
+                        <div className="rounded-xl border border-purple-200 bg-purple-50/70 p-4 dark:border-purple-500/20 dark:bg-purple-500/5">
+                          <div className="mb-3 text-xs text-purple-700 dark:text-purple-300">
+                            Selected default: <span className="font-medium text-purple-950 dark:text-purple-100">{promptVariableSelection.text}</span>
+                          </div>
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                              Variable key
+                              <input
+                                value={promptVariableSelection.key}
+                                onChange={(event) => setPromptVariableSelection((current) => current
+                                  ? { ...current, key: event.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') }
+                                  : current)}
+                                className="mt-1.5 h-9 w-full rounded-lg border border-purple-200 bg-white px-3 font-mono text-xs text-slate-900 dark:border-purple-500/20 dark:bg-slate-900 dark:text-white"
+                              />
+                            </label>
+                            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                              User-facing label
+                              <input
+                                value={promptVariableSelection.label}
+                                onChange={(event) => setPromptVariableSelection((current) => current
+                                  ? { ...current, label: event.target.value }
+                                  : current)}
+                                className="mt-1.5 h-9 w-full rounded-lg border border-purple-200 bg-white px-3 text-sm text-slate-900 dark:border-purple-500/20 dark:bg-slate-900 dark:text-white"
+                              />
+                            </label>
+                            <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                              Suggested control
+                              <select
+                                value={promptVariableSelection.inputKind}
+                                onChange={(event) => setPromptVariableSelection((current) => current
+                                  ? { ...current, inputKind: event.target.value as QuickUsePromptInputKind }
+                                  : current)}
+                                className="mt-1.5 h-9 w-full rounded-lg border border-purple-200 bg-white px-3 text-sm text-slate-900 dark:border-purple-500/20 dark:bg-slate-900 dark:text-white"
+                              >
+                                <option value="text">Text input</option>
+                                <option value="textarea">Textarea</option>
+                                <option value="dialogue">Dialogue</option>
+                              </select>
+                            </label>
+                            <label className="flex items-end gap-2 pb-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                              <input
+                                type="checkbox"
+                                checked={promptVariableSelection.required}
+                                onChange={(event) => setPromptVariableSelection((current) => current
+                                  ? { ...current, required: event.target.checked }
+                                  : current)}
+                                className="h-4 w-4 accent-purple-600"
+                              />
+                              Required input
+                            </label>
+                          </div>
+                          <div className="mt-3 flex justify-end gap-2">
+                            <Button variant="outline" size="sm" onClick={() => setPromptVariableSelection(null)}>
+                              Cancel
+                            </Button>
+                            <Button size="sm" onClick={handleMakePromptSelectionEditable}>
+                              Make editable
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                      {activePromptTemplate && activePromptTemplate.variables.length > 0 && (
+                        <div className="space-y-2">
+                          {activePromptTemplate.variables.map((variable) => (
+                            <div
+                              key={variable.key}
+                              className="flex items-center justify-between gap-4 rounded-lg border border-purple-100 bg-purple-50/50 px-3 py-2.5 dark:border-purple-500/15 dark:bg-purple-500/5"
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{variable.label}</div>
+                                <div className="truncate text-[11px] text-slate-500">
+                                  {`{{quick_use.${variable.key}}}`} · Default: {variable.defaultValue}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleRemovePromptVariable(variable.key)}
+                                className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
+                                aria-label={`Remove ${variable.label}`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {activeStep.feature === 'Image to Video' && (
@@ -2019,6 +2399,41 @@ export const TemplateBuilder = () => {
                             })}
                           </div>
                         </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isAdminTemplateMode && (
+                  <div className="rounded-xl border border-purple-200 bg-purple-50/70 p-4 dark:border-purple-500/20 dark:bg-purple-500/5">
+                    <div className="mb-3">
+                      <div className="text-sm font-semibold text-purple-950 dark:text-purple-100">Settings available to Quick Use</div>
+                      <div className="mt-1 text-xs text-purple-700 dark:text-purple-300">
+                        Derived from the Capability Registry. The current workflow values are the template defaults.
+                      </div>
+                    </div>
+                    {settingCandidates.filter((candidate) => candidate.stepId === activeStep.id).length > 0 ? (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {settingCandidates
+                          .filter((candidate) => candidate.stepId === activeStep.id)
+                          .map((candidate) => (
+                            <div
+                              key={candidate.id}
+                              className="rounded-lg border border-purple-100 bg-white px-3 py-2.5 dark:border-purple-500/15 dark:bg-slate-900/70"
+                            >
+                              <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{candidate.label}</div>
+                              <div className="mt-0.5 text-[11px] text-slate-500">
+                                {candidate.parameterType} · Default: {candidate.defaultValue === undefined ? 'None' : String(candidate.defaultValue)}
+                              </div>
+                            </div>
+                          ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-purple-700 dark:text-purple-300">This capability exposes no editable settings.</div>
+                    )}
+                    {!quickUseCandidates.valid && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+                        {quickUseCandidates.issues[0]?.message}
                       </div>
                     )}
                   </div>
