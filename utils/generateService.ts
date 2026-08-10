@@ -78,6 +78,7 @@ const ERROR_MESSAGES: Record<number, string> = {
   402: "Not enough credits for image generation.",
   403: "4K resolution is available for Pro users only. Upgrade to unlock.",
   413: "Image too large. Please use images under 10MB each, or try compressing them first.",
+  422: "The image or prompt could not be processed. Please change it and try again.",
   429: "Slow down! Please wait a moment before generating more images.",
   500: "Server error. Please try again in a few moments.",
   502: "Service temporarily unavailable. Checking whether your image was already saved…",
@@ -203,11 +204,9 @@ async function recoverGeneratedImages(
       }
 
       if (!response.ok || data?.error) {
-        const retryable = [500, 502, 503, 504].includes(response.status) ||
-          data?.code === "FAL_STATUS_FAILED" ||
-          data?.code === "FAL_RESULT_FINALIZATION_FAILED" ||
-          data?.code === "EVOLINK_STATUS_FAILED" ||
-          data?.code === "EVOLINK_RESULT_FINALIZATION_FAILED";
+        // Provider validation/content-safety failures are terminal even when a
+        // provider-specific code is present. Only server-side failures retry.
+        const retryable = [500, 502, 503, 504].includes(response.status);
         if (retryable && attempt < IMAGE_RECOVERY_ATTEMPTS) {
           console.warn("Image finalization is temporarily unavailable; retrying the same request:", {
             requestId,

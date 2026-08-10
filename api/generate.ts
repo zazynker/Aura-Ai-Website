@@ -82,6 +82,24 @@ type FalQueueSubmitResult = {
   responseUrl?: string;
   cancelUrl?: string;
 };
+class FalHttpError extends Error {
+  readonly statusCode: number;
+  readonly providerMessage: string;
+  readonly payload: Record<string, unknown>;
+
+  constructor(
+    operation: "submission" | "status" | "result",
+    response: Response,
+    payload: Record<string, unknown>,
+  ) {
+    const providerMessage = falErrorMessage(payload, response.statusText);
+    super(`Fal GPT Image 2 ${operation} failed (${response.status}): ${providerMessage}`);
+    this.name = "FalHttpError";
+    this.statusCode = response.status;
+    this.providerMessage = providerMessage;
+    this.payload = payload;
+  }
+}
 type StoredFalPendingGeneration = {
   version: 1;
   provider: "fal-gpt-image-2";
@@ -496,16 +514,64 @@ function getStringField(
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function falErrorMessage(payload: Record<string, unknown>, fallback: string): string {
-  const detail = payload.detail;
-  if (typeof detail === "string" && detail.trim()) return detail.trim();
-  if (detail && typeof detail === "object") {
-    const nested = detail as Record<string, unknown>;
-    const message = nested.message ?? nested.error;
-    if (typeof message === "string" && message.trim()) return message.trim();
+function falErrorValueMessage(value: unknown, depth = 0): string | undefined {
+  if (depth > 4) return undefined;
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const message = falErrorValueMessage(item, depth + 1);
+      if (message) return message;
+    }
+    return undefined;
   }
-  const message = payload.message ?? payload.error;
-  return typeof message === "string" && message.trim() ? message.trim() : fallback;
+  if (!value || typeof value !== "object") return undefined;
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["msg", "message", "error", "detail", "reason"]) {
+    const message = falErrorValueMessage(record[key], depth + 1);
+    if (message) return message;
+  }
+  return undefined;
+}
+
+function falErrorMessage(payload: Record<string, unknown>, fallback: string): string {
+  return falErrorValueMessage(payload.detail) ||
+    falErrorValueMessage(payload.error) ||
+    falErrorValueMessage(payload.message) ||
+    fallback;
+}
+
+function isFalUnprocessableError(error: unknown): error is FalHttpError {
+  return error instanceof FalHttpError && error.statusCode === 422;
+}
+
+function isFalContentPolicyMessage(message: string): boolean {
+  return /content (?:could not be processed|checker)|flagged|moderation|safety|content policy|policy violation/i
+    .test(message);
+}
+
+function isFalContentPolicyError(error: FalHttpError): boolean {
+  return isFalContentPolicyMessage(error.providerMessage);
+}
+
+function formatFalFailureMessage(providerMessage: string, fallback: string): string {
+  const reason = (providerMessage || fallback).trim().replace(/[.\s]+$/, "");
+  return `Fal rejected the request: ${reason}. Please change the uploaded image or prompt and try again. No Lazora credits were deducted.`;
+}
+
+function falTerminalFailure(error: FalHttpError): Extract<FalFinalizeResult, { state: "failed" }> {
+  const contentPolicyFailure = isFalContentPolicyError(error);
+  return {
+    state: "failed",
+    statusCode: 422,
+    code: contentPolicyFailure ? "FAL_CONTENT_POLICY_VIOLATION" : "FAL_INVALID_INPUT",
+    error: formatFalFailureMessage(
+      error.providerMessage,
+      contentPolicyFailure
+        ? "The content was rejected by the content safety check"
+        : "Fal could not process this request",
+    ),
+  };
 }
 
 function normalizeFalQueueStatus(payload: Record<string, unknown>): string {
@@ -535,9 +601,7 @@ async function submitFalGptImage2(
   });
   const responsePayload = await readJsonResponse(response);
   if (!response.ok) {
-    throw new Error(
-      `Fal GPT Image 2 queue submission failed (${response.status}): ${falErrorMessage(responsePayload, response.statusText)}`,
-    );
+    throw new FalHttpError("submission", response, responsePayload);
   }
   const requestId = getStringField(responsePayload, "request_id", "requestId");
   if (!requestId) throw new Error("Fal queue response did not include request_id.");
@@ -561,9 +625,7 @@ async function getFalQueueStatus(
   });
   const payload = await readJsonResponse(response);
   if (!response.ok) {
-    throw new Error(
-      `Fal GPT Image 2 status failed (${response.status}): ${falErrorMessage(payload, response.statusText)}`,
-    );
+    throw new FalHttpError("status", response, payload);
   }
   return payload;
 }
@@ -580,9 +642,7 @@ async function getFalQueueResult(
   });
   const payload = await readJsonResponse(response);
   if (!response.ok) {
-    throw new Error(
-      `Fal GPT Image 2 result failed (${response.status}): ${falErrorMessage(payload, response.statusText)}`,
-    );
+    throw new FalHttpError("result", response, payload);
   }
   const output = unwrapFalOutput(payload);
   if (!Array.isArray(output.images) || output.images.length === 0) {
@@ -624,6 +684,10 @@ async function finalizeFalPendingGeneration(
     statusPayload = await getFalQueueStatus(pending, falKey);
   } catch (error) {
     console.error("Fal image status check failed:", error);
+    if (isFalUnprocessableError(error)) {
+      await deletePendingGeneration(supabase, userId, pending.clientRequestId);
+      return falTerminalFailure(error);
+    }
     return {
       state: "failed",
       statusCode: 502,
@@ -647,11 +711,23 @@ async function finalizeFalPendingGeneration(
 
   if (status === "FAILED" || status === "CANCELLED" || statusError) {
     await deletePendingGeneration(supabase, userId, pending.clientRequestId);
+    const contentPolicyFailure = isFalContentPolicyMessage(statusError);
     return {
       state: "failed",
       statusCode: 422,
-      code: status === "CANCELLED" ? "FAL_CANCELLED" : "FAL_GENERATION_FAILED",
-      error: statusError || "Fal image generation failed. No Lazora credits were deducted.",
+      code: status === "CANCELLED"
+        ? "FAL_CANCELLED"
+        : contentPolicyFailure
+          ? "FAL_CONTENT_POLICY_VIOLATION"
+          : "FAL_GENERATION_FAILED",
+      error: status === "CANCELLED"
+        ? "Fal cancelled the image request. No Lazora credits were deducted."
+        : formatFalFailureMessage(
+            statusError,
+            contentPolicyFailure
+              ? "The content was rejected by the content safety check"
+              : "Image generation failed",
+          ),
     };
   }
 
@@ -757,6 +833,10 @@ async function finalizeFalPendingGeneration(
       pending.clientRequestId,
     );
     if (storedManifest) return { state: "success", payload: storedManifest };
+    if (isFalUnprocessableError(error)) {
+      await deletePendingGeneration(supabase, userId, pending.clientRequestId);
+      return falTerminalFailure(error);
+    }
     return {
       state: "failed",
       statusCode: 500,
@@ -1540,11 +1620,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         inputImageCount: inputImageUrls.length,
       });
 
-      const falJob = await submitFalGptImage2(
-        mode,
-        falPayload,
-        falKey as string,
-      );
+      let falJob: FalQueueSubmitResult;
+      try {
+        falJob = await submitFalGptImage2(
+          mode,
+          falPayload,
+          falKey as string,
+        );
+      } catch (error) {
+        if (isFalUnprocessableError(error)) {
+          const failure = falTerminalFailure(error);
+          return res.status(failure.statusCode).json({
+            success: false,
+            code: failure.code,
+            error: failure.error,
+            requestId,
+          });
+        }
+        throw error;
+      }
       const pendingGeneration: StoredFalPendingGeneration = {
         version: 1,
         provider: "fal-gpt-image-2",

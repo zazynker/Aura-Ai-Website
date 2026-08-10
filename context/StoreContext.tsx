@@ -490,7 +490,7 @@ export const StoreProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   const addToast = (type: 'success' | 'error' | 'info', message: string) => {
     const id = generateId();
     setToasts((prev) => [...prev, { id, type, message }]);
-    setTimeout(() => removeToast(id), 3000);
+    setTimeout(() => removeToast(id), type === 'error' ? 10_000 : 3_000);
   };
 
   const removeToast = (id: string) => {
