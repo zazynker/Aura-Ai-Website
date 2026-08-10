@@ -3,6 +3,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import type { QuickUseDefinition } from '../workflows/quickUseTypes';
 import {
   QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX,
+  deriveQuickUseCandidates,
   toQuickUsePresentationDefinition,
 } from '../workflows/quickUseCandidates';
 import { validateQuickUseDefinition } from '../workflows/quickUseValidators';
@@ -161,6 +162,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return errorResponse(res, 500, 'The published Quick Use definition is invalid.');
       }
     }
+    const quickUseCandidates = quickUseDefinition
+      ? deriveQuickUseCandidates(version.workflow, quickUseDefinition).candidates
+      : [];
 
     const assets = (assetData || []) as AssetRow[];
     const assetByKey = new Map(assets.map((asset) => [asset.asset_key, asset]));
@@ -328,7 +332,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         finalResult,
         steps: publicSteps,
         quickUseDefinition: quickUseDefinition
-          ? toQuickUsePresentationDefinition(quickUseDefinition)
+          ? toQuickUsePresentationDefinition(quickUseDefinition, quickUseCandidates)
           : null,
         quickUseExampleUrls,
       },

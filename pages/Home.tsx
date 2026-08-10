@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Heart, Share2, Crown, Plus, Check, Loader2, Workflow, Play } from 'lucide-react';
+import { Search, Heart, Share2, Crown, Plus, Check, Loader2, Workflow, Play, Eye } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 import { fetchPublishedTemplates } from '../utils/templatePublicApi';
 import { AuthGateModal } from '../components/AuthGateModal';
+import type { RealTemplateDetail } from '../utils/templateDetailApi';
+
+const TemplateExperienceModal = React.lazy(() => import('../components/template/TemplateExperienceModal').then((module) => ({
+  default: module.TemplateExperienceModal,
+})));
 
 const getHomeColumnCount = (): number => {
   if (typeof window === 'undefined') return 5;
@@ -166,22 +171,26 @@ const LazyWorkflowVideo = ({
 const TemplateCardItem: React.FC<{ 
   t: Template; 
   onClick: () => void; 
+  onView: () => void;
+  onUse: () => void;
   onAction: (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => void;
   user: any;
 }> = ({ 
   t, 
   onClick, 
+  onView,
+  onUse,
   onAction,
   user
 }) => {
   const handleUseWorkflow = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onClick();
+    onUse();
   };
 
   const handleViewDetails = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onClick();
+    onView();
   };
 
   return (
@@ -216,7 +225,7 @@ const TemplateCardItem: React.FC<{
           <div className="absolute top-3 left-3 z-20">
             <span className="flex items-center gap-1 text-[10px] font-medium text-purple-200 bg-purple-500/20 px-1.5 py-0.5 rounded backdrop-blur-md border border-purple-500/30 uppercase">
               <Workflow className="w-3 h-3" />
-              Workflow
+              {t.isQuickUseTemplate ? 'Template' : 'Workflow'}
             </span>
           </div>
         )}
@@ -270,12 +279,19 @@ const TemplateCardItem: React.FC<{
               <span className="text-white/60 text-[10px] mt-0.5">{t.usesCount} uses</span>
             </div>
 
-            <button 
-              onClick={handleUseWorkflow}
-              className="flex items-center justify-center w-10 h-10 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-full text-[11px] font-bold transition-all shadow-lg shadow-purple-500/25 pointer-events-auto hover:scale-105 shrink-0 opacity-0 group-hover:opacity-100"
-            >
-              Use
-            </button>
+            {t.isQuickUseTemplate ? (
+              <div className="flex gap-2 opacity-0 transition group-hover:opacity-100">
+                <button onClick={handleViewDetails} className="flex items-center gap-1 rounded-lg bg-white/90 px-2.5 py-2 text-[11px] font-semibold text-slate-900 shadow hover:bg-white"><Eye className="h-3.5 w-3.5" />View</button>
+                <button onClick={handleUseWorkflow} className="rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 px-3 py-2 text-[11px] font-bold text-white shadow-lg shadow-purple-500/25 hover:scale-105">Use</button>
+              </div>
+            ) : (
+              <button
+                onClick={handleViewDetails}
+                className="flex items-center justify-center w-10 h-10 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-full text-[11px] font-bold transition-all shadow-lg shadow-purple-500/25 pointer-events-auto hover:scale-105 shrink-0 opacity-0 group-hover:opacity-100"
+              >
+                View
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -300,6 +316,10 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const [activeCategory, setActiveCategory] = useState(browsing.category);
   const [selectedTemplateForModal, setSelectedTemplateForModal] = useState<Template | null>(null);
   const [modalType, setModalType] = useState<'share' | 'collect' | 'upgrade' | 'auth' | null>(null);
+  const [experienceMode, setExperienceMode] = useState<'view' | 'use' | null>(null);
+  const [experienceDetail, setExperienceDetail] = useState<RealTemplateDetail | null>(null);
+  const [experienceLoading, setExperienceLoading] = useState(false);
+  const [experienceError, setExperienceError] = useState<string | null>(null);
   
   // Tag Filter State
   const [activeScene, setActiveScene] = useState<string>('All');
@@ -318,6 +338,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const [columnCount, setColumnCount] = useState(getHomeColumnCount);
   const lastScrollY = useRef(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+  const experienceRequestRef = useRef(0);
 
   // Filter Options
   const categories = ['All', 'Cosmetic', 'Candle', 'Bath Body', 'Sports', 'Baby', 'Mens Care'];
@@ -354,6 +375,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       width: row.width || 896,
       height: row.height || 1344,
       isWorkflow,
+      isQuickUseTemplate: Boolean(row.has_quick_use),
       authorName: row.creator_id === user?.id
         ? user.name
         : row.author_name || (row.creator_id ? 'Lazora creator' : 'Lazora'),
@@ -515,6 +537,62 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
         initialImageSource: { templateId: t.id, templateName: t.name }
       }
     });
+  };
+
+  const canUseProTemplate = (template: Template): boolean => {
+    if (!template.isPro) return true;
+    return user?.plan === 'Pro' || user?.plan === 'Enterprise';
+  };
+
+  const openTemplateExperience = (template: Template, mode: 'view' | 'use') => {
+    if (!template.isQuickUseTemplate) {
+      handleTemplateClick(template);
+      return;
+    }
+    if (mode === 'use' && !canUseProTemplate(template)) {
+      setSelectedTemplateForModal(template);
+      setModalType('upgrade');
+      return;
+    }
+    setSelectedTemplateForModal(template);
+    setExperienceMode(mode);
+    setExperienceDetail(null);
+    setExperienceError(null);
+    setExperienceLoading(true);
+    const requestId = experienceRequestRef.current + 1;
+    experienceRequestRef.current = requestId;
+    saveBrowsingState({ scrollY: window.scrollY, searchQuery: search, category: activeCategory, lastViewedTemplate: template.id });
+    void import('../utils/templateDetailApi')
+      .then(({ fetchPublicTemplateDetail }) => fetchPublicTemplateDetail(template.slug || template.id))
+      .then((detail) => {
+        if (experienceRequestRef.current === requestId) setExperienceDetail(detail);
+      })
+      .catch((detailError) => {
+        if (experienceRequestRef.current === requestId) {
+          setExperienceError(detailError instanceof Error ? detailError.message : 'Could not load this template.');
+        }
+      })
+      .finally(() => {
+        if (experienceRequestRef.current === requestId) setExperienceLoading(false);
+      });
+  };
+
+  const closeTemplateExperience = () => {
+    experienceRequestRef.current += 1;
+    setExperienceMode(null);
+    setExperienceDetail(null);
+    setExperienceError(null);
+    setExperienceLoading(false);
+  };
+
+  const switchExperienceToUse = () => {
+    if (!selectedTemplateForModal) return;
+    if (!canUseProTemplate(selectedTemplateForModal)) {
+      closeTemplateExperience();
+      setModalType('upgrade');
+      return;
+    }
+    setExperienceMode('use');
   };
 
   const handleAction = (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => {
@@ -746,7 +824,11 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
                 <TemplateCardItem
                   key={t.id}
                   t={t}
-                  onClick={() => handleTemplateClick(t)}
+                  onClick={() => t.isQuickUseTemplate
+                    ? openTemplateExperience(t, 'view')
+                    : handleTemplateClick(t)}
+                  onView={() => openTemplateExperience(t, 'view')}
+                  onUse={() => openTemplateExperience(t, 'use')}
                   onAction={handleAction}
                   user={user}
                 />
@@ -850,6 +932,20 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
              </div>
          </div>
       </Modal>
+      {experienceMode && (
+        <React.Suspense fallback={null}>
+          <TemplateExperienceModal
+            isOpen
+            mode={experienceMode}
+            detail={experienceDetail}
+            loading={experienceLoading}
+            error={experienceError}
+            generationAvailable={false}
+            onClose={closeTemplateExperience}
+            onUse={switchExperienceToUse}
+          />
+        </React.Suspense>
+      )}
       <AuthGateModal
         isOpen={modalType === 'auth'}
         onClose={() => setModalType(null)}

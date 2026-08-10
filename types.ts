@@ -36,6 +36,7 @@ export interface Template {
   holiday?: string;
   videoUrl?: string;
   isWorkflow?: boolean;
+  isQuickUseTemplate?: boolean;
   authorName?: string;
   usesCount?: number;
   publishedAt?: string;

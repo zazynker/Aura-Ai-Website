@@ -56,11 +56,37 @@ export function createQuickUseExampleAssetKey(
 
 export function toQuickUsePresentationDefinition(
   definition: QuickUseDefinition,
+  candidates: QuickUseCandidate[],
 ): QuickUsePresentationDefinition {
+  const exposedIds = new Set(definition.blocks.map((block) => block.candidateId));
   const presentation: QuickUsePresentationDefinition = {
     schemaVersion: definition.schemaVersion,
     title: definition.title,
     blocks: definition.blocks.map((block) => ({ ...block })),
+    candidates: candidates
+      .filter((candidate) => exposedIds.has(candidate.id))
+      .map((candidate) => {
+        const safeCandidate: QuickUsePresentationDefinition['candidates'][number] = {
+          id: candidate.id,
+          kind: candidate.kind,
+          label: candidate.label,
+          required: candidate.required,
+        };
+        if (candidate.kind === 'material') {
+          safeCandidate.assetType = candidate.assetType;
+          safeCandidate.acceptedMimeTypes = [...candidate.acceptedMimeTypes];
+          safeCandidate.maxCount = candidate.maxCount;
+        }
+        if (candidate.kind === 'setting') {
+          safeCandidate.parameterType = candidate.parameterType;
+          if (candidate.enumValues) safeCandidate.enumValues = [...candidate.enumValues];
+          if (candidate.min !== undefined) safeCandidate.min = candidate.min;
+          if (candidate.max !== undefined) safeCandidate.max = candidate.max;
+          if (candidate.step !== undefined) safeCandidate.step = candidate.step;
+          if (candidate.maxLength !== undefined) safeCandidate.maxLength = candidate.maxLength;
+        }
+        return safeCandidate;
+      }),
   };
   if (definition.subtitle !== undefined) {
     presentation.subtitle = definition.subtitle;

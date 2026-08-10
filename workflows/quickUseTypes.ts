@@ -167,10 +167,23 @@ export interface QuickUseDefinition {
   blocks: QuickUseBlockDefinition[];
 }
 
+export type QuickUsePresentationCandidate = Pick<
+  QuickUseCandidate,
+  'id' | 'kind' | 'label' | 'required'
+> & Partial<Pick<
+  QuickUseMaterialCandidate,
+  'assetType' | 'acceptedMimeTypes' | 'maxCount'
+>> & Partial<Pick<
+  QuickUseSettingCandidate,
+  'parameterType' | 'enumValues' | 'min' | 'max' | 'step' | 'maxLength'
+>>;
+
 export type QuickUsePresentationDefinition = Pick<
   QuickUseDefinition,
   'schemaVersion' | 'title' | 'subtitle' | 'blocks'
->;
+> & {
+  candidates: QuickUsePresentationCandidate[];
+};
 
 export interface QuickUseValidationIssue {
   path: string;

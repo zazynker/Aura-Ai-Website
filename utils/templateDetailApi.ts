@@ -6,6 +6,7 @@ import type {
 } from '../workflows/quickUseTypes';
 import {
   QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX,
+  deriveQuickUseCandidates,
   toQuickUsePresentationDefinition,
 } from '../workflows/quickUseCandidates';
 import { validateQuickUseDefinition } from '../workflows/quickUseValidators';
@@ -196,6 +197,9 @@ export async function fetchTemplateDetail(
       throw new Error('This template has an invalid Quick Use definition.');
     }
   }
+  const quickUseCandidates = quickUseDefinition
+    ? deriveQuickUseCandidates(version.workflow, quickUseDefinition).candidates
+    : [];
 
   const assets = (assetData || []) as AssetRow[];
   const urls = await createReadableUrls(assets);
@@ -363,7 +367,7 @@ export async function fetchTemplateDetail(
     },
     steps,
     quickUseDefinition: quickUseDefinition
-      ? toQuickUsePresentationDefinition(quickUseDefinition)
+      ? toQuickUsePresentationDefinition(quickUseDefinition, quickUseCandidates)
       : null,
     quickUseExampleUrls,
   };
