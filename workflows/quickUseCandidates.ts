@@ -15,11 +15,14 @@ import type {
   QuickUseMaterialCandidate,
   QuickUsePromptTemplateDefinition,
   QuickUsePromptVariableCandidate,
+  QuickUsePresentationDefinition,
   QuickUseSettingCandidate,
   QuickUseValidationIssue,
 } from './quickUseTypes';
 
 const PROMPT_VARIABLE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+
+export const QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX = 'quick-use-example:';
 
 type QuickUseCandidateSource = Pick<
   QuickUseDefinition,
@@ -43,6 +46,26 @@ export function createQuickUseCandidateId(
 
 export function getQuickUsePromptVariableToken(variableKey: string): string {
   return `{{quick_use.${variableKey}}}`;
+}
+
+export function createQuickUseExampleAssetKey(
+  candidateId: QuickUseCandidateId,
+): string {
+  return `${QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX}${candidateId}`;
+}
+
+export function toQuickUsePresentationDefinition(
+  definition: QuickUseDefinition,
+): QuickUsePresentationDefinition {
+  const presentation: QuickUsePresentationDefinition = {
+    schemaVersion: definition.schemaVersion,
+    title: definition.title,
+    blocks: definition.blocks.map((block) => ({ ...block })),
+  };
+  if (definition.subtitle !== undefined) {
+    presentation.subtitle = definition.subtitle;
+  }
+  return presentation;
 }
 
 export function renderQuickUsePromptTemplateDefaults(

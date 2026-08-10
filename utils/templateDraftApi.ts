@@ -1,4 +1,7 @@
 import type { WorkflowDefinition } from '../workflows/types';
+import type { QuickUseDefinition } from '../workflows/quickUseTypes';
+import { QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX } from '../workflows/quickUseCandidates';
+import { validateQuickUseDefinition } from '../workflows/quickUseValidators';
 import {
   convertAndValidateBuilderWorkflow,
   type BuilderDraftStep,
@@ -25,6 +28,7 @@ export interface TemplateDraftIdentity extends TemplateStorageIdentity {
 export type PersistedMaterialMap = Record<string, UploadedTemplateObject>;
 export type PersistedResultMap = Record<string, UploadedTemplateObject>;
 export type PersistedResultPosterMap = Record<string, UploadedTemplateObject>;
+export type PersistedQuickUseExampleMap = Record<string, UploadedTemplateObject>;
 
 export interface SaveTemplateDraftInput {
   identity?: TemplateDraftIdentity | null;
@@ -47,6 +51,9 @@ export interface SaveTemplateDraftInput {
   persistedResultPosters: PersistedResultPosterMap;
   materialFiles: Record<string, File>;
   persistedMaterials: PersistedMaterialMap;
+  quickUseDefinition?: QuickUseDefinition | null;
+  quickUseExampleFiles?: Record<string, File>;
+  persistedQuickUseExamples?: PersistedQuickUseExampleMap;
 }
 
 export interface SaveTemplateDraftResult {
@@ -58,6 +65,8 @@ export interface SaveTemplateDraftResult {
   resultPosters: PersistedResultPosterMap;
   materials: PersistedMaterialMap;
   materialAssetIds: Record<string, string>;
+  quickUseDefinition: QuickUseDefinition | null;
+  quickUseExamples: PersistedQuickUseExampleMap;
 }
 
 export interface SubmitTemplateForReviewResult {
@@ -83,6 +92,9 @@ export interface LoadTemplateDraftResult {
   results: PersistedResultMap;
   resultPosters: PersistedResultPosterMap;
   materials: PersistedMaterialMap;
+  quickUseDefinition: QuickUseDefinition | null;
+  quickUseExamples: PersistedQuickUseExampleMap;
+  quickUseExampleUrls: Record<string, string>;
 }
 
 interface ExistingAssetRow {
@@ -155,6 +167,38 @@ const VIDEO_FEATURES = new Set<BuilderFeatureType>([
   'Image Lip Sync',
   'Video Lip Sync',
 ]);
+
+interface QuickUseMediaExampleBinding {
+  assetKey: string;
+  assetType: 'image' | 'video' | 'audio';
+}
+
+function assertValidQuickUseDefinitionForWorkflow(
+  workflow: WorkflowDefinition,
+  definition: QuickUseDefinition | null | undefined,
+): void {
+  if (definition === null || definition === undefined) return;
+  const validation = validateQuickUseDefinition(workflow, definition);
+  if (!validation.valid) {
+    throw new Error(
+      validation.issues[0]?.message || 'The Quick Use definition is invalid.',
+    );
+  }
+}
+
+function getQuickUseMediaExamples(
+  definition: QuickUseDefinition | null | undefined,
+): QuickUseMediaExampleBinding[] {
+  if (!definition) return [];
+  return definition.blocks.flatMap((block) => (
+    block.example?.kind === 'media'
+      ? [{
+          assetKey: block.example.assetKey,
+          assetType: block.example.assetType,
+        }]
+      : []
+  ));
+}
 
 const readNumberParameter = (
   parameters: Record<string, unknown>,
@@ -312,7 +356,7 @@ async function ensureDraftRows(
     if (fallbackError) throw new Error(`Could not update draft metadata: ${fallbackError.message}`);
   }
 
-  const mutableVersionPayload = {
+  const mutableVersionPayload: Record<string, unknown> = {
     schema_version: input.workflow.schemaVersion,
     workflow: input.workflow,
     change_summary: 'Builder draft save',
@@ -323,6 +367,9 @@ async function ensureDraftRows(
     image_url: durableFinalResultUrl,
     updated_at: new Date().toISOString(),
   };
+  if (input.quickUseDefinition !== undefined) {
+    mutableVersionPayload.quick_use_definition = input.quickUseDefinition;
+  }
 
   if (!input.identity) {
     const { error: versionError } = await supabase.from('template_versions').insert({
@@ -365,7 +412,9 @@ async function ensureDraftRows(
 async function replaceAssetRows(
   identity: TemplateDraftIdentity,
   rows: AssetInsertRow[],
-): Promise<{ previous: ExistingAssetRow[]; current: Array<{ id: string; asset_key: string }> }> {
+  preservedAssetKeys = new Set<string>(),
+  preserveAllQuickUseExamples = false,
+): Promise<{ previous: ExistingAssetRow[]; current: SavedAssetRow[] }> {
   const { data: previous, error: readError } = await supabase
     .from('template_assets')
     .select('id,asset_key,storage_bucket,storage_path')
@@ -381,7 +430,16 @@ async function replaceAssetRows(
   }
 
   const activeKeys = new Set(rows.map((row) => row.asset_key));
-  const stale = (previous || []).filter((row) => !activeKeys.has(row.asset_key));
+  const stale = (previous || []).filter(
+    (row) => (
+      !activeKeys.has(row.asset_key)
+      && !preservedAssetKeys.has(row.asset_key)
+      && !(
+        preserveAllQuickUseExamples
+        && row.asset_key.startsWith(QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX)
+      )
+    ),
+  );
   if (stale.length > 0) {
     const { error: deleteError } = await supabase
       .from('template_assets')
@@ -391,13 +449,13 @@ async function replaceAssetRows(
   }
   const { data: current, error: currentError } = await supabase
     .from('template_assets')
-    .select('id,asset_key')
+    .select('id,asset_key,asset_type,source_kind,generation_id,storage_bucket,storage_path,public_url,mime_type,byte_size,width,height,duration_seconds,is_reusable')
     .eq('template_id', identity.templateId)
     .eq('version_id', identity.versionId);
   if (currentError) throw new Error(`Could not verify saved draft assets: ${currentError.message}`);
   return {
     previous: (previous || []) as ExistingAssetRow[],
-    current: (current || []) as Array<{ id: string; asset_key: string }>,
+    current: (current || []) as SavedAssetRow[],
   };
 }
 
@@ -438,6 +496,8 @@ export async function saveTemplateDraft(
     throw new Error('This draft belongs to a different account.');
   }
 
+  assertValidQuickUseDefinitionForWorkflow(input.workflow, input.quickUseDefinition);
+
   await ensureDraftRows(identity, input);
 
   let cover = input.persistedCover;
@@ -448,6 +508,10 @@ export async function saveTemplateDraft(
   const resultUploads: PersistedResultMap = { ...input.persistedResults };
   const resultPosterUploads: PersistedResultPosterMap = { ...input.persistedResultPosters };
   const materialUploads: PersistedMaterialMap = { ...input.persistedMaterials };
+  const quickUseExampleUploads: PersistedQuickUseExampleMap = {
+    ...(input.persistedQuickUseExamples || {}),
+  };
+  const quickUseMediaExamples = getQuickUseMediaExamples(input.quickUseDefinition);
   const newlyUploaded: Array<{ bucket: string; path: string }> = [];
   let assetPersistenceStarted = false;
 
@@ -520,6 +584,19 @@ export async function saveTemplateDraft(
         delete resultPosterUploads[step.id];
         newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
       }
+    }
+
+    for (const example of quickUseMediaExamples) {
+      const file = input.quickUseExampleFiles?.[example.assetKey];
+      if (!file) continue;
+      const uploaded = await uploadTemplateMaterial(
+        identity,
+        file,
+        example.assetType,
+        example.assetKey,
+      );
+      quickUseExampleUploads[example.assetKey] = uploaded;
+      newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
     }
 
     for (const step of input.steps) {
@@ -684,8 +761,38 @@ export async function saveTemplateDraft(
       });
     });
 
+    for (const example of quickUseMediaExamples) {
+      const uploaded = quickUseExampleUploads[example.assetKey];
+      if (!uploaded) continue;
+      rows.push(
+        uploadRow(
+          identity,
+          input.userId,
+          example.assetKey,
+          example.assetType,
+          uploaded,
+          sortOrder++,
+          false,
+        ),
+      );
+    }
+
     assetPersistenceStarted = true;
-    const { previous, current } = await replaceAssetRows(identity, rows);
+    const preservedQuickUseExampleKeys = new Set(
+      quickUseMediaExamples.map((example) => example.assetKey),
+    );
+    const { previous, current } = await replaceAssetRows(
+      identity,
+      rows,
+      preservedQuickUseExampleKeys,
+      input.quickUseDefinition === undefined,
+    );
+    const currentAssetKeys = new Set(current.map((asset) => asset.asset_key));
+    for (const example of quickUseMediaExamples) {
+      if (!currentAssetKeys.has(example.assetKey)) {
+        throw new Error(`Quick Use example asset is missing: ${example.assetKey}.`);
+      }
+    }
     const assetIdByKey = Object.fromEntries(
       current.map((asset) => [asset.asset_key, asset.id]),
     );
@@ -708,13 +815,32 @@ export async function saveTemplateDraft(
         'Saved assets could not be linked to the workflow.',
       );
     }
-    const { error: workflowLinkError } = await supabase
+    assertValidQuickUseDefinitionForWorkflow(
+      boundWorkflow.workflow,
+      input.quickUseDefinition,
+    );
+    const versionLinkPayload: Record<string, unknown> = {
+      workflow: boundWorkflow.workflow,
+    };
+    if (input.quickUseDefinition !== undefined) {
+      versionLinkPayload.quick_use_definition = input.quickUseDefinition;
+    }
+    const { data: savedVersion, error: workflowLinkError } = await supabase
       .from('template_versions')
-      .update({ workflow: boundWorkflow.workflow })
-      .eq('id', identity.versionId);
+      .update(versionLinkPayload)
+      .eq('id', identity.versionId)
+      .select('quick_use_definition')
+      .single();
     if (workflowLinkError) {
       throw new Error(`Could not link saved assets to the workflow: ${workflowLinkError.message}`);
     }
+    const savedQuickUseDefinition = savedVersion.quick_use_definition == null
+      ? null
+      : savedVersion.quick_use_definition as QuickUseDefinition;
+    assertValidQuickUseDefinitionForWorkflow(
+      boundWorkflow.workflow,
+      savedQuickUseDefinition,
+    );
 
     if (cover) {
       const coverMetadata = {
@@ -753,6 +879,22 @@ export async function saveTemplateDraft(
       resultPosters: resultPosterUploads,
       materials: materialUploads,
       materialAssetIds,
+      quickUseDefinition: savedQuickUseDefinition,
+      quickUseExamples: Object.fromEntries(
+        current.flatMap((asset) => {
+          if (
+            !asset.asset_key.startsWith(QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX)
+            || (
+              input.quickUseDefinition !== undefined
+              && !preservedQuickUseExampleKeys.has(asset.asset_key)
+            )
+          ) {
+            return [];
+          }
+          const stored = savedObject(asset);
+          return stored ? [[asset.asset_key, stored] as const] : [];
+        }),
+      ),
     };
   } catch (error) {
     if (assetPersistenceStarted) throw error;
@@ -833,7 +975,7 @@ export async function loadTemplateDraft(
     await Promise.all([
       supabase
         .from('template_versions')
-        .select('id,version_number,workflow,name,display_name,description,cover_type,cover_url')
+        .select('id,version_number,workflow,quick_use_definition,name,display_name,description,cover_type,cover_url')
         .eq('id', editableVersionId)
         .eq('template_id', templateId)
         .single(),
@@ -857,10 +999,32 @@ export async function loadTemplateDraft(
   if (!workflow || !Array.isArray(workflow.steps)) {
     throw new Error('The saved workflow has an invalid format.');
   }
+  const quickUseDefinition = version.quick_use_definition == null
+    ? null
+    : version.quick_use_definition as QuickUseDefinition;
+  assertValidQuickUseDefinitionForWorkflow(workflow, quickUseDefinition);
 
   const persistedMaterials: PersistedMaterialMap = {};
   const persistedResults: PersistedResultMap = {};
   const persistedResultPosters: PersistedResultPosterMap = {};
+  const persistedQuickUseExamples: PersistedQuickUseExampleMap = {};
+  const quickUseExampleUrls: Record<string, string> = {};
+  assets
+    .filter((asset) => asset.asset_key.startsWith(QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX))
+    .forEach((asset) => {
+      if (asset.source_kind === 'upload') {
+        const stored = savedObject(asset);
+        if (stored) persistedQuickUseExamples[asset.asset_key] = stored;
+      }
+      const url = urls.get(asset.id) || asset.public_url;
+      if (url) quickUseExampleUrls[asset.asset_key] = url;
+    });
+
+  for (const example of getQuickUseMediaExamples(quickUseDefinition)) {
+    if (!quickUseExampleUrls[example.assetKey]) {
+      throw new Error(`The saved Quick Use example asset is missing: ${example.assetKey}.`);
+    }
+  }
   const steps: BuilderDraftStep[] = workflow.steps.map((workflowStep, stepIndex) => {
     const feature = CAPABILITY_TO_FEATURE[workflowStep.capability];
     if (!feature) {
@@ -1012,6 +1176,9 @@ export async function loadTemplateDraft(
     results: persistedResults,
     resultPosters: persistedResultPosters,
     materials: persistedMaterials,
+    quickUseDefinition,
+    quickUseExamples: persistedQuickUseExamples,
+    quickUseExampleUrls,
   };
 }
 

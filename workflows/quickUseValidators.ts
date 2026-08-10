@@ -1,4 +1,5 @@
 import {
+  createQuickUseExampleAssetKey,
   deriveQuickUseCandidates,
   getSuggestedQuickUseControl,
 } from './quickUseCandidates';
@@ -237,8 +238,8 @@ function validateExampleShape(
     if (!['image', 'video', 'audio'].includes(String(value.assetType))) {
       issues.push({ path: `${path}.assetType`, code: 'invalid_asset_type', message: 'Media example asset type is invalid.' });
     }
-    if (typeof value.url !== 'string' || !value.url) {
-      issues.push({ path: `${path}.url`, code: 'invalid_url', message: 'Media example URL is required.' });
+    if (typeof value.assetKey !== 'string' || !value.assetKey) {
+      issues.push({ path: `${path}.assetKey`, code: 'invalid_asset_key', message: 'Media example asset key is required.' });
     }
     return;
   }
@@ -290,6 +291,16 @@ function validateBlocks(
       });
     }
     if (block.primary) primaryCount += 1;
+    if (
+      block.example?.kind === 'media'
+      && block.example.assetKey !== createQuickUseExampleAssetKey(block.candidateId)
+    ) {
+      issues.push({
+        path: `${path}.example.assetKey`,
+        code: 'unstable_example_asset_key',
+        message: 'Media example asset key must be derived from the block candidate id.',
+      });
+    }
     validateBlockDefault(block, candidate, path, issues);
   });
 

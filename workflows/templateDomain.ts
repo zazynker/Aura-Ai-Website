@@ -1,4 +1,5 @@
 import type { WorkflowDefinition } from './types';
+import type { QuickUseDefinition } from './quickUseTypes';
 
 export type TemplateDatabaseStatus =
   | 'draft'
@@ -69,6 +70,7 @@ export interface TemplateVersionRow {
   version_number: number;
   schema_version: number;
   workflow: WorkflowDefinition;
+  quick_use_definition: QuickUseDefinition | null;
   change_summary: string | null;
   created_by: string | null;
   created_at: string;

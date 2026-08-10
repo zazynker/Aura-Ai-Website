@@ -137,7 +137,7 @@ export type QuickUseExampleDefinition =
   | {
       kind: 'media';
       assetType: WorkflowAssetType;
-      url: string;
+      assetKey: string;
     };
 
 /**
@@ -166,6 +166,11 @@ export interface QuickUseDefinition {
   promptTemplates: QuickUsePromptTemplateDefinition[];
   blocks: QuickUseBlockDefinition[];
 }
+
+export type QuickUsePresentationDefinition = Pick<
+  QuickUseDefinition,
+  'schemaVersion' | 'title' | 'subtitle' | 'blocks'
+>;
 
 export interface QuickUseValidationIssue {
   path: string;

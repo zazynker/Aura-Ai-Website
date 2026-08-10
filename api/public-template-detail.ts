@@ -1,5 +1,11 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { QuickUseDefinition } from '../workflows/quickUseTypes';
+import {
+  QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX,
+  toQuickUsePresentationDefinition,
+} from '../workflows/quickUseCandidates';
+import { validateQuickUseDefinition } from '../workflows/quickUseValidators';
 
 export const config = { maxDuration: 30 };
 
@@ -129,7 +135,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await Promise.all([
         supabase
           .from('template_versions')
-          .select('id,workflow')
+          .select('id,workflow,quick_use_definition')
           .eq('id', template.current_version_id)
           .eq('template_id', template.id)
           .maybeSingle(),
@@ -146,6 +152,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const workflow = version.workflow as { steps?: WorkflowStep[] };
     const steps = Array.isArray(workflow.steps) ? workflow.steps : [];
     if (steps.length === 0) return errorResponse(res, 404, 'This template has no workflow steps.');
+    const quickUseDefinition = version.quick_use_definition == null
+      ? null
+      : version.quick_use_definition as QuickUseDefinition;
+    if (quickUseDefinition) {
+      const validation = validateQuickUseDefinition(version.workflow, quickUseDefinition);
+      if (!validation.valid) {
+        return errorResponse(res, 500, 'The published Quick Use definition is invalid.');
+      }
+    }
 
     const assets = (assetData || []) as AssetRow[];
     const assetByKey = new Map(assets.map((asset) => [asset.asset_key, asset]));
@@ -158,11 +173,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       || asset.asset_key === 'step-1-result'
       || asset.asset_key === 'step-1-result-thumbnail'
       || /^step-\d+-result(?:-thumbnail)?$/.test(asset.asset_key)
+      || asset.asset_key.startsWith(QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX)
     ));
     const urlEntries = await Promise.all(
       relevantAssets.map(async (asset) => [asset.id, await readableUrl(supabase, asset)] as const),
     );
     const urls = new Map(urlEntries.filter((entry): entry is [string, string] => Boolean(entry[1])));
+    const quickUseExampleUrls = Object.fromEntries(
+      relevantAssets
+        .filter((asset) => asset.asset_key.startsWith(QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX))
+        .map((asset) => [asset.asset_key, urls.get(asset.id)])
+        .filter((entry): entry is [string, string] => Boolean(entry[1])),
+    );
 
     const generationIds = [...new Set(
       relevantAssets.map((asset) => asset.generation_id).filter((id): id is string => Boolean(id)),
@@ -305,6 +327,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         description: template.description || '',
         finalResult,
         steps: publicSteps,
+        quickUseDefinition: quickUseDefinition
+          ? toQuickUsePresentationDefinition(quickUseDefinition)
+          : null,
+        quickUseExampleUrls,
       },
     });
   } catch (error) {

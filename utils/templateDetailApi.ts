@@ -1,5 +1,14 @@
 import { supabase } from './supabase';
 import { fetchPublicProfiles } from './profileApi';
+import type {
+  QuickUseDefinition,
+  QuickUsePresentationDefinition,
+} from '../workflows/quickUseTypes';
+import {
+  QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX,
+  toQuickUsePresentationDefinition,
+} from '../workflows/quickUseCandidates';
+import { validateQuickUseDefinition } from '../workflows/quickUseValidators';
 
 export interface TemplateDetailMaterial {
   id: string;
@@ -41,6 +50,8 @@ export interface RealTemplateDetail {
   description: string;
   finalResult: TemplateDetailResult;
   steps: TemplateDetailStep[];
+  quickUseDefinition: QuickUsePresentationDefinition | null;
+  quickUseExampleUrls: Record<string, string>;
 }
 
 interface AssetRow {
@@ -146,7 +157,7 @@ export async function fetchTemplateDetail(
     await Promise.all([
       supabase
         .from('template_versions')
-        .select('id,workflow')
+        .select('id,workflow,quick_use_definition')
         .eq('id', selectedVersionId)
         .eq('template_id', template.id)
         .single(),
@@ -176,9 +187,24 @@ export async function fetchTemplateDetail(
   if (!Array.isArray(workflow?.steps) || workflow.steps.length === 0) {
     throw new Error('This template has no workflow steps.');
   }
+  const quickUseDefinition = version.quick_use_definition == null
+    ? null
+    : version.quick_use_definition as QuickUseDefinition;
+  if (quickUseDefinition) {
+    const validation = validateQuickUseDefinition(version.workflow, quickUseDefinition);
+    if (!validation.valid) {
+      throw new Error('This template has an invalid Quick Use definition.');
+    }
+  }
 
   const assets = (assetData || []) as AssetRow[];
   const urls = await createReadableUrls(assets);
+  const quickUseExampleUrls = Object.fromEntries(
+    assets
+      .filter((asset) => asset.asset_key.startsWith(QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX))
+      .map((asset) => [asset.asset_key, urls.get(asset.id)])
+      .filter((entry): entry is [string, string] => Boolean(entry[1])),
+  );
   const generationIds = Array.from(new Set(
     assets
       .map((asset) => asset.generation_id)
@@ -336,5 +362,9 @@ export async function fetchTemplateDetail(
       thumbnail: coverThumbnail,
     },
     steps,
+    quickUseDefinition: quickUseDefinition
+      ? toQuickUsePresentationDefinition(quickUseDefinition)
+      : null,
+    quickUseExampleUrls,
   };
 }
