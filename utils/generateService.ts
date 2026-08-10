@@ -4,6 +4,7 @@ import { supabase } from "./supabase";
 import { FAKE_VIDEO_DELAY_MS, takeNextFakeVideo } from "./fakeVideoQueue";
 import {
   beginActiveTemplateGeneration,
+  beginTemplateGeneration,
   failTemplateGeneration,
   type TemplateGenerationContext,
 } from "./templateRunGeneration";
@@ -34,6 +35,7 @@ export interface GenerateOptions {
     styleReferenceUrl?: string;
     omniReferenceUrl?: string;
   };
+  templateContext?: TemplateGenerationContext;
 }
 
 export interface GenerateResult {
@@ -266,6 +268,7 @@ export async function generateImages(
     quality = "medium",
     mjQuality,
     mjParams,
+    templateContext: explicitTemplateContext,
   } = options;
 
   console.log("=== generateImages called ===");
@@ -294,7 +297,9 @@ export async function generateImages(
   console.log("Image request ID:", requestId);
 
   try {
-    if (capability) {
+    if (explicitTemplateContext && capability) {
+      templateContext = await beginTemplateGeneration(explicitTemplateContext, capability);
+    } else if (capability) {
       templateContext = await beginActiveTemplateGeneration(capability);
     }
 
@@ -450,6 +455,8 @@ export interface VideoGenerateOptions {
   allowConcurrent?: boolean;
   clientJobId?: string;
   onJobSubmitted?: (job: PendingVideoJob) => void;
+  templateContext?: TemplateGenerationContext;
+  allowAdminDemo?: boolean;
 }
 
 export interface VideoGenerateResult {
@@ -720,6 +727,8 @@ export async function generateVideo(
     allowConcurrent = false,
     clientJobId,
     onJobSubmitted,
+    templateContext: explicitTemplateContext,
+    allowAdminDemo = true,
   } = options;
 
   console.log("=== generateVideo called ===");
@@ -729,7 +738,7 @@ export async function generateVideo(
   // === Admin Demo Mode: serve the next uploaded video instead of calling the real API ===
   // The queue is only fillable from the hidden admin entry on the Video page.
   // No Fal request, no credit deduction, no pending job registered.
-  const fakeVideo = takeNextFakeVideo();
+  const fakeVideo = allowAdminDemo ? takeNextFakeVideo() : null;
   if (fakeVideo) {
     console.log("[generateVideo] Admin demo mode: returning uploaded video, real API skipped:", fakeVideo.name);
     await new Promise((resolve) => setTimeout(resolve, FAKE_VIDEO_DELAY_MS));
@@ -776,9 +785,10 @@ export async function generateVideo(
       };
     }
 
-    templateContext = await beginActiveTemplateGeneration(
-      getVideoTemplateCapability({ mode, videoUrl }),
-    );
+    const generationCapability = getVideoTemplateCapability({ mode, videoUrl });
+    templateContext = explicitTemplateContext
+      ? await beginTemplateGeneration(explicitTemplateContext, generationCapability)
+      : await beginActiveTemplateGeneration(generationCapability);
 
     const submitResponse = await fetch("/api/generate-video", {
       method: "POST",

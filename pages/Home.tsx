@@ -8,6 +8,8 @@ import { Button } from '../components/ui/Button';
 import { fetchPublishedTemplates } from '../utils/templatePublicApi';
 import { AuthGateModal } from '../components/AuthGateModal';
 import type { RealTemplateDetail } from '../utils/templateDetailApi';
+import type { QuickUseInputValues } from '../components/template/TemplateExperienceModal';
+import type { QuickUseExecutionProgress } from '../utils/quickUseExecutor';
 
 const TemplateExperienceModal = React.lazy(() => import('../components/template/TemplateExperienceModal').then((module) => ({
   default: module.TemplateExperienceModal,
@@ -305,7 +307,7 @@ interface HomeProps {
 
 export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const navigate = useNavigate();
-  const { browsing, saveBrowsingState, addToast, user, collections, addToCollection, createCollection } = useStore();
+  const { browsing, saveBrowsingState, addToast, user, updateUser, collections, addToCollection, createCollection, refreshGenerations } = useStore();
   
   // State
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -320,6 +322,8 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const [experienceDetail, setExperienceDetail] = useState<RealTemplateDetail | null>(null);
   const [experienceLoading, setExperienceLoading] = useState(false);
   const [experienceError, setExperienceError] = useState<string | null>(null);
+  const [experienceMinimized, setExperienceMinimized] = useState(false);
+  const [executionProgress, setExecutionProgress] = useState<QuickUseExecutionProgress | null>(null);
   
   // Tag Filter State
   const [activeScene, setActiveScene] = useState<string>('All');
@@ -545,6 +549,11 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   };
 
   const openTemplateExperience = (template: Template, mode: 'view' | 'use') => {
+    if (executionProgress?.status === 'preparing' || executionProgress?.status === 'running') {
+      setExperienceMinimized(false);
+      addToast('info', 'Your current Template generation is still running.');
+      return;
+    }
     if (!template.isQuickUseTemplate) {
       handleTemplateClick(template);
       return;
@@ -559,6 +568,8 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
     setExperienceDetail(null);
     setExperienceError(null);
     setExperienceLoading(true);
+    setExperienceMinimized(false);
+    setExecutionProgress(null);
     const requestId = experienceRequestRef.current + 1;
     experienceRequestRef.current = requestId;
     saveBrowsingState({ scrollY: window.scrollY, searchQuery: search, category: activeCategory, lastViewedTemplate: template.id });
@@ -578,11 +589,17 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   };
 
   const closeTemplateExperience = () => {
+    if (executionProgress?.status === 'preparing' || executionProgress?.status === 'running') {
+      setExperienceMinimized(true);
+      return;
+    }
     experienceRequestRef.current += 1;
     setExperienceMode(null);
     setExperienceDetail(null);
     setExperienceError(null);
     setExperienceLoading(false);
+    setExperienceMinimized(false);
+    setExecutionProgress(null);
   };
 
   const switchExperienceToUse = () => {
@@ -593,6 +610,43 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       return;
     }
     setExperienceMode('use');
+  };
+
+  const handleQuickUseGenerate = async (values: QuickUseInputValues) => {
+    if (!user) {
+      setModalType('auth');
+      return;
+    }
+    if (!selectedTemplateForModal || !experienceDetail) return;
+    setExperienceError(null);
+    setExecutionProgress({
+      runId: 'starting',
+      status: 'preparing',
+      currentStep: 0,
+      totalSteps: experienceDetail.steps.length,
+    });
+    try {
+      const { executeQuickUseTemplate } = await import('../utils/quickUseExecutor');
+      await executeQuickUseTemplate({
+        templateId: selectedTemplateForModal.id,
+        templateName: selectedTemplateForModal.title,
+        userId: user.id,
+        userPlan: user.plan,
+        values: values as Parameters<typeof executeQuickUseTemplate>[0]['values'],
+        onProgress: setExecutionProgress,
+      });
+      const [creditsResult] = await Promise.all([
+        import('../utils/api').then(({ fetchUserCredits }) => fetchUserCredits()),
+        refreshGenerations(),
+      ]);
+      if (creditsResult.data) updateUser({ credits: creditsResult.data.credits });
+      addToast('success', 'Your Template result is ready.');
+    } catch (executionError) {
+      const message = executionError instanceof Error ? executionError.message : 'Template generation failed.';
+      setExperienceError(message);
+      addToast('error', message);
+      setExperienceMinimized(false);
+    }
   };
 
   const handleAction = (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => {
@@ -932,7 +986,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
              </div>
          </div>
       </Modal>
-      {experienceMode && (
+      {experienceMode && !experienceMinimized && (
         <React.Suspense fallback={null}>
           <TemplateExperienceModal
             isOpen
@@ -940,18 +994,38 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
             detail={experienceDetail}
             loading={experienceLoading}
             error={experienceError}
-            generationAvailable={false}
+            generationAvailable
+            execution={executionProgress}
             onClose={closeTemplateExperience}
             onUse={switchExperienceToUse}
+            onGenerate={handleQuickUseGenerate}
+            onMinimize={() => setExperienceMinimized(true)}
           />
         </React.Suspense>
+      )}
+      {experienceMode && experienceMinimized && executionProgress && (
+        <button
+          type="button"
+          onClick={() => setExperienceMinimized(false)}
+          className="fixed bottom-6 right-6 z-[70] flex min-w-72 items-center gap-3 rounded-2xl border border-white/20 bg-slate-950 px-4 py-3 text-left text-white shadow-2xl"
+        >
+          {executionProgress.status === 'completed'
+            ? <Check className="h-5 w-5 text-emerald-400" />
+            : executionProgress.status === 'failed'
+              ? <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
+              : <Loader2 className="h-5 w-5 animate-spin text-purple-400" />}
+          <span className="flex-1">
+            <span className="block text-sm font-semibold">{executionProgress.status === 'completed' ? 'Your result is ready' : executionProgress.status === 'failed' ? 'Generation needs attention' : 'Generating your Template'}</span>
+            <span className="block text-xs text-slate-400">{executionProgress.status === 'completed' ? 'View Result' : executionProgress.stepTitle || 'Preparing workflow'} · Expand</span>
+          </span>
+        </button>
       )}
       <AuthGateModal
         isOpen={modalType === 'auth'}
         onClose={() => setModalType(null)}
         destination="/"
-        title="Sign up to save templates"
-        description="Browsing and opening templates is free. Create an account only when you want to save one to a collection."
+        title="Sign up to use Lazora"
+        description="Browsing and previewing templates is free. Create an account when you are ready to save or generate."
       />
     </div>
   );

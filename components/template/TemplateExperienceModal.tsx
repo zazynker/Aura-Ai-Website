@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Loader2, Play, Upload } from 'lucide-react';
+import { Check, ChevronDown, Loader2, Minus, Play, Upload } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import type { RealTemplateDetail } from '../../utils/templateDetailApi';
@@ -9,6 +9,7 @@ import type {
   QuickUsePresentationCandidate,
   QuickUsePresentationDefinition,
 } from '../../workflows/quickUseTypes';
+import type { QuickUseExecutionProgress } from '../../utils/quickUseExecutor';
 
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
@@ -20,9 +21,11 @@ interface TemplateExperienceModalProps {
   loading: boolean;
   error: string | null;
   generationAvailable: boolean;
+  execution?: QuickUseExecutionProgress | null;
   onClose: () => void;
   onUse: () => void;
-  onGenerate?: (values: QuickUseInputValues) => void;
+  onGenerate?: (values: QuickUseInputValues) => void | Promise<void>;
+  onMinimize?: () => void;
 }
 
 export function validateQuickUseInputValues(
@@ -43,12 +46,14 @@ export function validateQuickUseInputValues(
 export const TemplateExperienceModal = ({
   detail,
   error,
+  execution,
   generationAvailable,
   isOpen,
   loading,
   mode,
   onClose,
   onGenerate,
+  onMinimize,
   onUse,
 }: TemplateExperienceModalProps) => {
   const [values, setValues] = useState<QuickUseInputValues>({});
@@ -89,10 +94,12 @@ export const TemplateExperienceModal = ({
       return;
     }
     setValidationError(null);
-    onGenerate(values);
+    void onGenerate(values);
   };
 
-  const footer = detail && !loading && !error
+  const isExecuting = execution?.status === 'preparing' || execution?.status === 'running';
+
+  const footer = detail && !loading && !error && !isExecuting && execution?.status !== 'completed'
     ? mode === 'view'
       ? (
           <div className="flex justify-end">
@@ -111,7 +118,7 @@ export const TemplateExperienceModal = ({
             <Button
               variant="gradient"
               className="w-full"
-              disabled={!generationAvailable || !definition?.blocks.length}
+              disabled={!generationAvailable || !definition?.blocks.length || isExecuting}
               onClick={handleGenerate}
             >
               Generate
@@ -148,6 +155,36 @@ export const TemplateExperienceModal = ({
             <div className="mt-3 grid grid-cols-3 gap-2">
               {gallery.map((result) => <React.Fragment key={result.url}><ResultMedia result={result} compact /></React.Fragment>)}
             </div>
+          </div>
+        </div>
+      ) : detail && execution?.status === 'completed' && execution.result ? (
+        <div className="mx-auto max-w-3xl text-center">
+          <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"><Check className="h-6 w-6" /></div>
+          <h2 className="text-2xl font-bold text-slate-950 dark:text-white">Your {execution.result.type} is ready</h2>
+          <div className="mt-6"><ExecutionResultMedia result={execution.result} /></div>
+        </div>
+      ) : detail && isExecuting ? (
+        <div className="mx-auto max-w-3xl">
+          <div className="flex items-start justify-between gap-4">
+            <div><div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Generating with {detail.name}</div><h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">Your workflow is running</h2></div>
+            {onMinimize && <Button variant="secondary" size="sm" onClick={onMinimize}><Minus className="mr-1 h-4 w-4" />Minimize</Button>}
+          </div>
+          <div className="mt-10 flex items-center overflow-x-auto pb-2">
+            {detail.steps.map((step, index) => {
+              const completed = index + 1 < (execution?.currentStep || 0);
+              const active = index + 1 === (execution?.currentStep || 0);
+              return (
+                <React.Fragment key={step.id}>
+                  {index > 0 && <div className={`h-0.5 min-w-10 flex-1 ${completed || active ? 'bg-purple-500' : 'bg-slate-200 dark:bg-slate-700'}`} />}
+                  <div className="min-w-32 text-center">
+                    <div className={`mx-auto flex h-10 w-10 items-center justify-center rounded-full border-2 ${completed ? 'border-emerald-500 bg-emerald-500 text-white' : active ? 'border-purple-500 bg-purple-50 text-purple-600 dark:bg-purple-500/10' : 'border-slate-200 text-slate-400 dark:border-slate-700'}`}>
+                      {completed ? <Check className="h-4 w-4" /> : active ? <Loader2 className="h-4 w-4 animate-spin" /> : index + 1}
+                    </div>
+                    <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{step.featureName}</div>
+                  </div>
+                </React.Fragment>
+              );
+            })}
           </div>
         </div>
       ) : detail && definition ? (
@@ -253,3 +290,11 @@ const ExampleMedia = ({ assetType, url }: { assetType: 'image' | 'video' | 'audi
   if (assetType === 'audio') return <audio src={url} className="w-full" controls />;
   return <img src={url} alt="Input example" className="max-h-48 w-full rounded-lg object-cover" />;
 };
+
+const ExecutionResultMedia = ({ result }: { result: { type: 'image' | 'video'; url: string } }) => (
+  <div className="flex min-h-80 items-center justify-center overflow-hidden rounded-2xl bg-slate-950">
+    {result.type === 'video'
+      ? <video src={result.url} className="max-h-[65vh] w-full object-contain" controls playsInline />
+      : <img src={result.url} alt="Generated result" className="max-h-[65vh] w-full object-contain" />}
+  </div>
+);

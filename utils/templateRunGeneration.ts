@@ -74,6 +74,17 @@ export const beginActiveTemplateGeneration = async (
   return context;
 };
 
+export const beginTemplateGeneration = async (
+  context: TemplateGenerationContext,
+  generationCapability: string,
+): Promise<TemplateGenerationContext> => {
+  if (!areTemplateCapabilitiesCompatible(context.templateCapability, generationCapability)) {
+    throw new Error('Generation capability does not match the Quick Use workflow step.');
+  }
+  await beginTemplateRunStep(context.templateRunId, context.templateStepId);
+  return context;
+};
+
 export const completeTemplateGeneration = async (
   context: TemplateGenerationContext | null | undefined,
   generationId: string,
