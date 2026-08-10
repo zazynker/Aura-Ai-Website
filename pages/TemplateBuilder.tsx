@@ -1173,6 +1173,12 @@ export const TemplateBuilder = () => {
     setShowPublishModal(true);
   };
 
+  const handleContinueToQuickUse = async () => {
+    const savedIdentity = await handleSaveDraft(false);
+    if (!savedIdentity) return;
+    navigate(`/admin/templates/${savedIdentity.templateId}/quick-use`);
+  };
+
   const handleSaveDraft = async (
     showSuccessToast = true,
   ): Promise<TemplateDraftIdentity | null> => {
@@ -1405,14 +1411,25 @@ export const TemplateBuilder = () => {
             >
               {saveState === 'saving' ? 'Saving...' : 'Save draft'}
             </Button>
-            <Button
-              variant="gradient"
-              size="sm"
-              onClick={handleOpenPublish}
-              disabled={draftLoadState === 'loading' || saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
-            >
-              {reviewState === 'submitted' ? 'Under review' : 'Submit for review'}
-            </Button>
+            {isAdminTemplateMode ? (
+              <Button
+                variant="gradient"
+                size="sm"
+                onClick={() => void handleContinueToQuickUse()}
+                disabled={draftLoadState === 'loading' || saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
+              >
+                Continue to Quick Use <ArrowRight className="ml-1.5 h-4 w-4" />
+              </Button>
+            ) : (
+              <Button
+                variant="gradient"
+                size="sm"
+                onClick={handleOpenPublish}
+                disabled={draftLoadState === 'loading' || saveState === 'saving' || reviewState === 'submitting' || reviewState === 'submitted'}
+              >
+                {reviewState === 'submitted' ? 'Under review' : 'Submit for review'}
+              </Button>
+            )}
           </div>
         </div>
       </div>

@@ -50,6 +50,7 @@ const AuthCallback = lazy(() => import('./pages/AuthCallback').then(m => ({ defa
 const ManageSubscription = lazy(() => import('./pages/ManageSubscription').then(m => ({ default: m.ManageSubscription })));
 
 const TemplateBuilder = lazy(() => import('./pages/TemplateBuilder').then(m => ({ default: m.TemplateBuilder })));
+const QuickUseBuilder = lazy(() => import('./pages/QuickUseBuilder').then(m => ({ default: m.QuickUseBuilder })));
 const TemplateDetail = lazy(() => import('./pages/TemplateDetail').then(m => ({ default: m.TemplateDetail })));
 
 // ============ 加载占位符 ============
@@ -154,8 +155,9 @@ const AppContent = () => {
   const isSubscriptionPage = location.pathname === '/subscription';
   const isVideoPage = location.pathname === '/video';
   const isBuilderPage = location.pathname === '/templates/create';
+  const isQuickUseBuilderPage = /^\/admin\/templates\/[^/]+\/quick-use$/.test(location.pathname);
   const isTemplateDetailPage = /^\/templates\/[^/]+$/.test(location.pathname);
-  const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage || isVideoPage || isBuilderPage || isTemplateDetailPage;
+  const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage || isVideoPage || isBuilderPage || isQuickUseBuilderPage || isTemplateDetailPage;
 
   React.useEffect(() => {
     if (authLoading || user || location.pathname !== '/') {
@@ -203,6 +205,10 @@ const AppContent = () => {
           <Route
             path="/templates/create"
             element={<TemplateBuilder />}
+          />
+          <Route
+            path="/admin/templates/:templateId/quick-use"
+            element={<QuickUseBuilder />}
           />
           <Route
             path="/templates/:templateId"
