@@ -5,6 +5,7 @@ import {
 import {
   QUICK_USE_SCHEMA_VERSION,
   type QuickUseDefinition,
+  type QuickUseDialogueDefinition,
   type QuickUsePromptInputKind,
   type QuickUsePromptTemplateDefinition,
   type UserReplaceableMaterialDefinition,
@@ -23,6 +24,7 @@ export interface AddQuickUsePromptVariableInput {
   label: string;
   inputKind: QuickUsePromptInputKind;
   required: boolean;
+  dialogue?: QuickUseDialogueDefinition;
 }
 
 interface PromptSegment {
@@ -145,12 +147,57 @@ export function addQuickUsePromptVariable(
     defaultValue: selectedText,
     inputKind: input.inputKind,
     required: input.required,
+    ...(input.dialogue ? {
+      dialogue: {
+        characters: input.dialogue.characters.map((character) => ({ ...character })),
+        turns: input.dialogue.turns.map((turn) => ({ ...turn })),
+        allowUserRenameCharacters: input.dialogue.allowUserRenameCharacters,
+      },
+    } : {}),
   });
 
   const promptTemplates = [...definition.promptTemplates];
   if (existingIndex >= 0) promptTemplates[existingIndex] = promptTemplate;
   else promptTemplates.push(promptTemplate);
   return { ...definition, promptTemplates };
+}
+
+export function updateQuickUsePromptVariable(
+  definition: QuickUseDefinition,
+  stepId: string,
+  parameterKey: string,
+  variableKey: string,
+  updates: Pick<AddQuickUsePromptVariableInput, 'label' | 'inputKind' | 'required' | 'dialogue'> & { defaultValue: string },
+): { definition: QuickUseDefinition; workflowPrompt: string } {
+  let found = false;
+  const promptTemplates = definition.promptTemplates.map((template) => {
+    if (template.stepId !== stepId || template.parameterKey !== parameterKey) return template;
+    const variables = template.variables.map((variable) => {
+      if (variable.key !== variableKey) return variable;
+      found = true;
+      return {
+        ...variable,
+        label: updates.label.trim() || variable.label,
+        defaultValue: updates.defaultValue,
+        inputKind: updates.inputKind,
+        required: updates.required,
+        dialogue: updates.dialogue ? {
+          characters: updates.dialogue.characters.map((character) => ({ ...character })),
+          turns: updates.dialogue.turns.map((turn) => ({ ...turn })),
+          allowUserRenameCharacters: updates.dialogue.allowUserRenameCharacters,
+        } : undefined,
+      };
+    });
+    return { ...template, variables };
+  });
+  if (!found) throw new Error(`Prompt variable was not found: ${variableKey}.`);
+  const nextDefinition = { ...definition, promptTemplates };
+  const template = promptTemplates.find((item) => item.stepId === stepId && item.parameterKey === parameterKey);
+  if (!template) throw new Error('Prompt template was not found.');
+  return {
+    definition: nextDefinition,
+    workflowPrompt: renderQuickUsePromptTemplateDefaults(template),
+  };
 }
 
 export function removeQuickUsePromptVariable(

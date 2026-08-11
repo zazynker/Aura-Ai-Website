@@ -43,15 +43,25 @@ import {
   createEmptyQuickUseDefinition,
   removeQuickUsePromptVariable,
   setQuickUseMaterialReplaceable,
+  updateQuickUsePromptVariable,
 } from '../workflows/quickUseAuthoring';
 import type {
   QuickUseDefinition,
+  QuickUseDialogueDefinition,
   QuickUsePromptInputKind,
   QuickUseSettingCandidate,
 } from '../workflows/quickUseTypes';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import { AuthGateModal } from '../components/AuthGateModal';
-import { findDialoguePromptRange, parseDialoguePrompt } from '../workflows/dialoguePrompt';
+import {
+  compileDialoguePrompt,
+  createDefaultDialogueDefinition,
+  createDefaultDialogueValue,
+  createDialogueDefinitionFromPrompt,
+  findDialoguePromptRange,
+  serializeDialogueValue,
+} from '../workflows/dialoguePrompt';
+import { AdminDialogueEditor } from '../components/template/AdminDialogueEditor';
 
 type WorkflowGeneration = Generation;
 
@@ -64,6 +74,13 @@ interface PromptVariableSelection {
   label: string;
   inputKind: QuickUsePromptInputKind;
   required: boolean;
+}
+
+interface DialogueAuthoringDraft {
+  definition: QuickUseDialogueDefinition;
+  existingVariableKey?: string;
+  selectionStart: number;
+  selectionEnd: number;
 }
 
 const stableTextHash = (value: string): string => {
@@ -347,6 +364,7 @@ export const TemplateBuilder = () => {
   const [isAdminTemplateMode, setIsAdminTemplateMode] = useState(false);
   const [quickUseDefinition, setQuickUseDefinition] = useState<QuickUseDefinition | null>(null);
   const [promptVariableSelection, setPromptVariableSelection] = useState<PromptVariableSelection | null>(null);
+  const [dialogueAuthoringDraft, setDialogueAuthoringDraft] = useState<DialogueAuthoringDraft | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultFileInputRef = useRef<HTMLInputElement>(null);
@@ -397,6 +415,7 @@ export const TemplateBuilder = () => {
         setQuickUseDefinition(draft.quickUseDefinition);
         setIsAdminTemplateMode(Boolean(user.isAdmin && draft.quickUseDefinition));
         setPromptVariableSelection(null);
+        setDialogueAuthoringDraft(null);
         setSaveState('saved');
         setReviewState('idle');
         setDraftLoadState('loaded');
@@ -515,6 +534,10 @@ export const TemplateBuilder = () => {
     activeWorkflowStep?.inputs.map((input) => ({ ...input }));
   const activePromptTemplate = adminDefinition.promptTemplates.find(
     (template) => template.stepId === activeStepId && template.parameterKey === 'prompt',
+  );
+  const detectedDialogueRange = findDialoguePromptRange(activeStep.prompt);
+  const configuredDialogueVariable = activePromptTemplate?.variables.find(
+    (variable) => variable.inputKind === 'dialogue',
   );
 
   useEffect(() => {
@@ -900,45 +923,16 @@ export const TemplateBuilder = () => {
     const existingKeys = new Set<string>(
       (activePromptTemplate?.variables || []).map((variable) => variable.key),
     );
-    const dialogueLines = parseDialoguePrompt(text);
-    const inputKind: QuickUsePromptInputKind = dialogueLines.length > 0
-      ? 'dialogue'
-      : text.trim().length > 160 ? 'textarea' : 'text';
-    const suggestionSource = inputKind === 'dialogue' ? 'character dialogue' : text;
+    const inputKind: QuickUsePromptInputKind = text.trim().length > 160 ? 'textarea' : 'text';
     setPromptVariableSelection({
       stepId: activeStep.id,
       start,
       end,
       text,
-      key: suggestPromptVariableKey(suggestionSource, activeStep.id, start, existingKeys),
-      label: inputKind === 'dialogue'
-        ? 'Character dialogue'
-        : text.trim().length <= 48 ? text.trim() : 'Prompt variable',
+      key: suggestPromptVariableKey(text, activeStep.id, start, existingKeys),
+      label: text.trim().length <= 48 ? text.trim() : 'Prompt variable',
       inputKind,
       required: false,
-    });
-  };
-
-  const handleDetectDialogueSelection = () => {
-    const range = findDialoguePromptRange(activeStep.prompt);
-    if (!range) return;
-    const text = activeStep.prompt.slice(range.start, range.end);
-    const existingKeys = new Set<string>(
-      (activePromptTemplate?.variables || []).map((variable) => variable.key),
-    );
-    setPromptVariableSelection({
-      stepId: activeStep.id,
-      start: range.start,
-      end: range.end,
-      text,
-      key: suggestPromptVariableKey('character dialogue', activeStep.id, range.start, existingKeys),
-      label: 'Character dialogue',
-      inputKind: 'dialogue',
-      required: false,
-    });
-    window.requestAnimationFrame(() => {
-      promptTextAreaRef.current?.focus();
-      promptTextAreaRef.current?.setSelectionRange(range.start, range.end);
     });
   };
 
@@ -961,42 +955,103 @@ export const TemplateBuilder = () => {
     });
   };
 
-  const insertDialoguePromptBlock = () => {
+  const openStructuredDialogueEditor = () => {
     if (!isAdminTemplateMode) return;
-    if (activePromptTemplate?.variables.length) {
-      addToast('error', 'Remove existing Prompt Variables before inserting another Dialogue group into this prompt.');
+    if (configuredDialogueVariable) {
+      setDialogueAuthoringDraft({
+        definition: configuredDialogueVariable.dialogue
+          ? {
+              characters: configuredDialogueVariable.dialogue.characters.map((character) => ({ ...character })),
+              turns: configuredDialogueVariable.dialogue.turns.map((turn) => ({ ...turn })),
+              allowUserRenameCharacters: configuredDialogueVariable.dialogue.allowUserRenameCharacters,
+            }
+          : createDialogueDefinitionFromPrompt(configuredDialogueVariable.defaultValue),
+        existingVariableKey: configuredDialogueVariable.key,
+        selectionStart: 0,
+        selectionEnd: 0,
+      });
+      setPromptVariableSelection(null);
       return;
     }
-    const textarea = promptTextAreaRef.current;
-    const start = textarea?.selectionStart ?? activeStep.prompt.length;
-    const end = textarea?.selectionEnd ?? start;
-    const before = activeStep.prompt.slice(0, start);
-    const after = activeStep.prompt.slice(end);
-    const leading = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
-    const trailing = after.length > 0 && !after.startsWith('\n') ? '\n' : '';
-    const dialogue = 'Character 1: “Enter dialogue.”\nCharacter 2: “Enter reply.”';
-    const insertion = `${leading}${dialogue}${trailing}`;
-    const selectionStart = before.length + leading.length;
-    const selectionEnd = selectionStart + dialogue.length;
-    const nextPrompt = `${before}${insertion}${after}`;
-    const existingKeys = new Set<string>(
-      (activePromptTemplate?.variables || []).map((variable) => variable.key),
-    );
-    updateActiveStep({ prompt: nextPrompt });
-    setPromptVariableSelection({
-      stepId: activeStep.id,
-      start: selectionStart,
-      end: selectionEnd,
-      text: dialogue,
-      key: suggestPromptVariableKey('character dialogue', activeStep.id, selectionStart, existingKeys),
-      label: 'Character dialogue',
-      inputKind: 'dialogue',
-      required: false,
+    const detected = findDialoguePromptRange(activeStep.prompt);
+    if (!detected && activePromptTemplate?.variables.length) {
+      addToast('error', 'Add Dialogue before other Prompt Variables, or write the dialogue lines in the Prompt first.');
+      return;
+    }
+    const selectionStart = detected?.start ?? activeStep.prompt.length;
+    const selectionEnd = detected?.end ?? selectionStart;
+    const selectedPrompt = activeStep.prompt.slice(selectionStart, selectionEnd);
+    setPromptVariableSelection(null);
+    setDialogueAuthoringDraft({
+      definition: selectedPrompt.trim()
+        ? createDialogueDefinitionFromPrompt(selectedPrompt)
+        : createDefaultDialogueDefinition(),
+      selectionStart,
+      selectionEnd,
     });
-    window.requestAnimationFrame(() => {
-      promptTextAreaRef.current?.focus();
-      promptTextAreaRef.current?.setSelectionRange(selectionStart, selectionEnd);
-    });
+  };
+
+  const handleSaveDialogue = () => {
+    if (!dialogueAuthoringDraft) return;
+    try {
+      const serializedDefault = serializeDialogueValue(createDefaultDialogueValue(dialogueAuthoringDraft.definition));
+      const compiledDefault = compileDialoguePrompt(dialogueAuthoringDraft.definition, serializedDefault);
+      if (dialogueAuthoringDraft.existingVariableKey) {
+        const variableKey = dialogueAuthoringDraft.existingVariableKey;
+        const updated = updateQuickUsePromptVariable(
+          ensureAdminDefinition(quickUseDefinition),
+          activeStep.id,
+          'prompt',
+          variableKey,
+          {
+            label: 'Character dialogue',
+            inputKind: 'dialogue',
+            required: false,
+            dialogue: dialogueAuthoringDraft.definition,
+            defaultValue: compiledDefault,
+          },
+        );
+        const candidateId = createQuickUseCandidateId({ kind: 'prompt_variable', stepId: activeStep.id, parameterKey: 'prompt', variableKey });
+        setQuickUseDefinition({
+          ...updated.definition,
+          blocks: updated.definition.blocks.map((block) => block.candidateId === candidateId
+            ? { ...block, defaultValue: serializedDefault }
+            : block),
+        });
+        updateActiveStep({ prompt: updated.workflowPrompt });
+      } else {
+        const before = activeStep.prompt.slice(0, dialogueAuthoringDraft.selectionStart);
+        const after = activeStep.prompt.slice(dialogueAuthoringDraft.selectionEnd);
+        const leading = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+        const trailing = after.length > 0 && !after.startsWith('\n') ? '\n' : '';
+        const selectionStart = before.length + leading.length;
+        const nextPrompt = `${before}${leading}${compiledDefault}${trailing}${after}`;
+        const existingKeys = new Set<string>((activePromptTemplate?.variables || []).map((variable) => variable.key));
+        const key = suggestPromptVariableKey('character dialogue', activeStep.id, selectionStart, existingKeys);
+        const nextDefinition = addQuickUsePromptVariable(ensureAdminDefinition(quickUseDefinition), {
+          stepId: activeStep.id,
+          parameterKey: 'prompt',
+          workflowPrompt: nextPrompt,
+          selectionStart,
+          selectionEnd: selectionStart + compiledDefault.length,
+          key,
+          label: 'Character dialogue',
+          inputKind: 'dialogue',
+          required: false,
+          dialogue: dialogueAuthoringDraft.definition,
+        });
+        setQuickUseDefinition(nextDefinition);
+        updateActiveStep({ prompt: nextPrompt });
+      }
+      setDialogueAuthoringDraft(null);
+      setSaveState('idle');
+      setBuilderError(null);
+      addToast('success', 'Dialogue block saved.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not save Dialogue.';
+      setBuilderError(message);
+      addToast('error', message);
+    }
   };
 
   const handleMakePromptSelectionEditable = () => {
@@ -1029,10 +1084,19 @@ export const TemplateBuilder = () => {
   };
 
   const handleRemovePromptVariable = (variableKey: string) => {
-    setQuickUseDefinition((current) => current
-      ? removeQuickUsePromptVariable(current, activeStep.id, 'prompt', variableKey)
-      : current);
+    const candidateId = createQuickUseCandidateId({ kind: 'prompt_variable', stepId: activeStep.id, parameterKey: 'prompt', variableKey });
+    setQuickUseDefinition((current) => {
+      if (!current) return current;
+      const next = removeQuickUsePromptVariable(current, activeStep.id, 'prompt', variableKey);
+      return {
+        ...next,
+        blocks: next.blocks
+          .filter((block) => block.candidateId !== candidateId)
+          .map((block, index) => ({ ...block, order: index + 1 })),
+      };
+    });
     setPromptVariableSelection(null);
+    setDialogueAuthoringDraft(null);
     setSaveState('idle');
   };
 
@@ -2679,15 +2743,22 @@ export const TemplateBuilder = () => {
                       <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-purple-700 dark:text-purple-300">Insert editable prompt block</div>
                       <button
                         type="button"
-                        onClick={insertDialoguePromptBlock}
-                        className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-white px-3 py-1.5 text-xs font-semibold text-purple-700 transition hover:border-purple-400 hover:bg-purple-50 dark:border-purple-500/30 dark:bg-slate-900 dark:text-purple-200 dark:hover:bg-purple-500/10"
+                        onClick={openStructuredDialogueEditor}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-white px-3 py-1.5 text-xs font-semibold text-purple-700 transition hover:border-purple-400 hover:bg-purple-50 disabled:cursor-default disabled:border-emerald-200 disabled:bg-emerald-50 disabled:text-emerald-700 dark:border-purple-500/30 dark:bg-slate-900 dark:text-purple-200 dark:hover:bg-purple-500/10 dark:disabled:border-emerald-500/25 dark:disabled:bg-emerald-500/10 dark:disabled:text-emerald-200"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         <MessageSquare className="h-3.5 w-3.5" />
-                        Dialogue group
+                        {configuredDialogueVariable
+                          ? 'Edit Dialogue group'
+                          : detectedDialogueRange
+                            ? `Configure detected dialogue (${detectedDialogueRange.lineCount} lines)`
+                            : 'Add Dialogue group'}
                       </button>
                       <p className="mt-2 text-[11px] leading-4 text-purple-700/80 dark:text-purple-200/80">
-                        Inserts the supported <span className="font-medium">Character: “Spoken line”</span> format and prepares it as one Quick Use Dialogue block.
+                        Define the fixed character list and default turns in a dedicated editor. Character renaming is a separate permission and is off by default.
+                      </p>
+                      <p className="mt-1 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                        Saving creates one stable Dialogue candidate and compiles it into the real Workflow Prompt used by the video model.
                       </p>
                     </div>
                   )}
@@ -2699,20 +2770,26 @@ export const TemplateBuilder = () => {
                     placeholder="Enter the prompt used for this step..."
                     className="w-full h-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
                   />
+                  {isAdminTemplateMode && dialogueAuthoringDraft && (
+                    <div className="mt-3">
+                      <AdminDialogueEditor
+                        value={dialogueAuthoringDraft.definition}
+                        onChange={(definition) => setDialogueAuthoringDraft((current) => current ? { ...current, definition } : current)}
+                        onCancel={() => setDialogueAuthoringDraft(null)}
+                        onSave={handleSaveDialogue}
+                      />
+                    </div>
+                  )}
                   {isAdminTemplateMode && (
                     <div className="mt-3 space-y-3">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-xs text-purple-700 dark:text-purple-300">
                           Select text in the prompt to create a stable Prompt Variable. The workflow prompt itself remains unchanged.
                         </p>
-                        {findDialoguePromptRange(activeStep.prompt) && !activePromptTemplate?.variables.some((variable) => variable.inputKind === 'dialogue') && (
-                          <button
-                            type="button"
-                            onClick={handleDetectDialogueSelection}
-                            className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:border-purple-400 hover:bg-purple-100 dark:border-purple-500/30 dark:bg-purple-500/10 dark:text-purple-200"
-                          >
-                            Select detected dialogue ({findDialoguePromptRange(activeStep.prompt)?.lineCount} lines)
-                          </button>
+                        {!promptVariableSelection && detectedDialogueRange && !configuredDialogueVariable && (
+                          <span className="text-xs font-medium text-purple-700 dark:text-purple-300">
+                            {detectedDialogueRange.lineCount} dialogue lines are ready to configure above.
+                          </span>
                         )}
                       </div>
                       {promptVariableSelection?.stepId === activeStep.id && (
@@ -2752,20 +2829,12 @@ export const TemplateBuilder = () => {
                               >
                                 <option value="text">Text input</option>
                                 <option value="textarea">Textarea</option>
-                                <option value="dialogue">Dialogue group (speaker lines)</option>
                               </select>
                             </label>
                             <div className="flex items-end pb-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
                               Required and collapsed/open behavior are configured later in Quick Use Builder.
                             </div>
                           </div>
-                          {promptVariableSelection.inputKind === 'dialogue' && (
-                            <div className={`mt-3 rounded-lg border px-3 py-2 text-xs leading-5 ${parseDialoguePrompt(promptVariableSelection.text).length > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200'}`}>
-                              {parseDialoguePrompt(promptVariableSelection.text).length > 0
-                                ? `${parseDialoguePrompt(promptVariableSelection.text).length} speaker lines detected. Quick Use will let users rename characters, edit the spoken lines, and add or remove dialogue turns.`
-                                : 'No speaker lines detected. Use a format such as: Reporter says, “Hello.”'}
-                            </div>
-                          )}
                           <div className="mt-3 flex justify-end gap-2">
                             <Button variant="outline" size="sm" onClick={() => setPromptVariableSelection(null)}>
                               Cancel
@@ -2773,9 +2842,8 @@ export const TemplateBuilder = () => {
                             <Button
                               size="sm"
                               onClick={handleMakePromptSelectionEditable}
-                              disabled={promptVariableSelection.inputKind === 'dialogue' && parseDialoguePrompt(promptVariableSelection.text).length === 0}
                             >
-                              {promptVariableSelection.inputKind === 'dialogue' ? 'Create dialogue variable' : 'Make editable'}
+                              Make editable
                             </Button>
                           </div>
                         </div>
@@ -2796,14 +2864,19 @@ export const TemplateBuilder = () => {
                                   {`{{quick_use.${variable.key}}}`} · Default: {variable.defaultValue}
                                 </div>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => handleRemovePromptVariable(variable.key)}
-                                className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
-                                aria-label={`Remove ${variable.label}`}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
+                              <div className="flex items-center gap-1">
+                                {variable.inputKind === 'dialogue' && (
+                                  <button type="button" onClick={openStructuredDialogueEditor} className="rounded-md px-2 py-1.5 text-xs font-semibold text-purple-600 hover:bg-purple-50 dark:text-purple-300 dark:hover:bg-purple-500/10">Edit</button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemovePromptVariable(variable.key)}
+                                  className="rounded-md p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
+                                  aria-label={`Remove ${variable.label}`}
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
                             </div>
                           ))}
                         </div>

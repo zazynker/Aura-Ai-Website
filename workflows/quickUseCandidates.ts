@@ -5,6 +5,11 @@ import type {
   WorkflowStep,
 } from './types';
 import { validateWorkflowDefinition } from './validators';
+import {
+  compileDialoguePrompt,
+  createDefaultDialogueValue,
+  serializeDialogueValue,
+} from './dialoguePrompt';
 import type {
   QuickUseCandidate,
   QuickUseCandidateBinding,
@@ -84,6 +89,13 @@ export function toQuickUsePresentationDefinition(
           if (candidate.max !== undefined) safeCandidate.max = candidate.max;
           if (candidate.step !== undefined) safeCandidate.step = candidate.step;
           if (candidate.maxLength !== undefined) safeCandidate.maxLength = candidate.maxLength;
+        }
+        if (candidate.kind === 'prompt_variable' && candidate.dialogue) {
+          safeCandidate.dialogue = {
+            characters: candidate.dialogue.characters.map((character) => ({ ...character })),
+            turns: candidate.dialogue.turns.map((turn) => ({ ...turn })),
+            allowUserRenameCharacters: candidate.dialogue.allowUserRenameCharacters,
+          };
         }
         return safeCandidate;
       }),
@@ -372,6 +384,29 @@ function validatePromptTemplateDefinitions(
           message: 'Prompt variable label is required.',
         });
       }
+      if (variable.dialogue) {
+        if (variable.inputKind !== 'dialogue') {
+          templateValid = false;
+          issues.push({
+            path: `${variablePath}.dialogue`,
+            code: 'dialogue_kind_mismatch',
+            message: 'Structured Dialogue data requires a dialogue Prompt Variable.',
+          });
+        } else {
+          const compiledDefault = compileDialoguePrompt(
+            variable.dialogue,
+            serializeDialogueValue(createDefaultDialogueValue(variable.dialogue)),
+          );
+          if (compiledDefault !== variable.defaultValue) {
+            templateValid = false;
+            issues.push({
+              path: `${variablePath}.defaultValue`,
+              code: 'dialogue_default_mismatch',
+              message: 'The structured Dialogue default must reproduce the saved Prompt Variable default.',
+            });
+          }
+        }
+      }
       const token = getQuickUsePromptVariableToken(variable.key);
       const occurrences = definition.template.split(token).length - 1;
       if (occurrences !== 1) {
@@ -442,6 +477,13 @@ function derivePromptVariableCandidates(
           required: false,
           defaultValue: variable.defaultValue,
           inputKind: variable.inputKind,
+          ...(variable.dialogue ? {
+            dialogue: {
+              characters: variable.dialogue.characters.map((character) => ({ ...character })),
+              turns: variable.dialogue.turns.map((turn) => ({ ...turn })),
+              allowUserRenameCharacters: variable.dialogue.allowUserRenameCharacters,
+            },
+          } : {}),
         };
         candidates.push(candidate);
       });

@@ -51,12 +51,41 @@ export interface UserReplaceableMaterialDefinition {
 
 export type QuickUsePromptInputKind = 'text' | 'textarea' | 'dialogue';
 
+export interface QuickUseDialogueCharacterDefinition {
+  /** Stable authoring identity. The visible name may change without breaking turns. */
+  id: string;
+  defaultName: string;
+}
+
+export interface QuickUseDialogueTurnDefinition {
+  /** Stable authoring identity. It is preserved when turns are reordered. */
+  id: string;
+  characterId: string;
+  text: string;
+}
+
+/**
+ * Serializable Dialogue contract owned by one template version. Character
+ * membership is fixed by Admin; Quick Use may only edit the allowed values.
+ */
+export interface QuickUseDialogueDefinition {
+  characters: QuickUseDialogueCharacterDefinition[];
+  turns: QuickUseDialogueTurnDefinition[];
+  allowUserRenameCharacters: boolean;
+}
+
+export interface QuickUseDialogueValue {
+  characterNames: Record<string, string>;
+  turns: QuickUseDialogueTurnDefinition[];
+}
+
 export interface QuickUsePromptVariableDefinition {
   key: string;
   label: string;
   defaultValue: string;
   inputKind: QuickUsePromptInputKind;
   required: boolean;
+  dialogue?: QuickUseDialogueDefinition;
 }
 
 /**
@@ -95,6 +124,7 @@ export interface QuickUsePromptVariableCandidate extends QuickUseCandidateBase {
   binding: QuickUsePromptVariableBinding;
   defaultValue: string;
   inputKind: QuickUsePromptInputKind;
+  dialogue?: QuickUseDialogueDefinition;
 }
 
 export interface QuickUseSettingCandidate extends QuickUseCandidateBase {
@@ -176,6 +206,9 @@ export type QuickUsePresentationCandidate = Pick<
 >> & Partial<Pick<
   QuickUseSettingCandidate,
   'parameterType' | 'enumValues' | 'min' | 'max' | 'step' | 'maxLength'
+>> & Partial<Pick<
+  QuickUsePromptVariableCandidate,
+  'dialogue'
 >>;
 
 export type QuickUsePresentationDefinition = Pick<

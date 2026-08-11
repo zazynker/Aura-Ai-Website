@@ -1,4 +1,5 @@
 import { getSuggestedQuickUseControl } from './quickUseCandidates';
+import { createDefaultDialogueValue, serializeDialogueValue } from './dialoguePrompt';
 import type {
   QuickUseBlockDefinition,
   QuickUseCandidate,
@@ -22,7 +23,9 @@ export function createQuickUseBlock(
     openByDefault: primary,
   };
   if (candidate.kind !== 'material' && candidate.defaultValue !== undefined) {
-    block.defaultValue = candidate.defaultValue;
+    block.defaultValue = candidate.kind === 'prompt_variable' && candidate.dialogue
+      ? serializeDialogueValue(createDefaultDialogueValue(candidate.dialogue))
+      : candidate.defaultValue;
   }
   return block;
 }

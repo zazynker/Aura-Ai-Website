@@ -177,6 +177,64 @@ function validatePromptTemplateShape(
     if (typeof variable.required !== 'boolean') {
       issues.push({ path: `${variablePath}.required`, code: 'invalid_type', message: 'Prompt variable required flag must be boolean.' });
     }
+    if (variable.dialogue !== undefined) {
+      validateDialogueShape(variable.dialogue, `${variablePath}.dialogue`, issues);
+    }
+  });
+}
+
+function validateDialogueShape(
+  value: unknown,
+  path: string,
+  issues: QuickUseValidationIssue[],
+): void {
+  if (!isRecord(value)) {
+    issues.push({ path, code: 'invalid_type', message: 'Dialogue definition must be an object.' });
+    return;
+  }
+  if (typeof value.allowUserRenameCharacters !== 'boolean') {
+    issues.push({ path: `${path}.allowUserRenameCharacters`, code: 'invalid_type', message: 'Character rename permission must be boolean.' });
+  }
+  if (!Array.isArray(value.characters) || value.characters.length < 1 || value.characters.length > 8) {
+    issues.push({ path: `${path}.characters`, code: 'invalid_dialogue_characters', message: 'Dialogue must define between 1 and 8 characters.' });
+    return;
+  }
+  const characterIds = new Set<string>();
+  value.characters.forEach((character, index) => {
+    const characterPath = `${path}.characters[${index}]`;
+    if (!isRecord(character) || typeof character.id !== 'string' || !/^character_[1-9][0-9]*$/.test(character.id)) {
+      issues.push({ path: `${characterPath}.id`, code: 'invalid_dialogue_character_id', message: 'Character id must be a stable character_N id.' });
+      return;
+    }
+    if (characterIds.has(character.id)) {
+      issues.push({ path: `${characterPath}.id`, code: 'duplicate_dialogue_character_id', message: 'Dialogue character ids must be unique.' });
+    }
+    characterIds.add(character.id);
+    if (typeof character.defaultName !== 'string' || !character.defaultName.trim() || character.defaultName.length > 80) {
+      issues.push({ path: `${characterPath}.defaultName`, code: 'invalid_dialogue_character_name', message: 'Character name is required and must be at most 80 characters.' });
+    }
+  });
+  if (!Array.isArray(value.turns) || value.turns.length < 1 || value.turns.length > 12) {
+    issues.push({ path: `${path}.turns`, code: 'invalid_dialogue_turns', message: 'Dialogue must define between 1 and 12 default turns.' });
+    return;
+  }
+  const turnIds = new Set<string>();
+  value.turns.forEach((turn, index) => {
+    const turnPath = `${path}.turns[${index}]`;
+    if (!isRecord(turn) || typeof turn.id !== 'string' || !/^turn_[1-9][0-9]*$/.test(turn.id)) {
+      issues.push({ path: `${turnPath}.id`, code: 'invalid_dialogue_turn_id', message: 'Turn id must be a stable turn_N id.' });
+      return;
+    }
+    if (turnIds.has(turn.id)) {
+      issues.push({ path: `${turnPath}.id`, code: 'duplicate_dialogue_turn_id', message: 'Dialogue turn ids must be unique.' });
+    }
+    turnIds.add(turn.id);
+    if (typeof turn.characterId !== 'string' || !characterIds.has(turn.characterId)) {
+      issues.push({ path: `${turnPath}.characterId`, code: 'unknown_dialogue_character', message: 'Dialogue turn must reference a defined character.' });
+    }
+    if (typeof turn.text !== 'string' || !turn.text.trim() || turn.text.length > 240) {
+      issues.push({ path: `${turnPath}.text`, code: 'invalid_dialogue_text', message: 'Dialogue text is required and must be at most 240 characters.' });
+    }
   });
 }
 
@@ -320,6 +378,7 @@ function isControlCompatible(
   const suggested = getSuggestedQuickUseControl(candidate);
   if (control === suggested) return true;
   if (candidate.kind === 'prompt_variable') {
+    if (candidate.dialogue) return false;
     return ['text', 'textarea', 'dialogue'].includes(control);
   }
   if (candidate.kind === 'setting' && candidate.parameterType === 'string') {
