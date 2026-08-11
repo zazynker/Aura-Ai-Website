@@ -337,6 +337,12 @@ export const QuickUseBuilder = () => {
   };
 
   const handleSubmit = async () => {
+    if (!draft?.cover) {
+      const message = 'Add a template cover in Workflow Builder before submitting for review.';
+      setError(message);
+      addToast('error', message);
+      return;
+    }
     if (!definition?.blocks.length) {
       addToast('error', 'Add at least one Quick Use block before submitting.');
       return;
@@ -397,10 +403,17 @@ export const QuickUseBuilder = () => {
             <span className="hidden text-xs text-slate-500 sm:inline">{saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? 'Saved' : saveState === 'failed' ? 'Save failed' : 'Draft'}</span>
             <Button variant="outline" size="sm" onClick={handleTest}><Play className="mr-1.5 h-4 w-4" />Test</Button>
             <Button variant="outline" size="sm" isLoading={saveState === 'saving'} onClick={() => void handleSaveDraft()}><Save className="mr-1.5 h-4 w-4" />Save draft</Button>
-            <Button variant="gradient" size="sm" isLoading={saveState === 'submitting'} onClick={() => void handleSubmit()}><Send className="mr-1.5 h-4 w-4" />Submit for review</Button>
+            <Button variant="gradient" size="sm" isLoading={saveState === 'submitting'} disabled={!draft.cover} title={!draft.cover ? 'Add a template cover in Workflow Builder first.' : undefined} onClick={() => void handleSubmit()}><Send className="mr-1.5 h-4 w-4" />Submit for review</Button>
           </div>
         </div>
       </header>
+
+      {!draft.cover && (
+        <div className="flex flex-wrap items-center justify-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-xs text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+          <span>This draft has no template cover yet.</span>
+          <button type="button" onClick={() => navigate(`/templates/create?templateId=${draft.identity.templateId}`)} className="font-semibold underline underline-offset-2">Return to Workflow Builder to add cover</button>
+        </div>
+      )}
 
       {error && (
         <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-center text-xs text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">{error}</div>

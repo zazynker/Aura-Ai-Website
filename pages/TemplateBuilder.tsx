@@ -336,6 +336,7 @@ export const TemplateBuilder = () => {
   
   // Publish Modal States
   const [showPublishModal, setShowPublishModal] = useState(false);
+  const [publishFlow, setPublishFlow] = useState<'review' | 'quick-use'>('review');
   const [showAuthGate, setShowAuthGate] = useState(false);
   const [publishCover, setPublishCover] = useState<string | null>(null);
   const [publishCoverFile, setPublishCoverFile] = useState<File | null>(null);
@@ -1723,13 +1724,18 @@ export const TemplateBuilder = () => {
       return;
     }
     setBuilderError(null);
+    setPublishFlow('review');
     setShowPublishModal(true);
   };
 
-  const handleContinueToQuickUse = async () => {
-    const savedIdentity = await handleSaveDraft(false);
-    if (!savedIdentity) return;
-    navigate(`/admin/templates/${savedIdentity.templateId}/quick-use`);
+  const handleContinueToQuickUse = () => {
+    if (!user) {
+      setShowAuthGate(true);
+      return;
+    }
+    setBuilderError(null);
+    setPublishFlow('quick-use');
+    setShowPublishModal(true);
   };
 
   const handleSaveDraft = async (
@@ -1829,8 +1835,17 @@ export const TemplateBuilder = () => {
 
   const handleConfirmPublish = async () => {
     if (!publishCover || !publishCoverType) {
-      setReviewState('failed');
-      addToast('error', 'A template cover is required before submitting for review.');
+      if (publishFlow === 'review') setReviewState('failed');
+      addToast('error', publishFlow === 'quick-use'
+        ? 'Add a template cover before continuing to Quick Use.'
+        : 'A template cover is required before submitting for review.');
+      return;
+    }
+    if (publishFlow === 'quick-use') {
+      const savedIdentity = await handleSaveDraft(false);
+      if (!savedIdentity) return;
+      setShowPublishModal(false);
+      navigate(`/admin/templates/${savedIdentity.templateId}/quick-use`);
       return;
     }
     setReviewState('submitting');
@@ -3366,11 +3381,11 @@ export const TemplateBuilder = () => {
       <Modal 
         isOpen={showPublishModal}
         onClose={() => setShowPublishModal(false)}
-        title="Submit Template for Review"
+        title={publishFlow === 'quick-use' ? 'Add Template Cover' : 'Submit Template for Review'}
         className="max-w-md"
       >
         <div className="space-y-4">
-            {draftIdentity && draftIdentity.versionNumber > 1 && (
+            {publishFlow === 'review' && draftIdentity && draftIdentity.versionNumber > 1 && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-2 text-xs leading-4 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
                 Submitting this edit replaces the version currently waiting for review. If this template is already published, its published version stays live until the edit is approved.
               </div>
@@ -3380,6 +3395,11 @@ export const TemplateBuilder = () => {
                 Template cover <span className="text-red-500">*</span>
               </label>
               <p className="mb-2 text-xs text-slate-500">Required. Upload the image or video shown on the template marketplace.</p>
+              {publishFlow === 'quick-use' && (
+                <p className="mb-3 rounded-lg border border-purple-100 bg-purple-50 px-3 py-2 text-xs leading-5 text-purple-800 dark:border-purple-500/20 dark:bg-purple-500/10 dark:text-purple-200">
+                  This cover is saved with the current template version and will be used by the Home Template card and View preview.
+                </p>
+              )}
               
               <input type="file" ref={publishFileInputRef} onChange={handlePublishCoverUpload} accept="image/*,video/*" className="hidden" />
               {publishCover ? (
@@ -3571,8 +3591,8 @@ export const TemplateBuilder = () => {
                 disabled={!publishCover || saveState === 'saving' || reviewState === 'submitting'}
               >
                 {reviewState === 'submitting' || saveState === 'saving'
-                  ? 'Submitting...'
-                  : 'Submit for review'}
+                  ? (publishFlow === 'quick-use' ? 'Saving...' : 'Submitting...')
+                  : (publishFlow === 'quick-use' ? 'Save cover & Continue' : 'Submit for review')}
               </Button>
             </div>
         </div>
