@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw, Upload, Maximize2 } from 'lucide-react';
+import { Camera, Plus, Video, Image as ImageIcon, Music, History, GripVertical, Info, Download, Trash2, ArrowRight, RefreshCw, Upload, Maximize2, MessageSquare } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { useStore } from '../context/StoreContext';
@@ -110,16 +110,6 @@ const VIDEO_FEATURES: FeatureType[] = [
   'Image Lip Sync',
   'Video Lip Sync',
 ];
-
-const FEATURE_REQUIRED_MATERIAL_TYPES: Record<FeatureType, Material['type'][]> = {
-  'Image Generation': [],
-  'Replace Product': ['Image', 'Image'],
-  'Modify Image': ['Image'],
-  'Image to Video': ['Image'],
-  'Motion Control': ['Image', 'Video'],
-  'Image Lip Sync': ['Image', 'Audio'],
-  'Video Lip Sync': ['Video', 'Audio'],
-};
 
 const isVideoFeature = (feature: FeatureType): boolean =>
   VIDEO_FEATURES.includes(feature);
@@ -260,24 +250,31 @@ const getMissingRequiredMaterialTypes = (
 };
 
 const ensureRequiredMaterialCards = (
+  stepId: string,
   feature: FeatureType,
   materials: Material[],
+  inputBindings?: BuilderInputSelection[],
 ): Material[] => {
-  const next = [...materials];
-  const reservedIds = new Set<string>();
-  FEATURE_REQUIRED_MATERIAL_TYPES[feature].forEach((type, index) => {
-    const existing = next.find(
-      (material) => material.type === type && !reservedIds.has(material.id),
-    );
-    if (existing) {
-      reservedIds.add(existing.id);
-      return;
-    }
-    const id = `required-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
-    reservedIds.add(id);
-    next.push({ id, type, url: null, allowDownload: true });
+  const next = assignBuilderMaterialInputSlots(feature, materials);
+  const previousStepSlots = new Set(
+    (inputBindings || [])
+      .filter((binding) => binding.source === 'previous_step')
+      .map((binding) => binding.slot),
+  );
+  const requiredSlots = getBuilderMaterialInputSlots(feature).filter((slot) => (
+    slot.required && !previousStepSlots.has(slot.key)
+  ));
+  requiredSlots.forEach((slot) => {
+    if (next.some((material) => material.inputSlot === slot.key)) return;
+    next.push({
+      id: `material-${stableTextHash(`${stepId}:${slot.key}`)}`,
+      type: slot.assetType === 'image' ? 'Image' : slot.assetType === 'video' ? 'Video' : 'Audio',
+      url: null,
+      allowDownload: true,
+      inputSlot: slot.key,
+    });
   });
-  return assignBuilderMaterialInputSlots(feature, next);
+  return next;
 };
 
 const createInitialStep = (): WorkflowStep => ({
@@ -373,7 +370,7 @@ export const TemplateBuilder = () => {
         setTemplateDescription(draft.description);
         setSteps(draft.steps.map((step) => ({
           ...step,
-          materials: ensureRequiredMaterialCards(step.feature, step.materials),
+          materials: ensureRequiredMaterialCards(step.id, step.feature, step.materials, step.inputBindings),
         })));
         setActiveStepId(draft.steps[0]?.id || 'step-1');
         setFinalResult(draft.finalResultUrl);
@@ -468,6 +465,47 @@ export const TemplateBuilder = () => {
         return [{ input, slot, upstreamSteps }];
       })
     : [];
+  const previousStepSlotSignature = previousStepInputOptions
+    .map(({ input }) => input.slot)
+    .sort()
+    .join('|');
+  const previousStepSlotKeys = useMemo(
+    () => new Set(previousStepSlotSignature ? previousStepSlotSignature.split('|') : []),
+    [previousStepSlotSignature],
+  );
+  const capabilityMaterialSlots = activeCapability
+    ? getBuilderMaterialInputSlots(activeStep.feature)
+    : [];
+  const materialSlotByKey = new Map(capabilityMaterialSlots.map((slot) => [slot.key, slot]));
+  const occupiedMaterialSlotKeys = new Set(
+    activeStep.materials.map((material) => material.inputSlot).filter(Boolean),
+  );
+  const addableMaterialSlots = capabilityMaterialSlots.filter((slot) => (
+    !previousStepSlotKeys.has(slot.key) && !occupiedMaterialSlotKeys.has(slot.key)
+  ));
+  const getMaterialSlotOptions = (material: Material) => capabilityMaterialSlots.filter((slot) => (
+    slot.assetType === material.type.toLowerCase()
+    && !previousStepSlotKeys.has(slot.key)
+    && (
+      slot.key === material.inputSlot
+      || !activeStep.materials.some((candidate) => (
+        candidate.id !== material.id && candidate.inputSlot === slot.key
+      ))
+    )
+  ));
+  const canMaterialUseType = (material: Material, type: Material['type']) => {
+    const assetType = type.toLowerCase();
+    return capabilityMaterialSlots.some((slot) => (
+      slot.assetType === assetType
+      && !previousStepSlotKeys.has(slot.key)
+      && (
+        slot.key === material.inputSlot
+        || !activeStep.materials.some((candidate) => (
+          candidate.id !== material.id && candidate.inputSlot === slot.key
+        ))
+      )
+    ));
+  };
   const promptInputOptions = activeWorkflowStep && activeCapability
     ? activeCapability.inputs.filter((slot) => (
         activeWorkflowStep.inputs.some((input) => input.slot === slot.key)
@@ -478,6 +516,84 @@ export const TemplateBuilder = () => {
   const activePromptTemplate = adminDefinition.promptTemplates.find(
     (template) => template.stepId === activeStepId && template.parameterKey === 'prompt',
   );
+
+  useEffect(() => {
+    if (!activeCapability || !activeWorkflowStep) return;
+    const activeMaterialSlots = activeWorkflowStep.inputs.flatMap((input) => {
+      if (input.source === 'previous_step') return [];
+      const slot = getBuilderMaterialInputSlots(activeStep.feature).find(
+        (candidate) => candidate.key === input.slot,
+      );
+      return slot ? [slot] : [];
+    });
+    const activeSlotByKey = new Map<string, (typeof activeMaterialSlots)[number]>(
+      activeMaterialSlots.map((slot) => [slot.key, slot] as const),
+    );
+    const used = new Set<string>();
+    let changed = false;
+    const removedIds = new Set<string>();
+    const materials = activeStep.materials.flatMap((material) => {
+      if (material.inputSlot && previousStepSlotKeys.has(material.inputSlot)) {
+        removedIds.add(material.id);
+        changed = true;
+        return [];
+      }
+      const currentSlot = material.inputSlot
+        ? activeSlotByKey.get(material.inputSlot)
+        : undefined;
+      if (
+        currentSlot
+        && currentSlot.assetType === material.type.toLowerCase()
+        && !used.has(currentSlot.key)
+      ) {
+        used.add(currentSlot.key);
+        return [material];
+      }
+      const replacement = activeMaterialSlots.find((slot) => (
+        slot.assetType === material.type.toLowerCase() && !used.has(slot.key)
+      ));
+      if (!replacement) {
+        if (material.inputSlot !== undefined) changed = true;
+        return [material.inputSlot === undefined ? material : { ...material, inputSlot: undefined }];
+      }
+      used.add(replacement.key);
+      if (material.inputSlot === replacement.key) return [material];
+      changed = true;
+      return [{ ...material, inputSlot: replacement.key }];
+    });
+    activeMaterialSlots.forEach((slot) => {
+      if (used.has(slot.key)) return;
+      changed = true;
+      used.add(slot.key);
+      materials.push({
+        id: `material-${stableTextHash(`${activeStep.id}:${slot.key}`)}`,
+        type: slot.assetType === 'image' ? 'Image' : slot.assetType === 'video' ? 'Video' : 'Audio',
+        url: null,
+        allowDownload: true,
+        inputSlot: slot.key,
+      });
+    });
+    if (!changed) return;
+    if (removedIds.size > 0) {
+      setMaterialFiles((current) => Object.fromEntries(
+        Object.entries(current).filter(([id]) => !removedIds.has(id)),
+      ));
+      setPersistedMaterials((current) => Object.fromEntries(
+        Object.entries(current).filter(([id]) => !removedIds.has(id)),
+      ));
+    }
+    setSteps((current) => current.map((step) => (
+      step.id === activeStepId ? { ...step, materials } : step
+    )));
+    setSaveState('idle');
+  }, [
+    activeCapability,
+    activeStep.feature,
+    activeStep.materials,
+    activeStepId,
+    activeWorkflowStep,
+    previousStepSlotKeys,
+  ]);
   const activeResultGeneration = generations.find(
     (generation) => generation.id === activeStep.resultGenerationId,
   );
@@ -696,11 +812,35 @@ export const TemplateBuilder = () => {
       activeWorkflowStep.inputs.map((input) => [input.slot, { ...input } as BuilderInputSelection]),
     );
     bindingBySlot.set(slot.key, binding);
+    let materials = activeStep.materials;
+    if (binding.source === 'previous_step') {
+      const removedIds = new Set(
+        materials.filter((material) => material.inputSlot === slot.key).map((material) => material.id),
+      );
+      materials = materials.filter((material) => !removedIds.has(material.id));
+      if (removedIds.size > 0) {
+        setMaterialFiles((current) => Object.fromEntries(
+          Object.entries(current).filter(([id]) => !removedIds.has(id)),
+        ));
+        setPersistedMaterials((current) => Object.fromEntries(
+          Object.entries(current).filter(([id]) => !removedIds.has(id)),
+        ));
+      }
+    } else if (!materials.some((material) => material.inputSlot === slot.key)) {
+      materials = [...materials, {
+        id: `material-${stableTextHash(`${activeStep.id}:${slot.key}`)}`,
+        type: slot.assetType === 'image' ? 'Image' : slot.assetType === 'video' ? 'Video' : 'Audio',
+        url: null,
+        allowDownload: true,
+        inputSlot: slot.key,
+      }];
+    }
     updateActiveStep({
       inputBindings: activeCapability.inputs.flatMap((candidate) => {
         const next = bindingBySlot.get(candidate.key);
         return next ? [next] : [];
       }),
+      materials,
     });
     if (binding.source === 'previous_step') {
       setQuickUseDefinition((current) => current
@@ -711,6 +851,36 @@ export const TemplateBuilder = () => {
           )
         : current);
     }
+  };
+
+  const removeOptionalInputSlot = (slotKey: string) => {
+    if (!activeCapability || !activeWorkflowStep) return;
+    const slot = activeCapability.inputs.find((candidate) => candidate.key === slotKey);
+    if (!slot || slot.required) return;
+    const removedIds = new Set(
+      activeStep.materials
+        .filter((material) => material.inputSlot === slotKey)
+        .map((material) => material.id),
+    );
+    setMaterialFiles((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => !removedIds.has(id)),
+    ));
+    setPersistedMaterials((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => !removedIds.has(id)),
+    ));
+    updateActiveStep({
+      materials: activeStep.materials.filter((material) => !removedIds.has(material.id)),
+      inputBindings: activeWorkflowStep.inputs
+        .filter((input) => input.slot !== slotKey)
+        .map((input) => ({ ...input })),
+    });
+    setQuickUseDefinition((current) => current
+      ? setQuickUseMaterialReplaceable(
+          current,
+          { kind: 'workflow_input', stepId: activeWorkflowStep.id, slot: slotKey },
+          false,
+        )
+      : current);
   };
 
   const handlePromptSelection = (event: React.SyntheticEvent<HTMLTextAreaElement>) => {
@@ -788,6 +958,44 @@ export const TemplateBuilder = () => {
     window.requestAnimationFrame(() => {
       promptTextAreaRef.current?.focus();
       promptTextAreaRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
+  const insertDialoguePromptBlock = () => {
+    if (!isAdminTemplateMode) return;
+    if (activePromptTemplate?.variables.length) {
+      addToast('error', 'Remove existing Prompt Variables before inserting another Dialogue group into this prompt.');
+      return;
+    }
+    const textarea = promptTextAreaRef.current;
+    const start = textarea?.selectionStart ?? activeStep.prompt.length;
+    const end = textarea?.selectionEnd ?? start;
+    const before = activeStep.prompt.slice(0, start);
+    const after = activeStep.prompt.slice(end);
+    const leading = before.length > 0 && !before.endsWith('\n') ? '\n' : '';
+    const trailing = after.length > 0 && !after.startsWith('\n') ? '\n' : '';
+    const dialogue = 'Character 1: “Enter dialogue.”\nCharacter 2: “Enter reply.”';
+    const insertion = `${leading}${dialogue}${trailing}`;
+    const selectionStart = before.length + leading.length;
+    const selectionEnd = selectionStart + dialogue.length;
+    const nextPrompt = `${before}${insertion}${after}`;
+    const existingKeys = new Set<string>(
+      (activePromptTemplate?.variables || []).map((variable) => variable.key),
+    );
+    updateActiveStep({ prompt: nextPrompt });
+    setPromptVariableSelection({
+      stepId: activeStep.id,
+      start: selectionStart,
+      end: selectionEnd,
+      text: dialogue,
+      key: suggestPromptVariableKey('character dialogue', activeStep.id, selectionStart, existingKeys),
+      label: 'Character dialogue',
+      inputKind: 'dialogue',
+      required: false,
+    });
+    window.requestAnimationFrame(() => {
+      promptTextAreaRef.current?.focus();
+      promptTextAreaRef.current?.setSelectionRange(selectionStart, selectionEnd);
     });
   };
 
@@ -909,12 +1117,32 @@ export const TemplateBuilder = () => {
   };
 
   const addMaterial = () => {
+    const slot = addableMaterialSlots[0];
+    if (!slot || !activeCapability || !activeWorkflowStep) return;
+    const bindingBySlot = new Map<string, BuilderInputSelection>(
+      activeWorkflowStep.inputs.map((input) => [input.slot, { ...input } as BuilderInputSelection]),
+    );
+    bindingBySlot.set(slot.key, {
+      slot: slot.key,
+      assetType: slot.assetType,
+      source: 'user_upload',
+      required: slot.required,
+    });
     updateActiveStep({
-      materials: assignBuilderMaterialInputSlots(activeStep.feature, [
+      materials: [
         ...activeStep.materials,
-        { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true },
-      ]),
-      inputBindings: cloneActiveWorkflowInputBindings(),
+        {
+          id: `material-${stableTextHash(`${activeStep.id}:${slot.key}`)}`,
+          type: slot.assetType === 'image' ? 'Image' : slot.assetType === 'video' ? 'Video' : 'Audio',
+          url: null,
+          allowDownload: true,
+          inputSlot: slot.key,
+        },
+      ],
+      inputBindings: activeCapability.inputs.flatMap((candidate) => {
+        const binding = bindingBySlot.get(candidate.key);
+        return binding ? [binding] : [];
+      }),
     });
   };
 
@@ -953,15 +1181,35 @@ export const TemplateBuilder = () => {
   };
 
   const setMaterialInputSlot = (materialId: string, inputSlot: string) => {
+    if (!activeCapability || !activeWorkflowStep || previousStepSlotKeys.has(inputSlot)) return;
+    const targetSlot = activeCapability.inputs.find((slot) => slot.key === inputSlot);
+    if (!targetSlot) return;
+    const previousSlot = activeStep.materials.find((material) => material.id === materialId)?.inputSlot;
     const materials = activeStep.materials.map((material) => {
       if (material.id === materialId) return { ...material, inputSlot };
       return material.inputSlot === inputSlot
         ? { ...material, inputSlot: undefined }
         : material;
     });
+    const bindingBySlot = new Map<string, BuilderInputSelection>(
+      activeWorkflowStep.inputs.map((input) => [input.slot, { ...input } as BuilderInputSelection]),
+    );
+    if (previousSlot && previousSlot !== inputSlot) {
+      const previousDefinition = activeCapability.inputs.find((slot) => slot.key === previousSlot);
+      if (previousDefinition && !previousDefinition.required) bindingBySlot.delete(previousSlot);
+    }
+    bindingBySlot.set(inputSlot, {
+      slot: inputSlot,
+      assetType: targetSlot.assetType,
+      source: 'user_upload',
+      required: targetSlot.required,
+    });
     updateActiveStep({
-      materials: assignBuilderMaterialInputSlots(activeStep.feature, materials),
-      inputBindings: cloneActiveWorkflowInputBindings(),
+      materials,
+      inputBindings: activeCapability.inputs.flatMap((candidate) => {
+        const binding = bindingBySlot.get(candidate.key);
+        return binding ? [binding] : [];
+      }),
     });
   };
 
@@ -977,20 +1225,32 @@ export const TemplateBuilder = () => {
       delete next[id];
       return next;
     });
-    const inputBindings = cloneActiveWorkflowInputBindings()?.map((binding) => (
-      removedMaterial?.inputSlot === binding.slot && binding.source === 'template_asset'
-        ? {
-            slot: binding.slot,
-            assetType: binding.assetType,
-            source: 'user_upload' as const,
-            required: binding.required,
-          }
-        : binding
-    ));
+    const removedSlot = removedMaterial?.inputSlot
+      ? materialSlotByKey.get(removedMaterial.inputSlot)
+      : undefined;
+    const inputBindings = cloneActiveWorkflowInputBindings()?.flatMap((binding) => {
+      if (removedMaterial?.inputSlot !== binding.slot) return [binding];
+      if (removedSlot && !removedSlot.required) return [];
+      return [{
+        slot: binding.slot,
+        assetType: binding.assetType,
+        source: 'user_upload' as const,
+        required: binding.required,
+      }];
+    });
     updateActiveStep({
       materials: activeStep.materials.filter(m => m.id !== id),
       inputBindings,
     });
+    if (removedMaterial?.inputSlot && activeWorkflowStep && removedSlot && !removedSlot.required) {
+      setQuickUseDefinition((current) => current
+        ? setQuickUseMaterialReplaceable(
+            current,
+            { kind: 'workflow_input', stepId: activeWorkflowStep.id, slot: removedMaterial.inputSlot! },
+            false,
+          )
+        : current);
+    }
   };
 
   const removeStep = (id: string, e: React.MouseEvent) => {
@@ -1238,7 +1498,7 @@ export const TemplateBuilder = () => {
         ? 'Image to Video'
         : 'Image Generation'
     );
-    const requiredMaterials = ensureRequiredMaterialCards(nextFeature, restoredMaterials);
+    const requiredMaterials = ensureRequiredMaterialCards(activeStep.id, nextFeature, restoredMaterials);
     const nextMaterials = nextFeature === 'Image Generation' && imageModel === 'mj-v8.1'
       ? assignMjReferenceRoles(requiredMaterials)
       : requiredMaterials;
@@ -2039,7 +2299,7 @@ export const TemplateBuilder = () => {
                     key={feature}
                     onClick={() => updateActiveStep({
                       feature,
-                      materials: ensureRequiredMaterialCards(feature, activeStep.materials),
+                      materials: ensureRequiredMaterialCards(activeStep.id, feature, activeStep.materials),
                       inputBindings: undefined,
                       videoParams: feature === 'Image to Video'
                         ? activeStep.feature === 'Image to Video' && activeStep.videoParams
@@ -2071,9 +2331,15 @@ export const TemplateBuilder = () => {
                   <span className="w-6 h-6 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 flex items-center justify-center text-sm">3</span>
                   Materials I Uploaded
                 </h3>
-                <Button variant="outline" size="sm" onClick={addMaterial}>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={addMaterial}
+                  disabled={addableMaterialSlots.length === 0}
+                  title={addableMaterialSlots.length === 0 ? 'Every available workflow input is already routed or assigned.' : `Add ${addableMaterialSlots[0]?.label}`}
+                >
                   <Plus className="w-4 h-4 mr-2" />
-                  Add Material
+                  {addableMaterialSlots.length === 0 ? 'All inputs assigned' : 'Add Material'}
                 </Button>
               </div>
 
@@ -2093,20 +2359,33 @@ export const TemplateBuilder = () => {
                           <div className="font-semibold text-slate-800 dark:text-slate-200">{slot.label}</div>
                           <div className="text-[11px] text-slate-500">{slot.assetType} input · Step {activeWorkflowStep?.order}</div>
                         </div>
-                        <select
-                          value={input.source === 'previous_step' && input.fromStepId
-                            ? `step:${input.fromStepId}`
-                            : 'material'}
-                          onChange={(event) => handleInputRoutingChange(input.slot, event.target.value)}
-                          className="h-10 w-full rounded-lg border border-blue-200 bg-white px-3 text-sm font-medium text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-blue-500/25 dark:bg-slate-950 dark:text-slate-100"
-                        >
-                          <option value="material">Template material / Quick Use upload</option>
-                          {upstreamSteps.map((upstreamStep) => (
-                            <option key={upstreamStep.id} value={`step:${upstreamStep.id}`}>
-                              Step {upstreamStep.order} · {upstreamStep.title} result
-                            </option>
-                          ))}
-                        </select>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={input.source === 'previous_step' && input.fromStepId
+                              ? `step:${input.fromStepId}`
+                              : 'material'}
+                            onChange={(event) => handleInputRoutingChange(input.slot, event.target.value)}
+                            className="h-10 min-w-0 flex-1 rounded-lg border border-blue-200 bg-white px-3 text-sm font-medium text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-blue-500/25 dark:bg-slate-950 dark:text-slate-100"
+                          >
+                            <option value="material">Template material / Quick Use upload</option>
+                            {upstreamSteps.map((upstreamStep) => (
+                              <option key={upstreamStep.id} value={`step:${upstreamStep.id}`}>
+                                Step {upstreamStep.order} · {upstreamStep.title} result
+                              </option>
+                            ))}
+                          </select>
+                          {!slot.required && (
+                            <button
+                              type="button"
+                              onClick={() => removeOptionalInputSlot(slot.key)}
+                              className="rounded-lg border border-blue-200 bg-white p-2.5 text-slate-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-500 dark:border-blue-500/25 dark:bg-slate-950 dark:hover:border-red-500/30 dark:hover:bg-red-500/10"
+                              aria-label={`Remove optional ${slot.label} input`}
+                              title={`Remove optional ${slot.label}`}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -2172,10 +2451,13 @@ export const TemplateBuilder = () => {
                     key={material.id}
                     className="p-4 rounded-xl border border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/30 flex flex-col sm:flex-row gap-6 relative group"
                   >
-                    {activeStep.materials.length > 1 && (
-                      <button 
+                    {(!material.inputSlot || !materialSlotByKey.get(material.inputSlot)?.required) && (
+                      <button
+                        type="button"
                         onClick={() => removeMaterial(material.id)}
-                        className="absolute top-3 right-3 p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                        className="absolute top-3 right-3 z-10 rounded-lg p-1.5 text-slate-400 opacity-70 transition-colors hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-500/10"
+                        aria-label={`Remove ${materialSlotByKey.get(material.inputSlot || '')?.label || 'material'}`}
+                        title="Remove optional material"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -2256,7 +2538,8 @@ export const TemplateBuilder = () => {
                             <button
                               key={type}
                               onClick={() => updateMaterial(material.id, { type })}
-                              className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors ${material.type === type ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                              disabled={!canMaterialUseType(material, type)}
+                              className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${material.type === type ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}
                             >
                               {type === 'Image' && <ImageIcon className="w-3 h-3" />}
                               {type === 'Video' && <Video className="w-3 h-3" />}
@@ -2284,7 +2567,7 @@ export const TemplateBuilder = () => {
                             {!material.inputSlot && (
                               <option value="" disabled>Choose an input role</option>
                             )}
-                            {getBuilderMaterialInputSlots(activeStep.feature, material.type).map((slot) => (
+                            {getMaterialSlotOptions(material).map((slot) => (
                               <option key={slot.key} value={slot.key}>{slot.label}</option>
                             ))}
                           </select>
@@ -2292,11 +2575,6 @@ export const TemplateBuilder = () => {
                             <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
                               {activeCapability.inputs.find((slot) => slot.key === material.inputSlot)?.description}
                             </p>
-                          )}
-                          {!material.url && previousStepInputOptions.some(({ input }) => input.slot === material.inputSlot) && (
-                            <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] leading-4 text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">
-                              Filled automatically from the previous step result. Leave this material empty to keep the pipeline connection.
-                            </div>
                           )}
                         </div>
                       )}
@@ -2396,6 +2674,23 @@ export const TemplateBuilder = () => {
                       </p>
                     </div>
                   )}
+                  {isAdminTemplateMode && (
+                    <div className="mb-3 rounded-xl border border-purple-200 bg-purple-50/60 p-3 dark:border-purple-500/25 dark:bg-purple-500/5">
+                      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-purple-700 dark:text-purple-300">Insert editable prompt block</div>
+                      <button
+                        type="button"
+                        onClick={insertDialoguePromptBlock}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-white px-3 py-1.5 text-xs font-semibold text-purple-700 transition hover:border-purple-400 hover:bg-purple-50 dark:border-purple-500/30 dark:bg-slate-900 dark:text-purple-200 dark:hover:bg-purple-500/10"
+                      >
+                        <Plus className="h-3.5 w-3.5" />
+                        <MessageSquare className="h-3.5 w-3.5" />
+                        Dialogue group
+                      </button>
+                      <p className="mt-2 text-[11px] leading-4 text-purple-700/80 dark:text-purple-200/80">
+                        Inserts the supported <span className="font-medium">Character: “Spoken line”</span> format and prepares it as one Quick Use Dialogue block.
+                      </p>
+                    </div>
+                  )}
                   <textarea 
                     ref={promptTextAreaRef}
                     value={activeStep.prompt}
@@ -2467,7 +2762,7 @@ export const TemplateBuilder = () => {
                           {promptVariableSelection.inputKind === 'dialogue' && (
                             <div className={`mt-3 rounded-lg border px-3 py-2 text-xs leading-5 ${parseDialoguePrompt(promptVariableSelection.text).length > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200'}`}>
                               {parseDialoguePrompt(promptVariableSelection.text).length > 0
-                                ? `${parseDialoguePrompt(promptVariableSelection.text).length} speaker lines detected. Quick Use will show one editable row per spoken line while keeping roles and directions locked.`
+                                ? `${parseDialoguePrompt(promptVariableSelection.text).length} speaker lines detected. Quick Use will let users rename characters, edit the spoken lines, and add or remove dialogue turns.`
                                 : 'No speaker lines detected. Use a format such as: Reporter says, “Hello.”'}
                             </div>
                           )}
@@ -2475,7 +2770,11 @@ export const TemplateBuilder = () => {
                             <Button variant="outline" size="sm" onClick={() => setPromptVariableSelection(null)}>
                               Cancel
                             </Button>
-                            <Button size="sm" onClick={handleMakePromptSelectionEditable}>
+                            <Button
+                              size="sm"
+                              onClick={handleMakePromptSelectionEditable}
+                              disabled={promptVariableSelection.inputKind === 'dialogue' && parseDialoguePrompt(promptVariableSelection.text).length === 0}
+                            >
                               {promptVariableSelection.inputKind === 'dialogue' ? 'Create dialogue variable' : 'Make editable'}
                             </Button>
                           </div>

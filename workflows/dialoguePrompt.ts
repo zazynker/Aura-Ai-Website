@@ -1,9 +1,13 @@
 export interface DialoguePromptLine {
   /** Stable for the lifetime of an unchanged prompt line; never random. */
-  id: `dialogue-line:${number}:${string}`;
+  id: `dialogue-line:${number}`;
   speaker: string;
   cue: string;
   text: string;
+  lineStart: number;
+  lineEnd: number;
+  speakerStart: number;
+  speakerEnd: number;
   textStart: number;
   textEnd: number;
 }
@@ -16,15 +20,6 @@ export interface DialoguePromptRange {
 
 const SPEECH_CUE_PATTERN = '(asks?|replies?|answers?|says?|responds?|shouts?|whispers?|follows\\s+up)';
 
-const stableTextHash = (value: string): string => {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-};
-
 const normalizeSpeaker = (value: string): string => {
   const normalized = value.trim().replace(/^the\s+/i, '');
   return normalized
@@ -34,18 +29,26 @@ const normalizeSpeaker = (value: string): string => {
 
 const parseSpeakerAndCue = (
   prefix: string,
-): { speaker: string; cue: string } | null => {
+): { speaker: string; cue: string; speakerOffset: number; speakerLength: number } | null => {
   const normalized = prefix.trim().replace(/,\s*$/, '');
   const narrativeMatch = normalized.match(new RegExp(`^(?:the\\s+)?(.+?)\\s+(${SPEECH_CUE_PATTERN})$`, 'i'));
   if (narrativeMatch) {
+    const speakerOffset = prefix.toLowerCase().indexOf(narrativeMatch[1].toLowerCase());
     return {
       speaker: normalizeSpeaker(narrativeMatch[1]),
       cue: narrativeMatch[2].toLowerCase().replace(/\s+/g, ' '),
+      speakerOffset: Math.max(0, speakerOffset),
+      speakerLength: narrativeMatch[1].length,
     };
   }
-  const scriptMatch = normalized.match(/^(.+?):$/);
+  const scriptMatch = prefix.match(/^(\s*)(.+?)(\s*:\s*)$/);
   if (scriptMatch) {
-    return { speaker: normalizeSpeaker(scriptMatch[1]), cue: 'says' };
+    return {
+      speaker: normalizeSpeaker(scriptMatch[2]),
+      cue: 'says',
+      speakerOffset: scriptMatch[1].length,
+      speakerLength: scriptMatch[2].length,
+    };
   }
   return null;
 };
@@ -67,13 +70,18 @@ export function parseDialoguePrompt(value: string): DialoguePromptLine[] {
     if (!quoteMatch || quoteMatch.index === undefined) continue;
     const metadata = parseSpeakerAndCue(rawLine.slice(0, quoteMatch.index));
     if (!metadata) continue;
+    const speakerStart = lineMatch.index + metadata.speakerOffset;
     const textStart = lineMatch.index + quoteMatch.index + 1;
     const textEnd = textStart + quoteMatch[1].length;
     lines.push({
-      id: `dialogue-line:${lineMatch.index}:${stableTextHash(rawLine.slice(0, quoteMatch.index))}`,
+      id: `dialogue-line:${lineMatch.index}`,
       speaker: metadata.speaker,
       cue: metadata.cue,
       text: quoteMatch[1],
+      lineStart: lineMatch.index,
+      lineEnd: lineMatch.index + rawLine.length,
+      speakerStart,
+      speakerEnd: speakerStart + metadata.speakerLength,
       textStart,
       textEnd,
     });
@@ -98,6 +106,40 @@ export function replaceDialoguePromptLine(
   line: Pick<DialoguePromptLine, 'textStart' | 'textEnd'>,
   nextText: string,
 ): string {
-  const normalized = nextText.replace(/[\r\n]+/g, ' ');
+  const normalized = nextText.replace(/[\r\n"“”]+/g, "'");
   return `${value.slice(0, line.textStart)}${normalized}${value.slice(line.textEnd)}`;
+}
+
+export function replaceDialoguePromptSpeaker(
+  value: string,
+  line: Pick<DialoguePromptLine, 'speakerStart' | 'speakerEnd'>,
+  nextSpeaker: string,
+): string {
+  const normalized = nextSpeaker.replace(/[\r\n:"“”]+/g, ' ').trim() || 'Character';
+  return `${value.slice(0, line.speakerStart)}${normalized}${value.slice(line.speakerEnd)}`;
+}
+
+export function appendDialoguePromptLine(
+  value: string,
+  speaker = 'New character',
+  text = 'Enter dialogue.',
+): string {
+  const separator = value.length > 0 && !value.endsWith('\n') ? '\n' : '';
+  return `${value}${separator}${speaker}: “${text}”`;
+}
+
+export function removeDialoguePromptLine(
+  value: string,
+  line: Pick<DialoguePromptLine, 'lineStart' | 'lineEnd'>,
+): string {
+  if (value[line.lineEnd] === '\r' && value[line.lineEnd + 1] === '\n') {
+    return `${value.slice(0, line.lineStart)}${value.slice(line.lineEnd + 2)}`;
+  }
+  if (value[line.lineEnd] === '\n') {
+    return `${value.slice(0, line.lineStart)}${value.slice(line.lineEnd + 1)}`;
+  }
+  const previousLineBreak = line.lineStart > 0 && value[line.lineStart - 1] === '\n'
+    ? line.lineStart - 1
+    : line.lineStart;
+  return `${value.slice(0, previousLineBreak)}${value.slice(line.lineEnd)}`;
 }
