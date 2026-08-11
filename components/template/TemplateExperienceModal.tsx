@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, Download, Eye, Loader2, Minus, Play, RotateCcw, Upload } from 'lucide-react';
+import { Check, ChevronDown, Download, Eye, Loader2, Minus, RotateCcw, Upload } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import type { RealTemplateDetail } from '../../utils/templateDetailApi';
@@ -11,6 +11,7 @@ import type {
 } from '../../workflows/quickUseTypes';
 import type { QuickUseExecutionProgress } from '../../utils/quickUseExecutor';
 import { DialogueEditor } from './DialogueEditor';
+import { QuickUseNumberControl } from './QuickUseNumberControl';
 
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
@@ -98,15 +99,6 @@ export const TemplateExperienceModal = ({
     setValidationError(null);
   }, [definition]);
 
-  const gallery = useMemo(() => {
-    if (!detail) return [];
-    const byUrl = new Map<string, RealTemplateDetail['finalResult']>();
-    [detail.finalResult, ...detail.steps.flatMap((step) => step.results)].forEach((result) => {
-      if (result.url && !byUrl.has(result.url)) byUrl.set(result.url, result);
-    });
-    return [...byUrl.values()];
-  }, [detail]);
-
   const handleGenerate = () => {
     if (!definition || !onGenerate) return;
     const issues = validateQuickUseInputValues(definition, values);
@@ -164,18 +156,12 @@ export const TemplateExperienceModal = ({
       ) : error ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">{error}</div>
       ) : detail && mode === 'view' ? (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.4fr)_minmax(260px,0.6fr)]">
-          <ResultMedia result={detail.finalResult} className="min-h-80" />
-          <div>
-            <h2 className="text-xl font-bold text-slate-950 dark:text-white">{detail.name}</h2>
+        <div className="mx-auto max-w-4xl">
+          <ResultMedia result={detail.finalResult} />
+          <div className="px-1 pt-5">
+            <h2 className="text-2xl font-bold text-slate-950 dark:text-white">{detail.name}</h2>
             {detail.description && <p className="mt-2 text-sm leading-6 text-slate-500">{detail.description}</p>}
-            <div className="mt-5 flex items-center gap-2 text-xs text-slate-500">
-              <span>{detail.creatorName || 'Lazora creator'}</span><span>·</span><span>{detail.usageCount} uses</span>
-            </div>
-            <h3 className="mt-6 text-xs font-semibold uppercase tracking-wider text-slate-500">Result gallery</h3>
-            <div className="mt-3 grid grid-cols-3 gap-2">
-              {gallery.map((result) => <React.Fragment key={result.url}><ResultMedia result={result} compact /></React.Fragment>)}
-            </div>
+            <div className="mt-4 text-xs font-medium text-slate-500">{detail.usageCount} uses</div>
           </div>
         </div>
       ) : detail && execution?.status === 'completed' && execution.result ? (
@@ -245,7 +231,7 @@ export const TemplateExperienceModal = ({
         </div>
       ) : (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-          This published workflow has no Quick Use definition.
+          {detail?.quickUseUnavailableReason || 'This published workflow has no Quick Use definition.'}
         </div>
       )}
     </Modal>
@@ -318,16 +304,16 @@ const QuickUseControl = ({ block, candidate, onChange, value }: { block: QuickUs
   }
   if (block.control === 'toggle') return <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm dark:border-slate-700"><span>{block.placeholder || 'Enabled'}</span><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-purple-600" /></label>;
   if (block.control === 'select') return <select className={inputClass} value={String(value ?? '')} onChange={(event) => { const option = candidate?.enumValues?.find((item) => String(item) === event.target.value); onChange(option ?? event.target.value); }}>{candidate?.enumValues?.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}</select>;
-  if (block.control === 'number') return <input type="number" className={inputClass} value={typeof value === 'number' ? value : ''} min={candidate?.min} max={candidate?.max} step={candidate?.step} placeholder={placeholder} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} />;
+  if (block.control === 'number' && typeof candidate?.min === 'number' && typeof candidate.max === 'number') return <QuickUseNumberControl label={block.title || candidate.label} min={candidate.min} max={candidate.max} step={candidate.step} value={typeof value === 'number' ? value : null} onChange={onChange} />;
+  if (block.control === 'number') return <input type="number" className={inputClass} value={typeof value === 'number' ? value : ''} step={candidate?.step} placeholder={placeholder} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} />;
   if (block.control === 'dialogue') return <DialogueEditor value={typeof value === 'string' ? value : ''} definition={candidate?.dialogue} placeholder={placeholder} onChange={onChange} />;
   if (block.control === 'textarea') return <textarea className={`${inputClass} min-h-24 resize-y`} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />;
   return <input className={inputClass} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />;
 };
 
-const ResultMedia = ({ className = '', compact = false, result }: { className?: string; compact?: boolean; result: RealTemplateDetail['finalResult'] }) => (
-  <div className={`relative overflow-hidden rounded-xl bg-slate-950 ${compact ? 'aspect-square' : 'flex min-h-72 items-center justify-center'} ${className}`}>
-    {result.type === 'video' ? <video src={result.url} poster={result.thumbnail} className="h-full w-full object-contain" controls={!compact} muted={compact} playsInline /> : <img src={result.thumbnail || result.url} alt="Template result" className="h-full w-full object-contain" />}
-    {compact && result.type === 'video' && <div className="absolute inset-0 flex items-center justify-center bg-black/20"><Play className="h-5 w-5 fill-white text-white" /></div>}
+const ResultMedia = ({ result }: { result: RealTemplateDetail['finalResult'] }) => (
+  <div className="flex min-h-80 max-h-[65vh] items-center justify-center overflow-hidden rounded-2xl bg-slate-950">
+    {result.type === 'video' ? <video src={result.url} poster={result.thumbnail} className="max-h-[65vh] w-full object-contain" autoPlay muted controls playsInline /> : <img src={result.thumbnail || result.url} alt="Template result" className="max-h-[65vh] w-full object-contain" />}
   </div>
 );
 

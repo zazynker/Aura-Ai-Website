@@ -52,6 +52,7 @@ export interface RealTemplateDetail {
   finalResult: TemplateDetailResult;
   steps: TemplateDetailStep[];
   quickUseDefinition: QuickUsePresentationDefinition | null;
+  quickUseUnavailableReason?: string;
   quickUseExampleUrls: Record<string, string>;
 }
 
@@ -107,12 +108,24 @@ export async function fetchPublicTemplateDetail(
   const payload = await response.json().catch(() => ({})) as {
     success?: boolean;
     template?: RealTemplateDetail;
-    error?: string;
+    error?: unknown;
   };
   if (!response.ok || !payload.success || !payload.template) {
-    throw new Error(payload.error || 'This published template could not be loaded.');
+    throw new Error(readApiErrorMessage(payload.error, 'This published template could not be loaded.'));
   }
   return payload.template;
+}
+
+function readApiErrorMessage(value: unknown, fallback: string): string {
+  if (typeof value === 'string' && value.trim()) return value;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    for (const key of ['message', 'error', 'details', 'hint']) {
+      const nested = record[key];
+      if (typeof nested === 'string' && nested.trim()) return nested;
+    }
+  }
+  return fallback;
 }
 
 async function createReadableUrls(assets: AssetRow[]): Promise<Map<string, string>> {

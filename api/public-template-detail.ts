@@ -153,14 +153,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const workflow = version.workflow as { steps?: WorkflowStep[] };
     const steps = Array.isArray(workflow.steps) ? workflow.steps : [];
     if (steps.length === 0) return errorResponse(res, 404, 'This template has no workflow steps.');
-    const quickUseDefinition = version.quick_use_definition == null
+    const storedQuickUseDefinition = version.quick_use_definition == null
       ? null
       : version.quick_use_definition as QuickUseDefinition;
-    if (quickUseDefinition) {
-      const validation = validateQuickUseDefinition(version.workflow, quickUseDefinition);
+    let quickUseDefinition = storedQuickUseDefinition;
+    let quickUseUnavailableReason: string | undefined;
+    if (storedQuickUseDefinition) {
+      const validation = validateQuickUseDefinition(version.workflow, storedQuickUseDefinition);
       if (!validation.valid) {
-        return errorResponse(res, 500, 'The published Quick Use definition is invalid.');
+        console.error('[Public template detail] Published Quick Use definition is invalid:', validation.issues);
+        quickUseDefinition = null;
+        quickUseUnavailableReason = 'This template needs its Quick Use setup to be republished.';
       }
+    } else {
+      quickUseUnavailableReason = 'This published workflow has no Quick Use definition.';
     }
     const quickUseCandidates = quickUseDefinition
       ? deriveQuickUseCandidates(version.workflow, quickUseDefinition).candidates
@@ -334,6 +340,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         quickUseDefinition: quickUseDefinition
           ? toQuickUsePresentationDefinition(quickUseDefinition, quickUseCandidates)
           : null,
+        quickUseUnavailableReason,
         quickUseExampleUrls,
       },
     });
