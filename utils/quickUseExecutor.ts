@@ -1,5 +1,7 @@
 import type { Plan, GenerationInputAssetSnapshot } from '../types';
 import type { JsonPrimitive, WorkflowAssetType, WorkflowDefinition } from '../workflows/types';
+import { getWorkflowCapability } from '../workflows/registry';
+import { resolveWorkflowInputPromptTokens } from '../workflows/promptInputTokens';
 import type { QuickUseCandidateId, QuickUseDefinition } from '../workflows/quickUseTypes';
 import {
   compileQuickUseExecutionPlan,
@@ -184,12 +186,20 @@ async function executeImageStep(
   const resolution = asString(step.parameters.resolution, '1K') as '1K' | '2K' | '4K';
   const model = asString(step.parameters.model, 'gpt-image-2');
   const sourceImageUrl = inputUrl('source_image');
-  const subjectReferenceUrl = inputUrl('reference_image');
+  const subjectReferences = [
+    { label: 'SUBJECT REFERENCE 1', url: inputUrl('reference_image') },
+    { label: 'SUBJECT REFERENCE 2', url: inputUrl('reference_image_2') },
+  ].filter((reference): reference is { label: string; url: string } => Boolean(reference.url));
+  const modifyInputUrls = [sourceImageUrl, ...subjectReferences.map((reference) => reference.url)]
+    .filter((url): url is string => Boolean(url));
   const referenceUrls = step.inputs
     .map((input) => getResolvedInputUrl(input, resultsByStepId))
     .filter((url): url is string => Boolean(url));
 
-  let resolvedPrompt = prompt;
+  let resolvedPrompt = resolveWorkflowInputPromptTokens(
+    prompt,
+    getWorkflowCapability(step.capability).inputs,
+  );
   if (step.capability === 'image.change_ratio' && !resolvedPrompt.trim()) {
     resolvedPrompt = `Extend this image to fit a ${asString(step.parameters.ratio, '1:1')} aspect ratio while preserving the original content and style.`;
   } else if (step.capability === 'image.enhance' && !resolvedPrompt.trim()) {
@@ -197,11 +207,13 @@ async function executeImageStep(
   } else if (step.capability === 'image.upscale' && !resolvedPrompt.trim()) {
     resolvedPrompt = `Upscale this image to ${resolution} while preserving its composition and details.`;
   }
-  if (step.capability === 'image.modify' && sourceImageUrl && subjectReferenceUrl) {
+  if (step.capability === 'image.modify' && sourceImageUrl && subjectReferences.length > 0) {
     resolvedPrompt = [
       'Input roles are fixed for this edit:',
       '- SOURCE IMAGE (first input): the base canvas. Preserve its composition, framing, background, text placement, aspect ratio, and resolution.',
-      '- SUBJECT REFERENCE (second input): the person, identity, object, or content to apply to the Source image. Do not use its canvas dimensions.',
+      ...subjectReferences.map((reference, index) => (
+        `- ${reference.label} (${index === 0 ? 'second' : 'third'} input): identity, object, or content to apply to the Source image. Do not use its canvas dimensions.`
+      )),
       resolvedPrompt,
     ].filter(Boolean).join('\n');
   }
@@ -215,8 +227,12 @@ async function executeImageStep(
       : sourceImageUrl || referenceUrls[0],
     productImageUrl: step.capability === 'image.replace_product'
       ? inputUrl('product_image')
-      : subjectReferenceUrl || referenceUrls[1],
-    referenceImageUrls: step.capability === 'image.text_to_image' ? referenceUrls : undefined,
+      : subjectReferences[0]?.url || referenceUrls[1],
+    referenceImageUrls: step.capability === 'image.modify'
+      ? modifyInputUrls
+      : step.capability === 'image.text_to_image'
+        ? referenceUrls
+        : undefined,
     numberOfImages: model === 'mj-v8.1' ? 4 : outputCount,
     imageSize: resolution,
     aspectRatio: step.capability === 'image.modify'
@@ -258,7 +274,10 @@ async function executeVideoStep(
       : 'image_to_video';
   return generateVideo({
     mode,
-    prompt: asString(step.parameters.prompt, step.instruction),
+    prompt: resolveWorkflowInputPromptTokens(
+      asString(step.parameters.prompt, step.instruction),
+      getWorkflowCapability(step.capability).inputs,
+    ),
     startImageUrl: inputUrl('start_image') || inputUrl('character_image') || inputUrl('portrait_image'),
     endImageUrl: inputUrl('end_image'),
     videoUrl: inputUrl('driver_video') || inputUrl('source_video'),

@@ -1,4 +1,5 @@
 import { WORKFLOW_CAPABILITIES } from './registry';
+import { getWorkflowInputPromptTokenSlots } from './promptInputTokens';
 import {
   WORKFLOW_MAX_INSTRUCTION_LENGTH,
   WORKFLOW_MAX_STEP_ID_LENGTH,
@@ -232,6 +233,24 @@ function validateStepAgainstCapability(
 
   validateInputs(step, index, allSteps, stepsById, capability, issues);
   validateParameters(step.parameters, path, capability.parameters, issues);
+  if (isRecord(step.parameters) && typeof step.parameters.prompt === 'string') {
+    const boundSlots = new Set(
+      Array.isArray(step.inputs)
+        ? step.inputs.flatMap((input) => (
+            isRecord(input) && typeof input.slot === 'string' ? [input.slot] : []
+          ))
+        : [],
+    );
+    for (const slot of new Set(getWorkflowInputPromptTokenSlots(step.parameters.prompt))) {
+      if (!boundSlots.has(slot)) {
+        issues.push({
+          path: `${path}.parameters.prompt`,
+          code: 'unbound_prompt_input',
+          message: `Prompt input tag refers to an input that is not bound: ${slot}.`,
+        });
+      }
+    }
+  }
 
   if (isRecord(step.output)) {
     if (step.output.key !== capability.output.key) {

@@ -262,8 +262,7 @@ function buildInputBindings(
       (slot) => slot.required
         || existingInputBySlot.has(slot.key)
         || step.materials.some((material) => (
-          Boolean(material.url)
-          && material.inputSlot === slot.key
+          material.inputSlot === slot.key
           && materialAssetType(material) === slot.assetType
         )),
     )

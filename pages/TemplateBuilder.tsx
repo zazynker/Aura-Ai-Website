@@ -32,6 +32,7 @@ import {
   type UploadedTemplateObject,
 } from '../utils/templateStorage';
 import { getWorkflowCapability } from '../workflows/registry';
+import { getWorkflowInputPromptToken } from '../workflows/promptInputTokens';
 import {
   deriveQuickUseCandidates,
   createQuickUseCandidateId,
@@ -353,6 +354,7 @@ export const TemplateBuilder = () => {
   const resultDragDepthRef = useRef(0);
   const publishFileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const promptTextAreaRef = useRef<HTMLTextAreaElement>(null);
   const loadedDraftIdRef = useRef<string | null>(null);
 
   const requestedTemplateId = new URLSearchParams(location.search).get('templateId');
@@ -441,6 +443,11 @@ export const TemplateBuilder = () => {
         }
         return [{ input, slot }];
       })
+    : [];
+  const promptInputOptions = activeWorkflowStep && activeCapability
+    ? activeCapability.inputs.filter((slot) => (
+        activeWorkflowStep.inputs.some((input) => input.slot === slot.key)
+      ))
     : [];
   const activePromptTemplate = adminDefinition.promptTemplates.find(
     (template) => template.stepId === activeStepId && template.parameterKey === 'prompt',
@@ -647,6 +654,25 @@ export const TemplateBuilder = () => {
       label: text.trim().length <= 48 ? text.trim() : 'Prompt variable',
       inputKind: text.trim().length > 160 ? 'textarea' : 'text',
       required: true,
+    });
+  };
+
+  const insertPromptInputToken = (slot: string) => {
+    const token = getWorkflowInputPromptToken(slot);
+    const textarea = promptTextAreaRef.current;
+    const start = textarea?.selectionStart ?? activeStep.prompt.length;
+    const end = textarea?.selectionEnd ?? start;
+    const before = activeStep.prompt.slice(0, start);
+    const after = activeStep.prompt.slice(end);
+    const leading = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
+    const trailing = after.length > 0 && !/^\s/.test(after) ? ' ' : '';
+    const insertion = `${leading}${token}${trailing}`;
+    const nextPrompt = `${before}${insertion}${after}`;
+    const nextCursor = before.length + insertion.length;
+    updateActiveStep({ prompt: nextPrompt });
+    window.requestAnimationFrame(() => {
+      promptTextAreaRef.current?.focus();
+      promptTextAreaRef.current?.setSelectionRange(nextCursor, nextCursor);
     });
   };
 
@@ -1906,9 +1932,9 @@ export const TemplateBuilder = () => {
               {isAdminTemplateMode && (
                 <div className="mb-4 rounded-xl border border-purple-200 bg-purple-50/70 p-4 dark:border-purple-500/20 dark:bg-purple-500/5">
                   <div className="mb-3">
-                    <div className="text-sm font-semibold text-purple-950 dark:text-purple-100">User-replaceable workflow inputs</div>
+                    <div className="text-sm font-semibold text-purple-950 dark:text-purple-100">Expose inputs to Quick Use</div>
                     <div className="mt-1 text-xs text-purple-700 dark:text-purple-300">
-                      Inputs come from the active capability contract. Previous-step inputs cannot be exposed as uploads.
+                      Checked means the end user can replace this input. Unchecked keeps the template default locked.
                     </div>
                   </div>
                   {replaceableInputOptions.length > 0 ? (
@@ -1927,10 +1953,10 @@ export const TemplateBuilder = () => {
                             key={candidateId}
                             className="flex cursor-pointer items-center justify-between gap-4 rounded-lg border border-purple-100 bg-white px-3 py-2.5 dark:border-purple-500/15 dark:bg-slate-900/70"
                           >
-                            <span>
+                            <span className="min-w-0">
                               <span className="block text-sm font-medium text-slate-800 dark:text-slate-200">{slot.label}</span>
                               <span className="block text-[11px] text-slate-500">
-                                {slot.assetType} · {input.source === 'template_asset' ? 'template default attached' : 'user upload input'}
+                                {slot.assetType} · {checked ? 'User can replace' : 'Fixed template default'}
                               </span>
                             </span>
                             <input
@@ -2112,8 +2138,8 @@ export const TemplateBuilder = () => {
                           <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${material.allowDownload ? 'translate-x-4' : 'translate-x-0'}`}></div>
                         </div>
                         <div className="flex flex-col">
-                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Reusable</span>
-                          <span className="text-xs text-slate-500">Allow others to reuse this material</span>
+                          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Allow asset reuse</span>
+                          <span className="text-xs text-slate-500">Separate from Quick Use replacement; lets others reuse this uploaded asset.</span>
                         </div>
                       </label>
                     </div>
@@ -2134,19 +2160,46 @@ export const TemplateBuilder = () => {
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Prompt</label>
                   {activeStep.feature === 'Modify Image' && (
                     <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs leading-5 text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
-                      <div className="font-semibold">Use input role names in the prompt, not “image 1 / image 2”.</div>
+                      <div className="font-semibold">Use the input tags below instead of “image 1 / image 2”.</div>
                       <div className="mt-1">
                         <span className="font-semibold">Source image</span> is the base canvas; its composition, framing, aspect ratio, and resolution are preserved.
                       </div>
                       <div>
-                        <span className="font-semibold">Subject reference</span> supplies the person/object identity and can be marked User replaceable.
+                        <span className="font-semibold">Subject reference 1 / 2</span> supply identities or objects and can be exposed separately to Quick Use.
                       </div>
                       <div className="mt-1 text-blue-700 dark:text-blue-200">
-                        Example: Replace the woman in the Source image with the woman from the Subject reference. Preserve the Source image background, news graphics, framing, and text.
+                        Example: Replace the woman in {'{{input.source_image}}'} with the woman from {'{{input.reference_image}}'}. Preserve the source pose, framing, news graphics, and text.
                       </div>
                     </div>
                   )}
+                  {promptInputOptions.length > 0 && (
+                    <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
+                      <div className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-200">Insert workflow input tag</div>
+                      <div className="flex flex-wrap gap-2">
+                        {promptInputOptions.map((slot) => (
+                          <button
+                            key={slot.key}
+                            type="button"
+                            title={getWorkflowInputPromptToken(slot.key)}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => insertPromptInputToken(slot.key)}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-white px-3 py-1.5 text-xs font-medium text-purple-700 transition hover:border-purple-400 hover:bg-purple-50 dark:border-purple-500/30 dark:bg-slate-900 dark:text-purple-200 dark:hover:bg-purple-500/10"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            {slot.assetType === 'image' && <ImageIcon className="h-3.5 w-3.5" />}
+                            {slot.assetType === 'video' && <Video className="h-3.5 w-3.5" />}
+                            {slot.assetType === 'audio' && <Music className="h-3.5 w-3.5" />}
+                            {slot.label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        Tags use stable workflow slots and are resolved to the matching image, video, or audio input during generation.
+                      </p>
+                    </div>
+                  )}
                   <textarea 
+                    ref={promptTextAreaRef}
                     value={activeStep.prompt}
                     onChange={(e) => updateActiveStep({ prompt: e.target.value })}
                     onSelect={handlePromptSelection}
