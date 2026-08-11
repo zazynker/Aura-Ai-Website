@@ -51,6 +51,7 @@ import type {
 } from '../workflows/quickUseTypes';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import { AuthGateModal } from '../components/AuthGateModal';
+import { findDialoguePromptRange, parseDialoguePrompt } from '../workflows/dialoguePrompt';
 
 type WorkflowGeneration = Generation;
 
@@ -729,15 +730,45 @@ export const TemplateBuilder = () => {
     const existingKeys = new Set<string>(
       (activePromptTemplate?.variables || []).map((variable) => variable.key),
     );
+    const dialogueLines = parseDialoguePrompt(text);
+    const inputKind: QuickUsePromptInputKind = dialogueLines.length > 0
+      ? 'dialogue'
+      : text.trim().length > 160 ? 'textarea' : 'text';
+    const suggestionSource = inputKind === 'dialogue' ? 'character dialogue' : text;
     setPromptVariableSelection({
       stepId: activeStep.id,
       start,
       end,
       text,
-      key: suggestPromptVariableKey(text, activeStep.id, start, existingKeys),
-      label: text.trim().length <= 48 ? text.trim() : 'Prompt variable',
-      inputKind: text.trim().length > 160 ? 'textarea' : 'text',
-      required: true,
+      key: suggestPromptVariableKey(suggestionSource, activeStep.id, start, existingKeys),
+      label: inputKind === 'dialogue'
+        ? 'Character dialogue'
+        : text.trim().length <= 48 ? text.trim() : 'Prompt variable',
+      inputKind,
+      required: false,
+    });
+  };
+
+  const handleDetectDialogueSelection = () => {
+    const range = findDialoguePromptRange(activeStep.prompt);
+    if (!range) return;
+    const text = activeStep.prompt.slice(range.start, range.end);
+    const existingKeys = new Set<string>(
+      (activePromptTemplate?.variables || []).map((variable) => variable.key),
+    );
+    setPromptVariableSelection({
+      stepId: activeStep.id,
+      start: range.start,
+      end: range.end,
+      text,
+      key: suggestPromptVariableKey('character dialogue', activeStep.id, range.start, existingKeys),
+      label: 'Character dialogue',
+      inputKind: 'dialogue',
+      required: false,
+    });
+    window.requestAnimationFrame(() => {
+      promptTextAreaRef.current?.focus();
+      promptTextAreaRef.current?.setSelectionRange(range.start, range.end);
     });
   };
 
@@ -2375,12 +2406,23 @@ export const TemplateBuilder = () => {
                   />
                   {isAdminTemplateMode && (
                     <div className="mt-3 space-y-3">
-                      <p className="text-xs text-purple-700 dark:text-purple-300">
-                        Select text in the prompt to create a stable Prompt Variable. The workflow prompt itself remains unchanged.
-                      </p>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs text-purple-700 dark:text-purple-300">
+                          Select text in the prompt to create a stable Prompt Variable. The workflow prompt itself remains unchanged.
+                        </p>
+                        {findDialoguePromptRange(activeStep.prompt) && !activePromptTemplate?.variables.some((variable) => variable.inputKind === 'dialogue') && (
+                          <button
+                            type="button"
+                            onClick={handleDetectDialogueSelection}
+                            className="rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:border-purple-400 hover:bg-purple-100 dark:border-purple-500/30 dark:bg-purple-500/10 dark:text-purple-200"
+                          >
+                            Select detected dialogue ({findDialoguePromptRange(activeStep.prompt)?.lineCount} lines)
+                          </button>
+                        )}
+                      </div>
                       {promptVariableSelection?.stepId === activeStep.id && (
                         <div className="rounded-xl border border-purple-200 bg-purple-50/70 p-4 dark:border-purple-500/20 dark:bg-purple-500/5">
-                          <div className="mb-3 text-xs text-purple-700 dark:text-purple-300">
+                          <div className="mb-3 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-purple-700 dark:text-purple-300">
                             Selected default: <span className="font-medium text-purple-950 dark:text-purple-100">{promptVariableSelection.text}</span>
                           </div>
                           <div className="grid gap-3 sm:grid-cols-2">
@@ -2415,27 +2457,26 @@ export const TemplateBuilder = () => {
                               >
                                 <option value="text">Text input</option>
                                 <option value="textarea">Textarea</option>
-                                <option value="dialogue">Dialogue</option>
+                                <option value="dialogue">Dialogue group (speaker lines)</option>
                               </select>
                             </label>
-                            <label className="flex items-end gap-2 pb-2 text-xs font-medium text-slate-600 dark:text-slate-300">
-                              <input
-                                type="checkbox"
-                                checked={promptVariableSelection.required}
-                                onChange={(event) => setPromptVariableSelection((current) => current
-                                  ? { ...current, required: event.target.checked }
-                                  : current)}
-                                className="h-4 w-4 accent-purple-600"
-                              />
-                              Required input
-                            </label>
+                            <div className="flex items-end pb-1 text-xs leading-5 text-slate-500 dark:text-slate-400">
+                              Required and collapsed/open behavior are configured later in Quick Use Builder.
+                            </div>
                           </div>
+                          {promptVariableSelection.inputKind === 'dialogue' && (
+                            <div className={`mt-3 rounded-lg border px-3 py-2 text-xs leading-5 ${parseDialoguePrompt(promptVariableSelection.text).length > 0 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200' : 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200'}`}>
+                              {parseDialoguePrompt(promptVariableSelection.text).length > 0
+                                ? `${parseDialoguePrompt(promptVariableSelection.text).length} speaker lines detected. Quick Use will show one editable row per spoken line while keeping roles and directions locked.`
+                                : 'No speaker lines detected. Use a format such as: Reporter says, “Hello.”'}
+                            </div>
+                          )}
                           <div className="mt-3 flex justify-end gap-2">
                             <Button variant="outline" size="sm" onClick={() => setPromptVariableSelection(null)}>
                               Cancel
                             </Button>
                             <Button size="sm" onClick={handleMakePromptSelectionEditable}>
-                              Make editable
+                              {promptVariableSelection.inputKind === 'dialogue' ? 'Create dialogue variable' : 'Make editable'}
                             </Button>
                           </div>
                         </div>
@@ -2448,7 +2489,10 @@ export const TemplateBuilder = () => {
                               className="flex items-center justify-between gap-4 rounded-lg border border-purple-100 bg-purple-50/50 px-3 py-2.5 dark:border-purple-500/15 dark:bg-purple-500/5"
                             >
                               <div className="min-w-0">
-                                <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{variable.label}</div>
+                                <div className="flex items-center gap-2">
+                                  <div className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">{variable.label}</div>
+                                  {variable.inputKind === 'dialogue' && <span className="shrink-0 rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-200">Dialogue group</span>}
+                                </div>
                                 <div className="truncate text-[11px] text-slate-500">
                                   {`{{quick_use.${variable.key}}}`} · Default: {variable.defaultValue}
                                 </div>

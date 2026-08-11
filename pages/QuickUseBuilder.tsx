@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
+import { DialogueEditor } from '../components/template/DialogueEditor';
 import { useStore } from '../context/StoreContext';
 import {
   loadTemplateDraft,
@@ -553,6 +554,7 @@ const DefaultValueEditor = ({ block, candidate, onChange }: { block: QuickUseBlo
   if (candidate.kind === 'setting' && candidate.parameterType === 'boolean') return <ToggleSetting label="Default value" checked={Boolean(block.defaultValue)} onChange={onChange} />;
   if (candidate.kind === 'setting' && candidate.parameterType === 'enum') return <SettingField label="Default value"><select className={inputClassName} value={String(block.defaultValue ?? '')} onChange={(event) => onChange((candidate.enumValues || []).find((value) => String(value) === event.target.value))}>{(candidate.enumValues || []).map((value) => <option key={String(value)} value={String(value)}>{String(value)}</option>)}</select></SettingField>;
   if (candidate.kind === 'setting' && candidate.parameterType === 'number') return <SettingField label="Default value"><input type="number" className={inputClassName} min={candidate.min} max={candidate.max} step={candidate.step} value={typeof block.defaultValue === 'number' ? block.defaultValue : ''} onChange={(event) => onChange(event.target.value === '' ? undefined : Number(event.target.value))} /></SettingField>;
+  if (block.control === 'dialogue') return <SettingField label="Default dialogue"><div className="mt-1.5"><DialogueEditor value={typeof block.defaultValue === 'string' ? block.defaultValue : ''} onChange={onChange} compact /></div></SettingField>;
   return <SettingField label="Default value"><textarea className={`${inputClassName} min-h-16 resize-y`} value={typeof block.defaultValue === 'string' ? block.defaultValue : ''} onChange={(event) => onChange(event.target.value)} /></SettingField>;
 };
 
@@ -561,7 +563,8 @@ function renderControl(block: QuickUseBlockDefinition, candidate?: QuickUseCandi
   if (block.control === 'toggle') return <label className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-950"><span>{block.placeholder || 'Enabled'}</span><input type="checkbox" defaultChecked={Boolean(block.defaultValue)} className="h-4 w-4 accent-purple-600" /></label>;
   if (block.control === 'select' && candidate?.kind === 'setting') return <select className={inputClassName} defaultValue={String(block.defaultValue ?? '')}>{(candidate.enumValues || []).map((value) => <option key={String(value)} value={String(value)}>{String(value)}</option>)}</select>;
   if (block.control === 'number') return <input type="number" className={inputClassName} defaultValue={typeof block.defaultValue === 'number' ? block.defaultValue : undefined} placeholder={block.placeholder} />;
-  if (block.control === 'textarea' || block.control === 'dialogue') return <textarea className={`${inputClassName} min-h-20 resize-y`} defaultValue={typeof block.defaultValue === 'string' ? block.defaultValue : ''} placeholder={block.placeholder} />;
+  if (block.control === 'dialogue') return <DialogueEditor value={typeof block.defaultValue === 'string' ? block.defaultValue : ''} placeholder={block.placeholder} readOnly compact />;
+  if (block.control === 'textarea') return <textarea className={`${inputClassName} min-h-20 resize-y`} defaultValue={typeof block.defaultValue === 'string' ? block.defaultValue : ''} placeholder={block.placeholder} />;
   return <input className={inputClassName} defaultValue={typeof block.defaultValue === 'string' ? block.defaultValue : ''} placeholder={block.placeholder} />;
 }
 

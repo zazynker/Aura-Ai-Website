@@ -10,6 +10,7 @@ import type {
   QuickUsePresentationDefinition,
 } from '../../workflows/quickUseTypes';
 import type { QuickUseExecutionProgress } from '../../utils/quickUseExecutor';
+import { DialogueEditor } from './DialogueEditor';
 
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
@@ -318,7 +319,8 @@ const QuickUseControl = ({ block, candidate, onChange, value }: { block: QuickUs
   if (block.control === 'toggle') return <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm dark:border-slate-700"><span>{block.placeholder || 'Enabled'}</span><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-purple-600" /></label>;
   if (block.control === 'select') return <select className={inputClass} value={String(value ?? '')} onChange={(event) => { const option = candidate?.enumValues?.find((item) => String(item) === event.target.value); onChange(option ?? event.target.value); }}>{candidate?.enumValues?.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}</select>;
   if (block.control === 'number') return <input type="number" className={inputClass} value={typeof value === 'number' ? value : ''} min={candidate?.min} max={candidate?.max} step={candidate?.step} placeholder={placeholder} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} />;
-  if (block.control === 'textarea' || block.control === 'dialogue') return <textarea className={`${inputClass} min-h-24 resize-y`} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />;
+  if (block.control === 'dialogue') return <DialogueEditor value={typeof value === 'string' ? value : ''} placeholder={placeholder} onChange={onChange} />;
+  if (block.control === 'textarea') return <textarea className={`${inputClass} min-h-24 resize-y`} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />;
   return <input className={inputClass} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />;
 };
 
