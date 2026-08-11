@@ -147,10 +147,15 @@ export const TemplateExperienceModal = ({
     setAdminDemoStage('running');
     setAdminDemoStep(1);
     const stepCount = Math.max(1, detail.steps.length);
+    let elapsedMs = 0;
     for (let step = 2; step <= stepCount; step += 1) {
-      adminDemoTimersRef.current.push(window.setTimeout(() => setAdminDemoStep(step), (step - 1) * 850));
+      const previousStep = detail.steps[step - 2];
+      elapsedMs += previousStep && /video|motion|lip sync/i.test(previousStep.featureName) ? 15_000 : 10_000;
+      adminDemoTimersRef.current.push(window.setTimeout(() => setAdminDemoStep(step), elapsedMs));
     }
-    adminDemoTimersRef.current.push(window.setTimeout(() => setAdminDemoStage('result'), stepCount * 850));
+    const finalStep = detail.steps[stepCount - 1];
+    elapsedMs += finalStep && /video|motion|lip sync/i.test(finalStep.featureName) ? 15_000 : 10_000;
+    adminDemoTimersRef.current.push(window.setTimeout(() => setAdminDemoStage('result'), elapsedMs));
   };
 
   const confirmCancellation = () => {
@@ -187,11 +192,6 @@ export const TemplateExperienceModal = ({
   const footer = detail && mode === 'use' && !adminDemoOpen && !loading && !error && !isExecuting && !execution
     ? (
           <div className="space-y-2">
-            {isAdminDemoArmed && (
-              <p className="text-center text-xs font-medium text-emerald-600 dark:text-emerald-300">
-                Demo result loaded · generation API and credits are disabled
-              </p>
-            )}
             {!generationAvailable && !isAdminDemoArmed && (
               <p className="text-center text-xs text-slate-500">
                 Automatic execution will be enabled in the executor integration step.
@@ -269,7 +269,10 @@ export const TemplateExperienceModal = ({
             else resetAdminDemo(true);
           }}
           onFilesChange={setAdminDemoFiles}
-          onReset={() => resetAdminDemo(false)}
+          onResultClose={() => {
+            resetAdminDemo(true);
+            onClose();
+          }}
         />
       ) : detail && mode === 'view' ? (
         <div className="mx-auto max-w-4xl">
@@ -366,7 +369,7 @@ export const TemplateExperienceModal = ({
       {adminDemoMinimized && typeof document !== 'undefined' && createPortal(
         <button type="button" onClick={() => setAdminDemoMinimized(false)} className="fixed bottom-5 right-5 z-[90] w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-white/50 bg-white/95 p-4 text-left shadow-2xl backdrop-blur-xl transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-slate-900/95">
           <div className="flex items-center justify-between gap-3">
-            <div><div className="text-sm font-bold text-slate-950 dark:text-white">{adminDemoStage === 'result' ? 'Your demo result is ready' : 'Generating demo...'}</div><div className="mt-1 text-xs text-slate-500">{adminDemoStage === 'result' ? 'View Result' : detail?.steps[Math.max(0, adminDemoStep - 1)]?.featureName || 'Preparing workflow'}</div></div>
+            <div><div className="text-sm font-bold text-slate-950 dark:text-white">{adminDemoStage === 'result' ? 'Your result is ready' : 'Generating...'}</div><div className="mt-1 text-xs text-slate-500">{adminDemoStage === 'result' ? 'View Result' : detail?.steps[Math.max(0, adminDemoStep - 1)]?.featureName || 'Preparing workflow'}</div></div>
             {adminDemoStage === 'result' ? <Check className="h-5 w-5 text-emerald-500" /> : <Loader2 className="h-5 w-5 animate-spin text-purple-500" />}
           </div>
         </button>,
@@ -383,7 +386,7 @@ const AdminQuickUseDemo = ({
   onAssetTypeChange,
   onClose,
   onFilesChange,
-  onReset,
+  onResultClose,
   stage,
   step,
   urls,
@@ -394,7 +397,7 @@ const AdminQuickUseDemo = ({
   onAssetTypeChange: (assetType: AdminDemoAssetType) => void;
   onClose: () => void;
   onFilesChange: (files: File[]) => void;
-  onReset: () => void;
+  onResultClose: () => void;
   stage: AdminDemoStage;
   step: number;
   urls: string[];
@@ -409,7 +412,7 @@ const AdminQuickUseDemo = ({
     };
     return (
       <div className="mx-auto max-w-3xl py-2">
-        <div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Admin demo result</div>
+        <div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Generating with {detail.name}</div>
         <h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">Your workflow is running</h2>
         <ExecutionPipeline detail={detail} execution={progress} />
         <p className="mt-8 text-center text-base font-medium text-slate-600 animate-pulse dark:text-slate-300">Running {progress.stepTitle || 'the current step'}...</p>
@@ -428,18 +431,33 @@ const AdminQuickUseDemo = ({
   }
 
   if (stage === 'result') {
+    const resultLabel = assetType === 'video' ? 'video' : assetType === 'image_group' ? 'results' : 'image';
+    const downloadResults = () => {
+      urls.forEach((url, index) => {
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = files[index]?.name || `lazora-template-result-${index + 1}`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+      });
+    };
     return (
       <div className="mx-auto max-w-3xl text-center">
         <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"><Check className="h-6 w-6" /></div>
-        <h2 className="text-2xl font-bold text-slate-950 dark:text-white">Demo result is ready</h2>
+        <h2 className="text-2xl font-bold text-slate-950 dark:text-white">Your {resultLabel} {assetType === 'image_group' ? 'are' : 'is'} ready</h2>
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-emerald-600 dark:text-emerald-300">
+          {detail.steps.map((workflowStep) => <span key={workflowStep.id} className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" />{workflowStep.featureName}</span>)}
+          <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" />Done</span>
+        </div>
         <div className={`mt-6 ${assetType === 'image_group' ? 'grid grid-cols-2 gap-3' : ''}`}>
           {urls.map((url, index) => assetType === 'video'
             ? <video key={url} src={url} className="max-h-[60vh] w-full rounded-2xl bg-black object-contain" controls autoPlay playsInline />
-            : <img key={url} src={url} alt={`Demo result ${index + 1}`} className="max-h-[60vh] w-full rounded-2xl bg-slate-100 object-contain dark:bg-slate-950" />)}
+            : <img key={url} src={url} alt={`Generated result ${index + 1}`} className="max-h-[60vh] w-full rounded-2xl bg-slate-100 object-contain dark:bg-slate-950" />)}
         </div>
         <div className="mt-5 flex gap-3 border-t border-slate-100 pt-5 dark:border-white/5">
-          <Button variant="secondary" className="flex-1" onClick={onClose}>Close</Button>
-          <Button variant="gradient" className="flex-1" onClick={onReset}>Create another</Button>
+          <Button variant="secondary" className="flex-1" onClick={onResultClose}>Close</Button>
+          <Button variant="gradient" className="flex-1" onClick={downloadResults}><Download className="mr-2 h-4 w-4" />Download</Button>
         </div>
       </div>
     );
