@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -111,11 +111,14 @@ export const QuickUseBuilder = () => {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const [error, setError] = useState<string | null>(null);
   const [showTest, setShowTest] = useState(false);
+  const [expandedExample, setExpandedExample] = useState<{ assetType: 'image' | 'video' | 'audio'; url: string } | null>(null);
   const [exampleFiles, setExampleFiles] = useState<Record<string, File>>({});
   const [examplePreviewUrls, setExamplePreviewUrls] = useState<Record<string, string>>({});
   const [draggedCandidateId, setDraggedCandidateId] = useState<QuickUseCandidateId | null>(null);
   const [draggedBlockId, setDraggedBlockId] = useState<QuickUseCandidateId | null>(null);
   const [dragOverBlockId, setDragOverBlockId] = useState<QuickUseCandidateId | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const editRevisionRef = useRef(0);
 
   useEffect(() => {
     if (authLoading) return;
@@ -146,6 +149,8 @@ export const QuickUseBuilder = () => {
         setSelectedCandidateId(nextDefinition.blocks[0]?.candidateId || null);
         setExamplePreviewUrls(loaded.quickUseExampleUrls);
         setSaveState('idle');
+        setIsDirty(false);
+        editRevisionRef.current = 0;
       })
       .catch((loadError) => {
         if (cancelled) return;
@@ -154,7 +159,7 @@ export const QuickUseBuilder = () => {
     return () => {
       cancelled = true;
     };
-  }, [authLoading, templateId, user]);
+  }, [authLoading, templateId, user?.id, user?.isAdmin]);
 
   const derivation = useMemo(
     () => workflow && definition
@@ -178,8 +183,10 @@ export const QuickUseBuilder = () => {
     : null;
 
   const mutateDefinition = (next: QuickUseDefinition) => {
+    editRevisionRef.current += 1;
     setDefinition(next);
-    setSaveState('idle');
+    setIsDirty(true);
+    setSaveState((current) => current === 'saving' ? current : 'idle');
     setError(null);
   };
 
@@ -259,7 +266,9 @@ export const QuickUseBuilder = () => {
     if (currentUrl?.startsWith('blob:')) URL.revokeObjectURL(currentUrl);
     setExampleFiles((current) => ({ ...current, [assetKey]: file }));
     setExamplePreviewUrls((current) => ({ ...current, [assetKey]: URL.createObjectURL(file) }));
-    setSaveState('idle');
+    editRevisionRef.current += 1;
+    setIsDirty(true);
+    setSaveState((current) => current === 'saving' ? current : 'idle');
   };
 
   const validateCurrentDefinition = (): boolean => {
@@ -268,6 +277,7 @@ export const QuickUseBuilder = () => {
     if (validation.valid) return true;
     const message = validation.issues[0]?.message || 'The Quick Use definition is invalid.';
     setError(message);
+    setSaveState('failed');
     addToast('error', message);
     return false;
   };
@@ -275,6 +285,9 @@ export const QuickUseBuilder = () => {
   const handleSaveDraft = async (showToast = true): Promise<TemplateDraftIdentity | null> => {
     if (!draft || !workflow || !definition || !user) return null;
     if (!validateCurrentDefinition()) return null;
+    const saveRevision = editRevisionRef.current;
+    const definitionToSave = definition;
+    const exampleFilesToSave = exampleFiles;
     setSaveState('saving');
     setError(null);
     try {
@@ -299,8 +312,8 @@ export const QuickUseBuilder = () => {
         persistedResultPosters: draft.resultPosters,
         materialFiles: {},
         persistedMaterials: draft.materials,
-        quickUseDefinition: definition,
-        quickUseExampleFiles: exampleFiles,
+        quickUseDefinition: definitionToSave,
+        quickUseExampleFiles: exampleFilesToSave,
         persistedQuickUseExamples: draft.quickUseExamples,
       });
       const steps = draft.steps.map((step) => ({
@@ -323,9 +336,13 @@ export const QuickUseBuilder = () => {
         quickUseDefinition: saved.quickUseDefinition,
         quickUseExamples: saved.quickUseExamples,
       });
-      setDefinition(saved.quickUseDefinition || definition);
-      setExampleFiles({});
-      setSaveState('saved');
+      const savedLatestRevision = editRevisionRef.current === saveRevision;
+      if (savedLatestRevision) setDefinition(saved.quickUseDefinition || definitionToSave);
+      setExampleFiles((current) => Object.fromEntries(
+        Object.entries(current).filter(([assetKey, file]) => exampleFilesToSave[assetKey] !== file),
+      ));
+      setIsDirty(!savedLatestRevision);
+      setSaveState(savedLatestRevision ? 'saved' : 'idle');
       if (showToast) addToast('success', 'Quick Use draft saved.');
       return saved.identity;
     } catch (saveError) {
@@ -336,6 +353,14 @@ export const QuickUseBuilder = () => {
       return null;
     }
   };
+
+  useEffect(() => {
+    if (!isDirty || saveState === 'saving' || saveState === 'failed' || saveState === 'submitting' || saveState === 'submitted') return;
+    const timeoutId = window.setTimeout(() => {
+      void handleSaveDraft(false);
+    }, 700);
+    return () => window.clearTimeout(timeoutId);
+  }, [definition, exampleFiles, isDirty, saveState]);
 
   const handleSubmit = async () => {
     if (!draft?.cover) {
@@ -401,7 +426,7 @@ export const QuickUseBuilder = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <span className="hidden text-xs text-slate-500 sm:inline">{saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? 'Saved' : saveState === 'failed' ? 'Save failed' : 'Draft'}</span>
+            <span className="hidden text-xs text-slate-500 sm:inline">{saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? 'Saved' : saveState === 'failed' ? 'Save failed' : isDirty ? 'Unsaved' : 'Draft'}</span>
             <Button variant="outline" size="sm" onClick={handleTest}><Play className="mr-1.5 h-4 w-4" />Test</Button>
             <Button variant="outline" size="sm" isLoading={saveState === 'saving'} onClick={() => void handleSaveDraft()}><Save className="mr-1.5 h-4 w-4" />Save draft</Button>
             <Button variant="gradient" size="sm" isLoading={saveState === 'submitting'} disabled={!draft.cover} title={!draft.cover ? 'Add a template cover in Workflow Builder first.' : undefined} onClick={() => void handleSubmit()}><Send className="mr-1.5 h-4 w-4" />Submit for review</Button>
@@ -466,11 +491,7 @@ export const QuickUseBuilder = () => {
           <div className="mx-auto max-w-md" onClick={(event) => event.stopPropagation()}>
             <div className="flex min-h-[620px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-white/10 dark:bg-slate-900">
               <div className="flex-1 overflow-y-auto p-5 sm:p-6">
-              <div className="mb-5">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-purple-600">End-user preview</div>
-                <h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">{definition.title || 'Use this template'}</h2>
-                {definition.subtitle && <p className="mt-2 text-sm text-slate-500">{definition.subtitle}</p>}
-              </div>
+              {definition.subtitle && <p className="mb-5 text-sm text-slate-500">{definition.subtitle}</p>}
               {definition.blocks.length > 0 ? (
                 <div className="space-y-3">
                   {[...definition.blocks]
@@ -503,7 +524,7 @@ export const QuickUseBuilder = () => {
                           </div>
                         </div>
                         {expanded && <div className="mt-3">{renderControl(block, candidate)}</div>}
-                        {expanded && block.example?.kind === 'media' && examplePreviewUrls[block.example.assetKey] && renderExampleMedia(block.example, examplePreviewUrls[block.example.assetKey])}
+                        {expanded && block.example?.kind === 'media' && examplePreviewUrls[block.example.assetKey] && renderExampleMedia(block.example, examplePreviewUrls[block.example.assetKey], () => setExpandedExample({ assetType: block.example!.assetType, url: examplePreviewUrls[block.example!.assetKey] }))}
                       </div>
                     );
                   })}
@@ -537,7 +558,7 @@ export const QuickUseBuilder = () => {
               {selectedBlock.example?.kind === 'media' && (
                 <div className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
                   <label className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border-2 border-dashed border-slate-200 px-3 py-4 text-xs font-medium text-slate-500 hover:border-purple-300 dark:border-slate-700"><Upload className="h-4 w-4" />Upload {selectedBlock.example.assetType} example<input type="file" className="hidden" accept={mediaAccept(selectedBlock.example.assetType)} onChange={(event) => handleExampleFile(event.target.files?.[0])} /></label>
-                  {examplePreviewUrls[selectedBlock.example.assetKey] && renderExampleMedia(selectedBlock.example, examplePreviewUrls[selectedBlock.example.assetKey])}
+                  {examplePreviewUrls[selectedBlock.example.assetKey] && renderExampleMedia(selectedBlock.example, examplePreviewUrls[selectedBlock.example.assetKey], () => setExpandedExample({ assetType: selectedBlock.example!.assetType, url: examplePreviewUrls[selectedBlock.example!.assetKey] }))}
                 </div>
               )}
             </div>
@@ -554,6 +575,9 @@ export const QuickUseBuilder = () => {
 
       <Modal isOpen={showTest} onClose={() => setShowTest(false)} title="Quick Use layout test" className="max-w-2xl">
         <div className="space-y-4"><p className="text-sm text-green-700 dark:text-green-300">Domain validation passed. This test previews inputs only and does not run generation.</p>{definition.blocks.map((block) => <div key={block.candidateId} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"><div className="text-sm font-semibold text-slate-900 dark:text-white">{block.title}</div><div className="mt-3">{renderControl(block, candidateById.get(block.candidateId))}</div></div>)}</div>
+      </Modal>
+      <Modal isOpen={Boolean(expandedExample)} onClose={() => setExpandedExample(null)} title="Example preview" size="xl" className="max-w-6xl">
+        {expandedExample && <ExpandedExampleMedia assetType={expandedExample.assetType} url={expandedExample.url} />}
       </Modal>
     </div>
   );
@@ -590,8 +614,14 @@ function renderControl(block: QuickUseBlockDefinition, candidate?: QuickUseCandi
   return <input className={inputClassName} defaultValue={typeof block.defaultValue === 'string' ? block.defaultValue : ''} placeholder={block.placeholder} />;
 }
 
-function renderExampleMedia(example: Extract<QuickUseExampleDefinition, { kind: 'media' }>, url: string): React.ReactNode {
-  if (example.assetType === 'video') return <video src={url} className="mt-3 max-h-40 w-full rounded-lg object-cover" controls />;
+function renderExampleMedia(example: Extract<QuickUseExampleDefinition, { kind: 'media' }>, url: string, onExpand?: () => void): React.ReactNode {
+  if (example.assetType === 'video') return <div className="relative mt-3"><video src={url} className="max-h-64 w-full rounded-lg bg-slate-950 object-contain" controls /><button type="button" onClick={onExpand} className="absolute right-2 top-2 rounded-lg bg-slate-950/70 px-2 py-1 text-[10px] font-semibold text-white">Expand</button></div>;
   if (example.assetType === 'audio') return <audio src={url} className="mt-3 w-full" controls />;
-  return <img src={url} alt="Example" className="mt-3 max-h-40 w-full rounded-lg object-cover" />;
+  return <button type="button" onClick={onExpand} className="mt-3 block w-full overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-950"><img src={url} alt="Example" className="max-h-64 w-full object-contain" /></button>;
+}
+
+function ExpandedExampleMedia({ assetType, url }: { assetType: 'image' | 'video' | 'audio'; url: string }) {
+  if (assetType === 'video') return <video src={url} className="max-h-[75vh] w-full bg-black object-contain" controls autoPlay playsInline />;
+  if (assetType === 'audio') return <audio src={url} className="w-full" controls autoPlay />;
+  return <img src={url} alt="Example preview" className="max-h-[75vh] w-full object-contain" />;
 }

@@ -1007,6 +1007,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
             loading={experienceLoading}
             error={experienceError}
             generationAvailable
+            isAdmin={Boolean(user?.isAdmin)}
             execution={executionProgress}
             onClose={closeTemplateExperience}
             onUse={switchExperienceToUse}

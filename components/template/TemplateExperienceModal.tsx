@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Check, ChevronDown, Download, Eye, Loader2, Minus, RotateCcw, Upload } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { AlertCircle, Check, ChevronDown, Download, Eye, Image as ImageIcon, Images, Loader2, Minus, RotateCcw, Upload, Video, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import type { RealTemplateDetail } from '../../utils/templateDetailApi';
@@ -15,6 +16,8 @@ import { QuickUseNumberControl } from './QuickUseNumberControl';
 
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
+type AdminDemoAssetType = 'image' | 'image_group' | 'video';
+type AdminDemoStage = 'upload' | 'running' | 'result';
 
 const downloadGeneratedResult = async (
   result: { type: 'image' | 'video'; url: string },
@@ -49,6 +52,7 @@ interface TemplateExperienceModalProps {
   onGenerate?: (values: QuickUseInputValues) => void | Promise<void>;
   onMinimize?: () => void;
   onReset?: () => void;
+  isAdmin?: boolean;
 }
 
 export function validateQuickUseInputValues(
@@ -72,6 +76,7 @@ export const TemplateExperienceModal = ({
   execution,
   generationAvailable,
   isOpen,
+  isAdmin = false,
   loading,
   mode,
   onClose,
@@ -82,6 +87,16 @@ export const TemplateExperienceModal = ({
 }: TemplateExperienceModalProps) => {
   const [values, setValues] = useState<QuickUseInputValues>({});
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [adminDemoOpen, setAdminDemoOpen] = useState(false);
+  const [adminDemoAssetType, setAdminDemoAssetType] = useState<AdminDemoAssetType>('image');
+  const [adminDemoFiles, setAdminDemoFiles] = useState<File[]>([]);
+  const [adminDemoStage, setAdminDemoStage] = useState<AdminDemoStage>('upload');
+  const [adminDemoStep, setAdminDemoStep] = useState(1);
+  const adminDemoTimersRef = useRef<number[]>([]);
+  const adminDemoUrls = useMemo(
+    () => adminDemoFiles.map((file) => URL.createObjectURL(file)),
+    [adminDemoFiles],
+  );
 
   const definition = detail?.quickUseDefinition || null;
   const candidateById = useMemo(
@@ -101,6 +116,36 @@ export const TemplateExperienceModal = ({
     setValidationError(null);
   }, [definition]);
 
+  useEffect(() => () => {
+    adminDemoUrls.forEach((url) => URL.revokeObjectURL(url));
+  }, [adminDemoUrls]);
+
+  useEffect(() => () => {
+    adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+  }, []);
+
+  const resetAdminDemo = (close = false) => {
+    adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    adminDemoTimersRef.current = [];
+    setAdminDemoFiles([]);
+    setAdminDemoStage('upload');
+    setAdminDemoStep(1);
+    if (close) setAdminDemoOpen(false);
+  };
+
+  const startAdminDemo = () => {
+    if (!detail || adminDemoFiles.length === 0) return;
+    adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    adminDemoTimersRef.current = [];
+    setAdminDemoStage('running');
+    setAdminDemoStep(1);
+    const stepCount = Math.max(1, detail.steps.length);
+    for (let step = 2; step <= stepCount; step += 1) {
+      adminDemoTimersRef.current.push(window.setTimeout(() => setAdminDemoStep(step), (step - 1) * 850));
+    }
+    adminDemoTimersRef.current.push(window.setTimeout(() => setAdminDemoStage('result'), stepCount * 850));
+  };
+
   const handleGenerate = () => {
     if (!definition || !onGenerate) return;
     const issues = validateQuickUseInputValues(definition, values);
@@ -113,8 +158,9 @@ export const TemplateExperienceModal = ({
   };
 
   const isExecuting = execution?.status === 'preparing' || execution?.status === 'running';
+  const isBusy = isExecuting || (adminDemoOpen && adminDemoStage === 'running');
 
-  const footer = detail && mode === 'use' && !loading && !error && !isExecuting && !execution
+  const footer = detail && mode === 'use' && !adminDemoOpen && !loading && !error && !isExecuting && !execution
     ? (
           <div className="space-y-2">
             {!generationAvailable && (
@@ -134,25 +180,35 @@ export const TemplateExperienceModal = ({
       )
     : null;
 
-  const modalTitle = mode === 'view'
+  const modalTitleText = mode === 'view'
     ? 'Template preview'
-    : isExecuting
+    : adminDemoOpen && adminDemoStage === 'running'
+      ? 'Generating...'
+      : adminDemoOpen && adminDemoStage === 'result'
+        ? 'Completed'
+        : isExecuting
       ? 'Generating...'
       : execution?.status === 'completed'
         ? 'Completed'
         : execution?.status === 'failed'
           ? 'Generation failed'
           : 'Quick Use';
+  const modalTitle = mode === 'use' && isAdmin && !adminDemoOpen && !execution && !isBusy
+    ? <button type="button" onClick={() => setAdminDemoOpen(true)} className="select-none text-left">{modalTitleText}</button>
+    : modalTitleText;
 
   return (
     <Modal
       isOpen={isOpen}
-      onClose={onClose}
+      onClose={() => {
+        if (adminDemoOpen) resetAdminDemo(true);
+        onClose();
+      }}
       title={modalTitle}
       size={mode === 'view' ? 'xl' : 'md'}
       footer={footer}
       className={mode === 'view' ? 'max-w-5xl' : 'max-w-xl'}
-      dismissible={!isExecuting}
+      dismissible={!isBusy}
     >
       {loading ? (
         <div className="flex min-h-72 items-center justify-center gap-3 text-sm text-slate-500">
@@ -160,6 +216,20 @@ export const TemplateExperienceModal = ({
         </div>
       ) : error && execution?.status !== 'failed' ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">{error}</div>
+      ) : detail && adminDemoOpen && mode === 'use' ? (
+        <AdminQuickUseDemo
+          assetType={adminDemoAssetType}
+          detail={detail}
+          files={adminDemoFiles}
+          stage={adminDemoStage}
+          step={adminDemoStep}
+          urls={adminDemoUrls}
+          onAssetTypeChange={(assetType) => { setAdminDemoAssetType(assetType); setAdminDemoFiles([]); }}
+          onClose={() => resetAdminDemo(true)}
+          onFilesChange={setAdminDemoFiles}
+          onGenerate={startAdminDemo}
+          onReset={() => resetAdminDemo(false)}
+        />
       ) : detail && mode === 'view' ? (
         <div className="mx-auto max-w-4xl">
           <ResultMedia result={detail.finalResult} />
@@ -213,11 +283,7 @@ export const TemplateExperienceModal = ({
         </div>
       ) : detail && definition ? (
         <div className="mx-auto max-w-2xl">
-          <div className="mb-6">
-            <div className="text-xs font-semibold uppercase tracking-wider text-purple-600">{detail.name}</div>
-            <h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">{definition.title}</h2>
-            {definition.subtitle && <p className="mt-2 text-sm text-slate-500">{definition.subtitle}</p>}
-          </div>
+          {definition.subtitle && <p className="mb-6 text-sm text-slate-500">{definition.subtitle}</p>}
           <div className="space-y-3">
             {[...definition.blocks]
               .sort((left, right) => Number(right.primary) - Number(left.primary) || left.order - right.order)
@@ -244,6 +310,101 @@ export const TemplateExperienceModal = ({
         </div>
       )}
     </Modal>
+  );
+};
+
+const AdminQuickUseDemo = ({
+  assetType,
+  detail,
+  files,
+  onAssetTypeChange,
+  onClose,
+  onFilesChange,
+  onGenerate,
+  onReset,
+  stage,
+  step,
+  urls,
+}: {
+  assetType: AdminDemoAssetType;
+  detail: RealTemplateDetail;
+  files: File[];
+  onAssetTypeChange: (assetType: AdminDemoAssetType) => void;
+  onClose: () => void;
+  onFilesChange: (files: File[]) => void;
+  onGenerate: () => void;
+  onReset: () => void;
+  stage: AdminDemoStage;
+  step: number;
+  urls: string[];
+}) => {
+  if (stage === 'running') {
+    const progress: QuickUseExecutionProgress = {
+      runId: 'admin-demo',
+      status: 'running',
+      currentStep: step,
+      totalSteps: detail.steps.length,
+      stepTitle: detail.steps[Math.max(0, step - 1)]?.featureName,
+    };
+    return (
+      <div className="mx-auto max-w-3xl py-2">
+        <div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Admin demo result</div>
+        <h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">Your workflow is running</h2>
+        <ExecutionPipeline detail={detail} execution={progress} />
+        <p className="mt-8 text-center text-base font-medium text-slate-600 animate-pulse dark:text-slate-300">Running {progress.stepTitle || 'the current step'}...</p>
+      </div>
+    );
+  }
+
+  if (stage === 'result') {
+    return (
+      <div className="mx-auto max-w-3xl text-center">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"><Check className="h-6 w-6" /></div>
+        <h2 className="text-2xl font-bold text-slate-950 dark:text-white">Demo result is ready</h2>
+        <div className={`mt-6 ${assetType === 'image_group' ? 'grid grid-cols-2 gap-3' : ''}`}>
+          {urls.map((url, index) => assetType === 'video'
+            ? <video key={url} src={url} className="max-h-[60vh] w-full rounded-2xl bg-black object-contain" controls autoPlay playsInline />
+            : <img key={url} src={url} alt={`Demo result ${index + 1}`} className="max-h-[60vh] w-full rounded-2xl bg-slate-100 object-contain dark:bg-slate-950" />)}
+        </div>
+        <div className="mt-5 flex gap-3 border-t border-slate-100 pt-5 dark:border-white/5">
+          <Button variant="secondary" className="flex-1" onClick={onClose}>Close</Button>
+          <Button variant="gradient" className="flex-1" onClick={onReset}>Create another</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const options: Array<{ type: AdminDemoAssetType; label: string; icon: typeof ImageIcon }> = [
+    { type: 'image', label: 'Image', icon: ImageIcon },
+    { type: 'image_group', label: 'Image group', icon: Images },
+    { type: 'video', label: 'Video', icon: Video },
+  ];
+  return (
+    <div className="mx-auto max-w-2xl">
+      <div className="mb-5 rounded-xl border border-dashed border-purple-200 bg-purple-50/50 p-4 text-sm text-purple-800 dark:border-purple-500/25 dark:bg-purple-500/5 dark:text-purple-200">
+        Admin demo only. Uploaded media is returned as the result after the Pipeline animation. No generation API or credits are used.
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {options.map((option) => <button key={option.type} type="button" onClick={() => onAssetTypeChange(option.type)} className={`flex flex-col items-center gap-2 rounded-xl border px-3 py-4 text-xs font-semibold transition ${assetType === option.type ? 'border-purple-500 bg-purple-50 text-purple-700 dark:bg-purple-500/10 dark:text-purple-200' : 'border-slate-200 text-slate-500 hover:border-purple-300 dark:border-slate-700'}`}><option.icon className="h-5 w-5" />{option.label}</button>)}
+      </div>
+      <label className="mt-4 flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50 px-6 text-center transition hover:border-purple-400 dark:border-slate-700 dark:bg-slate-950">
+        <Upload className="h-7 w-7 text-purple-500" />
+        <span className="mt-3 text-sm font-semibold text-slate-700 dark:text-slate-200">Upload {assetType === 'image_group' ? 'images' : assetType}</span>
+        <span className="mt-1 text-xs text-slate-400">{files.length > 0 ? `${files.length} file${files.length === 1 ? '' : 's'} selected` : 'Click to choose from this device'}</span>
+        <input type="file" className="hidden" accept={assetType === 'video' ? 'video/*' : 'image/*'} multiple={assetType === 'image_group'} onChange={(event) => { onFilesChange(Array.from(event.target.files || [])); event.target.value = ''; }} />
+      </label>
+      {urls.length > 0 && (
+        <div className={`mt-4 ${assetType === 'image_group' ? 'grid grid-cols-3 gap-2' : ''}`}>
+          {urls.map((url, index) => assetType === 'video'
+            ? <video key={url} src={url} className="max-h-56 w-full rounded-xl bg-black object-contain" muted controls playsInline />
+            : <img key={url} src={url} alt={`Selected demo ${index + 1}`} className="max-h-48 w-full rounded-xl bg-slate-100 object-contain dark:bg-slate-950" />)}
+        </div>
+      )}
+      <div className="mt-5 flex gap-3">
+        <Button variant="secondary" className="flex-1" onClick={onClose}>Back</Button>
+        <Button variant="gradient" className="flex-1" disabled={files.length === 0} onClick={onGenerate}>Generate</Button>
+      </div>
+    </div>
   );
 };
 
@@ -311,6 +472,7 @@ const QuickUseInput = ({
   value: QuickUseInputValue;
 }) => {
   const [showExample, setShowExample] = useState(false);
+  const [exampleExpanded, setExampleExpanded] = useState(false);
   const defaultValue = block.defaultValue ?? (block.control === 'toggle' ? false : null);
   const isCustom = value instanceof File || value !== defaultValue;
   const content = (
@@ -323,25 +485,40 @@ const QuickUseInput = ({
         ) : <span />}
         {isCustom && <button type="button" onClick={() => onChange(defaultValue)} className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-purple-600"><RotateCcw className="h-3.5 w-3.5" />Reset</button>}
       </div>
-      {showExample && block.example?.kind === 'media' && exampleUrl && <ExampleMedia assetType={block.example.assetType} url={exampleUrl} />}
+      {showExample && block.example?.kind === 'media' && exampleUrl && <ExampleMedia assetType={block.example.assetType} url={exampleUrl} onExpand={() => setExampleExpanded(true)} />}
     </div>
   );
+  const lightbox = exampleExpanded && block.example?.kind === 'media' && exampleUrl && typeof document !== 'undefined'
+    ? createPortal(
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Example preview">
+          <button type="button" onClick={() => setExampleExpanded(false)} className="absolute right-5 top-5 rounded-full bg-white/10 p-2 text-white transition hover:bg-white/20" aria-label="Close example preview"><X className="h-6 w-6" /></button>
+          <div className="flex max-h-[90vh] w-full max-w-6xl items-center justify-center"><ExpandedExampleMedia assetType={block.example.assetType} url={exampleUrl} /></div>
+        </div>,
+        document.body,
+      )
+    : null;
   if (block.primary) {
     return (
-      <div className="rounded-2xl border border-purple-300 bg-purple-50/40 p-4 dark:border-purple-500/30 dark:bg-purple-500/5">
-        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">{block.title}{block.required && <span className="ml-1 text-red-500">*</span>}</div>
-        {content}
-      </div>
+      <>
+        <div className="rounded-2xl border border-purple-300 bg-purple-50/40 p-4 dark:border-purple-500/30 dark:bg-purple-500/5">
+          <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">{block.title}{block.required && <span className="ml-1 text-red-500">*</span>}</div>
+          {content}
+        </div>
+        {lightbox}
+      </>
     );
   }
   return (
-    <details defaultOpen={block.openByDefault} className="group rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
-      <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-200">
-        <span className="px-4 py-3.5">{block.title}{block.required && <span className="ml-1 text-red-500">*</span>}</span>
-        <span className="flex items-center gap-2 px-4 py-3.5"><span className={`text-xs font-normal ${isCustom ? 'text-purple-600 dark:text-purple-300' : 'text-slate-400'}`}>{isCustom ? 'Custom' : 'Default'}</span><ChevronDown className="h-4 w-4 transition group-open:rotate-180" /></span>
-      </summary>
-      <div className="border-t border-slate-100 p-4 dark:border-white/5">{content}</div>
-    </details>
+    <>
+      <details defaultOpen={block.openByDefault} className="group rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+        <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-200">
+          <span className="px-4 py-3.5">{block.title}{block.required && <span className="ml-1 text-red-500">*</span>}</span>
+          <span className="flex items-center gap-2 px-4 py-3.5"><span className={`text-xs font-normal ${isCustom ? 'text-purple-600 dark:text-purple-300' : 'text-slate-400'}`}>{isCustom ? 'Custom' : 'Default'}</span><ChevronDown className="h-4 w-4 transition group-open:rotate-180" /></span>
+        </summary>
+        <div className="border-t border-slate-100 p-4 dark:border-white/5">{content}</div>
+      </details>
+      {lightbox}
+    </>
   );
 };
 
@@ -397,10 +574,16 @@ const ResultMedia = ({ result }: { result: RealTemplateDetail['finalResult'] }) 
   </div>
 );
 
-const ExampleMedia = ({ assetType, url }: { assetType: 'image' | 'video' | 'audio'; url: string }) => {
-  if (assetType === 'video') return <video src={url} className="max-h-48 w-full rounded-lg object-cover" controls playsInline />;
+const ExampleMedia = ({ assetType, onExpand, url }: { assetType: 'image' | 'video' | 'audio'; onExpand: () => void; url: string }) => {
+  if (assetType === 'video') return <div className="relative"><video src={url} className="max-h-72 w-full rounded-lg bg-slate-950 object-contain" controls playsInline /><button type="button" onClick={onExpand} className="absolute right-2 top-2 rounded-lg bg-slate-950/70 px-2.5 py-1.5 text-xs font-semibold text-white">Expand</button></div>;
   if (assetType === 'audio') return <audio src={url} className="w-full" controls />;
-  return <img src={url} alt="Input example" className="max-h-48 w-full rounded-lg object-cover" />;
+  return <button type="button" onClick={onExpand} className="block w-full overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-950"><img src={url} alt="Input example" className="max-h-72 w-full object-contain" /></button>;
+};
+
+const ExpandedExampleMedia = ({ assetType, url }: { assetType: 'image' | 'video' | 'audio'; url: string }) => {
+  if (assetType === 'video') return <video src={url} className="max-h-[85vh] w-full bg-black object-contain" controls autoPlay playsInline />;
+  if (assetType === 'audio') return <audio src={url} className="w-full" controls autoPlay />;
+  return <img src={url} alt="Example preview" className="max-h-[85vh] w-full object-contain" />;
 };
 
 const ExecutionResultMedia = ({ result }: { result: { type: 'image' | 'video'; url: string } }) => (
