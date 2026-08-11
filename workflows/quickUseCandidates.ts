@@ -1,15 +1,15 @@
-import { getWorkflowCapability } from './registry';
+import { getWorkflowCapability } from './registry.js';
 import type {
   JsonPrimitive,
   WorkflowDefinition,
   WorkflowStep,
 } from './types';
-import { validateWorkflowDefinition } from './validators';
+import { validateWorkflowDefinition } from './validators.js';
 import {
   compileDialoguePrompt,
   createDefaultDialogueValue,
   serializeDialogueValue,
-} from './dialoguePrompt';
+} from './dialoguePrompt.js';
 import type {
   QuickUseCandidate,
   QuickUseCandidateBinding,

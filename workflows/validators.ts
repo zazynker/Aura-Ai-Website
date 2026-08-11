@@ -1,5 +1,5 @@
-import { WORKFLOW_CAPABILITIES } from './registry';
-import { getWorkflowInputPromptTokenSlots } from './promptInputTokens';
+import { WORKFLOW_CAPABILITIES } from './registry.js';
+import { getWorkflowInputPromptTokenSlots } from './promptInputTokens.js';
 import {
   WORKFLOW_MAX_INSTRUCTION_LENGTH,
   WORKFLOW_MAX_STEP_ID_LENGTH,
@@ -7,7 +7,7 @@ import {
   WORKFLOW_MAX_TITLE_LENGTH,
   WORKFLOW_MIN_STEPS,
   WORKFLOW_SCHEMA_VERSION,
-} from './schema';
+} from './schema.js';
 import {
   CapabilityParameterDefinition,
   JsonObject,

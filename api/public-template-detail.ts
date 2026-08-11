@@ -5,8 +5,8 @@ import {
   QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX,
   deriveQuickUseCandidates,
   toQuickUsePresentationDefinition,
-} from '../workflows/quickUseCandidates';
-import { validateQuickUseDefinition } from '../workflows/quickUseValidators';
+} from '../workflows/quickUseCandidates.js';
+import { validateQuickUseDefinition } from '../workflows/quickUseValidators.js';
 
 export const config = { maxDuration: 30 };
 

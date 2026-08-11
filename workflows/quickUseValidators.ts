@@ -2,7 +2,7 @@ import {
   createQuickUseExampleAssetKey,
   deriveQuickUseCandidates,
   getSuggestedQuickUseControl,
-} from './quickUseCandidates';
+} from './quickUseCandidates.js';
 import {
   QUICK_USE_SCHEMA_VERSION,
   type QuickUseBlockDefinition,
@@ -11,7 +11,7 @@ import {
   type QuickUseDefinition,
   type QuickUseValidationIssue,
   type QuickUseValidationResult,
-} from './quickUseTypes';
+} from './quickUseTypes.js';
 
 const PROMPT_INPUT_KINDS = new Set(['text', 'textarea', 'dialogue']);
 const CONTROL_TYPES = new Set<QuickUseControlType>([
