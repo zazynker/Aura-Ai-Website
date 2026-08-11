@@ -270,7 +270,10 @@ function deriveMaterialCandidates(
         capability: step.capability,
         capabilityVersion: step.capabilityVersion,
         label: slot.label,
-        required: input.required || slot.required,
+        required: Boolean(
+          (input.required || slot.required)
+          && !(input.source === 'template_asset' && input.templateAssetId),
+        ),
         assetType: slot.assetType,
         acceptedMimeTypes: [...slot.acceptedMimeTypes],
         maxCount: slot.maxCount,
@@ -434,7 +437,9 @@ function derivePromptVariableCandidates(
           capability: step.capability,
           capabilityVersion: step.capabilityVersion,
           label: variable.label,
-          required: variable.required,
+          // Prompt Variables always retain their Workflow default, so the
+          // Quick Use Builder decides whether user input is required.
+          required: false,
           defaultValue: variable.defaultValue,
           inputKind: variable.inputKind,
         };
@@ -450,8 +455,17 @@ function deriveSettingCandidates(
 ): void {
   workflow.steps.forEach((step) => {
     const capability = getWorkflowCapability(step.capability);
+    const isMidjourneyImageStep = step.capability === 'image.text_to_image'
+      && step.parameters.model === 'mj-v8.1';
     capability.parameters
-      .filter((parameter) => parameter.editable && parameter.key !== 'prompt')
+      .filter((parameter) => {
+        if (!parameter.editable || parameter.key === 'prompt') return false;
+        // Midjourney is intentionally much more constrained in Quick Use.
+        // Its prompt can still expose explicit Prompt Variables, but the only
+        // registry Setting an end user may override is the aspect ratio.
+        if (isMidjourneyImageStep) return parameter.key === 'ratio';
+        return true;
+      })
       .forEach((parameter) => {
         const binding = {
           kind: 'workflow_parameter' as const,
@@ -471,7 +485,9 @@ function deriveSettingCandidates(
           capability: step.capability,
           capabilityVersion: step.capabilityVersion,
           label: parameter.label,
-          required: parameter.required,
+          // A registry-required Setting with a version default can remain
+          // optional in Quick Use; omitting it preserves the Workflow value.
+          required: parameter.required && defaultValue === undefined,
           parameterType: parameter.type,
         };
         if (defaultValue !== undefined) candidate.defaultValue = defaultValue;

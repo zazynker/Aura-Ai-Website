@@ -1359,22 +1359,16 @@ export const TemplateBuilder = () => {
       <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-white/10 sticky top-16 z-40">
         <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
-            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">Build a workflow template</h1>
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-white">
+              Build a workflow template
+              {isAdminTemplateMode && (
+                <span className="ml-2 text-sm font-medium text-purple-600 dark:text-purple-400">
+                  (Admin Mode)
+                </span>
+              )}
+            </h1>
           </div>
           <div className="flex items-center gap-4">
-            {user?.isAdmin && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleAdminTemplateModeToggle}
-                disabled={reviewState === 'submitted'}
-                className={isAdminTemplateMode
-                  ? 'border-purple-400 bg-purple-50 text-purple-700 dark:border-purple-500/60 dark:bg-purple-500/10 dark:text-purple-200'
-                  : undefined}
-              >
-                Admin Template Mode
-              </Button>
-            )}
             {reviewState === 'submitted' && (
               <Button variant="outline" size="sm" onClick={handleBuildAnother}>
                 <Plus className="h-4 w-4" />
@@ -1445,7 +1439,7 @@ export const TemplateBuilder = () => {
                 Define user-replaceable inputs and prompt variables here. Quick Use layout is configured separately.
               </div>
             </div>
-            <div className="flex flex-wrap gap-2 text-xs font-medium text-purple-800 dark:text-purple-200">
+            <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-purple-800 dark:text-purple-200">
               <span className="rounded-full bg-white/80 px-3 py-1 dark:bg-slate-900/60">
                 {adminDefinition.replaceableMaterials.length} materials
               </span>
@@ -1455,6 +1449,13 @@ export const TemplateBuilder = () => {
               <span className="rounded-full bg-white/80 px-3 py-1 dark:bg-slate-900/60">
                 {settingCandidates.length} registry settings
               </span>
+              <button
+                type="button"
+                onClick={handleAdminTemplateModeToggle}
+                className="ml-1 font-semibold text-purple-700 underline decoration-dotted underline-offset-2 hover:text-purple-900 dark:text-purple-300 dark:hover:text-purple-100"
+              >
+                Exit Admin Mode
+              </button>
             </div>
           </div>
         </div>
@@ -1657,7 +1658,26 @@ export const TemplateBuilder = () => {
             {/* Section 1: Result */}
             <section>
               <h3 className="text-base font-semibold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-                <span className="w-6 h-6 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 flex items-center justify-center text-sm">1</span>
+                <button
+                  type="button"
+                  disabled={!user?.isAdmin || reviewState === 'submitted'}
+                  onClick={handleAdminTemplateModeToggle}
+                  className={`flex h-6 w-6 items-center justify-center rounded-full text-sm font-semibold transition-all ${
+                    isAdminTemplateMode
+                      ? 'cursor-pointer bg-purple-600 text-white shadow-[0_0_12px_rgba(168,85,247,0.6)] ring-4 ring-purple-500/30 dark:ring-purple-400/30'
+                      : user?.isAdmin && reviewState !== 'submitted'
+                        ? 'cursor-pointer bg-purple-100 text-purple-600 ring-2 ring-purple-500/20 hover:bg-purple-200 dark:bg-purple-900/40 dark:text-purple-400 dark:hover:bg-purple-900/60'
+                        : 'bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400'
+                  }`}
+                  title={user?.isAdmin
+                    ? isAdminTemplateMode
+                      ? 'Exit Admin Template Mode'
+                      : 'Activate Admin Template Mode'
+                    : undefined}
+                  aria-label={isAdminTemplateMode ? 'Exit Admin Template Mode' : 'Activate Admin Template Mode'}
+                >
+                  1
+                </button>
                 <span>
                   Result from This Step
                   <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">

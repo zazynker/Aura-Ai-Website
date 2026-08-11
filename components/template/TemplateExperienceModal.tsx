@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, Loader2, Minus, Play, Upload } from 'lucide-react';
+import { Check, ChevronDown, Download, Eye, Loader2, Minus, Play, RotateCcw, Upload } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import type { RealTemplateDetail } from '../../utils/templateDetailApi';
@@ -13,6 +13,26 @@ import type { QuickUseExecutionProgress } from '../../utils/quickUseExecutor';
 
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
+
+const downloadGeneratedResult = async (
+  result: { type: 'image' | 'video'; url: string },
+): Promise<void> => {
+  const extension = result.type === 'video' ? 'mp4' : 'png';
+  try {
+    const response = await fetch(result.url);
+    if (!response.ok) throw new Error('Download failed.');
+    const objectUrl = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = `lazora-template-result.${extension}`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000);
+  } catch {
+    window.open(result.url, '_blank', 'noopener,noreferrer');
+  }
+};
 
 interface TemplateExperienceModalProps {
   isOpen: boolean;
@@ -132,9 +152,9 @@ export const TemplateExperienceModal = ({
       isOpen={isOpen}
       onClose={onClose}
       title={mode === 'view' ? detail?.name || 'Template preview' : 'Quick Use'}
-      size="xl"
+      size={mode === 'view' ? 'xl' : 'md'}
       footer={footer}
-      className="max-w-5xl"
+      className={mode === 'view' ? 'max-w-5xl' : 'max-w-xl'}
     >
       {loading ? (
         <div className="flex min-h-72 items-center justify-center gap-3 text-sm text-slate-500">
@@ -161,7 +181,15 @@ export const TemplateExperienceModal = ({
         <div className="mx-auto max-w-3xl text-center">
           <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"><Check className="h-6 w-6" /></div>
           <h2 className="text-2xl font-bold text-slate-950 dark:text-white">Your {execution.result.type} is ready</h2>
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-emerald-600 dark:text-emerald-300">
+            {detail.steps.map((step) => <span key={step.id} className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" />{step.featureName}</span>)}
+            <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" />Done</span>
+          </div>
           <div className="mt-6"><ExecutionResultMedia result={execution.result} /></div>
+          <div className="mt-5 flex gap-3 border-t border-slate-100 pt-5 dark:border-white/5">
+            <Button variant="secondary" className="flex-1" onClick={onClose}>Close</Button>
+            <Button variant="gradient" className="flex-1" onClick={() => void downloadGeneratedResult(execution.result!)}><Download className="mr-2 h-4 w-4" />Download</Button>
+          </div>
         </div>
       ) : detail && isExecuting ? (
         <div className="mx-auto max-w-3xl">
@@ -236,46 +264,62 @@ const QuickUseInput = ({
   onChange: (value: QuickUseInputValue) => void;
   value: QuickUseInputValue;
 }) => {
+  const [showExample, setShowExample] = useState(false);
+  const defaultValue = block.defaultValue ?? (block.control === 'toggle' ? false : null);
+  const isCustom = value instanceof File || value !== defaultValue;
   const content = (
     <div className="space-y-3">
-      <div>
-        <div className="text-sm font-semibold text-slate-900 dark:text-white">{block.title}{block.required && <span className="ml-1 text-red-500">*</span>}</div>
-        {block.subtitle && <div className="mt-1 text-xs text-slate-500">{block.subtitle}</div>}
-      </div>
+      {block.subtitle && <div className="text-xs text-slate-500">{block.subtitle}</div>}
       <QuickUseControl block={block} candidate={candidate} value={value} onChange={onChange} />
-      {block.example?.kind === 'text' && block.example.value && <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-500 dark:bg-slate-950">Example: {block.example.value}</div>}
-      {block.example?.kind === 'media' && exampleUrl && <ExampleMedia assetType={block.example.assetType} url={exampleUrl} />}
+      <div className="flex items-center justify-between gap-3">
+        {block.example?.kind === 'media' && exampleUrl ? (
+          <button type="button" onClick={() => setShowExample((visible) => !visible)} className="inline-flex items-center gap-1.5 text-xs font-medium text-purple-600 hover:text-purple-700 dark:text-purple-300"><Eye className="h-3.5 w-3.5" />{showExample ? 'Hide example' : 'View example'}</button>
+        ) : <span />}
+        {isCustom && <button type="button" onClick={() => onChange(defaultValue)} className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-purple-600"><RotateCcw className="h-3.5 w-3.5" />Reset</button>}
+      </div>
+      {showExample && block.example?.kind === 'media' && exampleUrl && <ExampleMedia assetType={block.example.assetType} url={exampleUrl} />}
     </div>
   );
-  if (block.primary || block.openByDefault) {
-    return <div className={`rounded-2xl border p-4 ${block.primary ? 'border-purple-300 bg-purple-50/40 dark:border-purple-500/30 dark:bg-purple-500/5' : 'border-slate-200 dark:border-slate-700'}`}>{content}</div>;
+  if (block.primary) {
+    return (
+      <div className="rounded-2xl border border-purple-300 bg-purple-50/40 p-4 dark:border-purple-500/30 dark:bg-purple-500/5">
+        <div className="mb-3 text-sm font-semibold text-slate-900 dark:text-white">{block.title}{block.required && <span className="ml-1 text-red-500">*</span>}</div>
+        {content}
+      </div>
+    );
   }
   return (
-    <details className="group rounded-2xl border border-slate-200 p-4 dark:border-slate-700">
+    <details defaultOpen={block.openByDefault} className="group rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       <summary className="flex cursor-pointer list-none items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-200">
-        <span>{block.title} <span className="font-normal text-slate-400">· Default</span></span>
-        <ChevronDown className="h-4 w-4 transition group-open:rotate-180" />
+        <span className="px-4 py-3.5">{block.title}{block.required && <span className="ml-1 text-red-500">*</span>}</span>
+        <span className="flex items-center gap-2 px-4 py-3.5"><span className={`text-xs font-normal ${isCustom ? 'text-purple-600 dark:text-purple-300' : 'text-slate-400'}`}>{isCustom ? 'Custom' : 'Default'}</span><ChevronDown className="h-4 w-4 transition group-open:rotate-180" /></span>
       </summary>
-      <div className="mt-4 border-t border-slate-100 pt-4 dark:border-white/5">{content}</div>
+      <div className="border-t border-slate-100 p-4 dark:border-white/5">{content}</div>
     </details>
   );
 };
 
 const QuickUseControl = ({ block, candidate, onChange, value }: { block: QuickUseBlockDefinition; candidate?: QuickUsePresentationCandidate; onChange: (value: QuickUseInputValue) => void; value: QuickUseInputValue }) => {
   const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:ring-purple-500/10';
+  const placeholder = block.placeholder || (block.example?.kind === 'text' ? block.example.value : undefined);
   if (block.control === 'image_upload' || block.control === 'video_upload' || block.control === 'audio_upload') {
     return (
-      <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-white px-4 text-center hover:border-purple-300 dark:border-slate-700 dark:bg-slate-900">
-        <Upload className="h-5 w-5 text-purple-500" /><span className="mt-2 text-xs font-medium text-slate-600 dark:text-slate-300">{value instanceof File ? value.name : `Upload ${candidate?.assetType || block.control.split('_')[0]}`}</span>
+      <label
+        className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-white px-4 text-center hover:border-purple-300 dark:border-slate-700 dark:bg-slate-900 ${block.primary ? 'min-h-52' : 'min-h-28'}`}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => { event.preventDefault(); onChange(event.dataTransfer.files?.[0] || null); }}
+      >
+        <Upload className="h-6 w-6 text-purple-500" /><span className="mt-3 text-sm font-medium text-slate-600 dark:text-slate-300">{value instanceof File ? value.name : 'Drag & drop or click to upload'}</span>
+        <span className="mt-1 text-xs text-slate-400">{value instanceof File ? 'Click to replace' : `Upload ${candidate?.assetType || block.control.split('_')[0]}`}</span>
         <input type="file" className="hidden" accept={candidate?.acceptedMimeTypes?.join(',') || `${candidate?.assetType || 'image'}/*`} onChange={(event) => onChange(event.target.files?.[0] || null)} />
       </label>
     );
   }
   if (block.control === 'toggle') return <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm dark:border-slate-700"><span>{block.placeholder || 'Enabled'}</span><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-purple-600" /></label>;
   if (block.control === 'select') return <select className={inputClass} value={String(value ?? '')} onChange={(event) => { const option = candidate?.enumValues?.find((item) => String(item) === event.target.value); onChange(option ?? event.target.value); }}>{candidate?.enumValues?.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}</select>;
-  if (block.control === 'number') return <input type="number" className={inputClass} value={typeof value === 'number' ? value : ''} min={candidate?.min} max={candidate?.max} step={candidate?.step} placeholder={block.placeholder} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} />;
-  if (block.control === 'textarea' || block.control === 'dialogue') return <textarea className={`${inputClass} min-h-24 resize-y`} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={block.placeholder} onChange={(event) => onChange(event.target.value)} />;
-  return <input className={inputClass} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={block.placeholder} onChange={(event) => onChange(event.target.value)} />;
+  if (block.control === 'number') return <input type="number" className={inputClass} value={typeof value === 'number' ? value : ''} min={candidate?.min} max={candidate?.max} step={candidate?.step} placeholder={placeholder} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} />;
+  if (block.control === 'textarea' || block.control === 'dialogue') return <textarea className={`${inputClass} min-h-24 resize-y`} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />;
+  return <input className={inputClass} maxLength={candidate?.maxLength} value={typeof value === 'string' ? value : ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />;
 };
 
 const ResultMedia = ({ className = '', compact = false, result }: { className?: string; compact?: boolean; result: RealTemplateDetail['finalResult'] }) => (

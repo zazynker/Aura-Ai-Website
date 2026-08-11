@@ -38,7 +38,11 @@ export function addQuickUseBlock(
     ...definition,
     blocks: [
       ...definition.blocks,
-      createQuickUseBlock(candidate, definition.blocks.length + 1, definition.blocks.length === 0),
+      createQuickUseBlock(
+        candidate,
+        definition.blocks.length + 1,
+        candidate.kind === 'material' && !definition.blocks.some((block) => block.primary),
+      ),
     ],
   };
 }
@@ -47,16 +51,30 @@ export function removeQuickUseBlock(
   definition: QuickUseDefinition,
   candidateId: QuickUseCandidateId,
 ): QuickUseDefinition {
-  const removed = definition.blocks.find((block) => block.candidateId === candidateId);
   const remaining = definition.blocks.filter((block) => block.candidateId !== candidateId);
-  const shouldPromote = Boolean(removed?.primary && remaining.length > 0);
   return {
     ...definition,
     blocks: remaining.map((block, index) => ({
       ...block,
       order: index + 1,
-      primary: shouldPromote && index === 0 ? true : block.primary,
     })),
+  };
+}
+
+export function reorderQuickUseBlock(
+  definition: QuickUseDefinition,
+  candidateId: QuickUseCandidateId,
+  targetCandidateId: QuickUseCandidateId,
+): QuickUseDefinition {
+  const sourceIndex = definition.blocks.findIndex((block) => block.candidateId === candidateId);
+  const targetIndex = definition.blocks.findIndex((block) => block.candidateId === targetCandidateId);
+  if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return definition;
+  const blocks = [...definition.blocks];
+  const [source] = blocks.splice(sourceIndex, 1);
+  blocks.splice(targetIndex, 0, source);
+  return {
+    ...definition,
+    blocks: blocks.map((block, index) => ({ ...block, order: index + 1 })),
   };
 }
 
