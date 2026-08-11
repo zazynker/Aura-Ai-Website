@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, Heart, Share2, Crown, Plus, Check, Loader2, Workflow, Play, Eye } from 'lucide-react';
+import { AlertCircle, Search, Heart, Share2, Crown, Plus, Check, Loader2, Maximize2, Workflow, Play, Eye } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Template } from '../types';
 import { Modal } from '../components/ui/Modal';
@@ -343,6 +343,13 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const lastScrollY = useRef(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const experienceRequestRef = useRef(0);
+  const quickUseIsRunning = executionProgress?.status === 'preparing' || executionProgress?.status === 'running';
+
+  useEffect(() => {
+    if (quickUseIsRunning) document.body.dataset.quickUseRunning = 'true';
+    else delete document.body.dataset.quickUseRunning;
+    return () => { delete document.body.dataset.quickUseRunning; };
+  }, [quickUseIsRunning]);
 
   // Filter Options
   const categories = ['All', 'Cosmetic', 'Candle', 'Bath Body', 'Sports', 'Baby', 'Mens Care'];
@@ -647,6 +654,11 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       addToast('error', message);
       setExperienceMinimized(false);
     }
+  };
+
+  const resetQuickUseExecution = () => {
+    setExecutionProgress(null);
+    setExperienceError(null);
   };
 
   const handleAction = (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => {
@@ -1000,25 +1012,37 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
             onUse={switchExperienceToUse}
             onGenerate={handleQuickUseGenerate}
             onMinimize={() => setExperienceMinimized(true)}
+            onReset={resetQuickUseExecution}
           />
         </React.Suspense>
       )}
       {experienceMode && experienceMinimized && executionProgress && (
-        <button
-          type="button"
-          onClick={() => setExperienceMinimized(false)}
-          className="fixed bottom-6 right-6 z-[70] flex min-w-72 items-center gap-3 rounded-2xl border border-white/20 bg-slate-950 px-4 py-3 text-left text-white shadow-2xl"
-        >
-          {executionProgress.status === 'completed'
-            ? <Check className="h-5 w-5 text-emerald-400" />
-            : executionProgress.status === 'failed'
-              ? <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
-              : <Loader2 className="h-5 w-5 animate-spin text-purple-400" />}
-          <span className="flex-1">
-            <span className="block text-sm font-semibold">{executionProgress.status === 'completed' ? 'Your result is ready' : executionProgress.status === 'failed' ? 'Generation needs attention' : 'Generating your Template'}</span>
-            <span className="block text-xs text-slate-400">{executionProgress.status === 'completed' ? 'View Result' : executionProgress.stepTitle || 'Preparing workflow'} · Expand</span>
-          </span>
-        </button>
+        <div className="fixed bottom-6 right-6 z-[70] w-[min(23rem,calc(100vw-2rem))] animate-in slide-in-from-bottom-5 fade-in duration-300">
+          <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-white/10 dark:bg-slate-900">
+            <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800">
+              {selectedTemplateForModal?.imageUrl ? <img src={selectedTemplateForModal.imageUrl} alt="" className="h-full w-full object-cover" /> : <Workflow className="m-3 h-6 w-6 text-purple-500" />}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className={`flex items-center gap-1.5 text-sm font-bold ${executionProgress.status === 'failed' ? 'text-red-600' : 'text-slate-900 dark:text-white'}`}>
+                {executionProgress.status === 'completed' ? <Check className="h-4 w-4 text-emerald-500" /> : executionProgress.status === 'failed' ? <AlertCircle className="h-4 w-4" /> : null}
+                {executionProgress.status === 'completed' ? 'Your result is ready' : executionProgress.status === 'failed' ? 'Generation needs attention' : executionProgress.stepTitle || 'Preparing workflow'}
+              </div>
+              {executionProgress.status === 'preparing' || executionProgress.status === 'running' ? (
+                <div className="mt-2 flex items-center gap-1.5">
+                  {Array.from({ length: executionProgress.totalSteps + 1 }, (_, index) => {
+                    const nodeNumber = index + 1;
+                    const completed = nodeNumber < executionProgress.currentStep;
+                    const active = index < executionProgress.totalSteps && nodeNumber === Math.max(1, executionProgress.currentStep);
+                    return <React.Fragment key={nodeNumber}>{index > 0 && <span className={`h-0.5 w-4 ${completed ? 'bg-purple-500' : 'bg-slate-200 dark:bg-slate-700'}`} />}<span className={`flex h-3.5 w-3.5 items-center justify-center rounded-full ${completed ? 'bg-purple-500' : active ? 'bg-purple-500 animate-pulse' : 'bg-slate-200 dark:bg-slate-700'}`}>{completed && <Check className="h-2.5 w-2.5 text-white" />}</span></React.Fragment>;
+                  })}
+                </div>
+              ) : <div className="mt-1 text-xs text-slate-500">{executionProgress.status === 'completed' ? 'View Result' : 'Open for details or retry'}</div>}
+            </div>
+            <button type="button" onClick={() => setExperienceMinimized(false)} className="shrink-0 rounded-full border border-slate-200 p-2 text-slate-500 shadow-sm transition hover:bg-slate-50 hover:text-purple-600 dark:border-white/10 dark:hover:bg-white/5" aria-label={executionProgress.status === 'completed' ? 'View result' : 'Expand generation'}>
+              {executionProgress.status === 'completed' ? <span className="px-1 text-xs font-semibold text-purple-600 dark:text-purple-300">View Result</span> : <Maximize2 className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
       )}
       <AuthGateModal
         isOpen={modalType === 'auth'}

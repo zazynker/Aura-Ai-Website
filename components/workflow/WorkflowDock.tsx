@@ -183,6 +183,7 @@ export const WorkflowDock = () => {
     return (
       <div 
         ref={dockRef}
+        data-workflow-dock
         className="fixed z-[100] cursor-grab active:cursor-grabbing rounded-full touch-none select-none w-12 h-12 bg-pink-500 shadow-lg flex items-center justify-center hover:scale-110 transition-transform hover:shadow-pink-500/50"
         style={{ left: position.x, top: position.y }}
         onPointerDown={handlePointerDown}
@@ -200,6 +201,7 @@ export const WorkflowDock = () => {
     <>
       <div 
         ref={dockRef}
+        data-workflow-dock
         className="fixed z-[100] flex flex-col items-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-md rounded-full p-2 shadow-xl border border-slate-200 dark:border-slate-800 touch-none select-none"
         style={{ left: position.x, top: position.y }}
         onPointerDown={handlePointerDown}

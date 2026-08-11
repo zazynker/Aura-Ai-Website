@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, ChevronDown, Download, Eye, Loader2, Minus, RotateCcw, Upload } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, Download, Eye, Loader2, Minus, RotateCcw, Upload } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import type { RealTemplateDetail } from '../../utils/templateDetailApi';
@@ -48,6 +48,7 @@ interface TemplateExperienceModalProps {
   onUse: () => void;
   onGenerate?: (values: QuickUseInputValues) => void | Promise<void>;
   onMinimize?: () => void;
+  onReset?: () => void;
 }
 
 export function validateQuickUseInputValues(
@@ -76,6 +77,7 @@ export const TemplateExperienceModal = ({
   onClose,
   onGenerate,
   onMinimize,
+  onReset,
   onUse,
 }: TemplateExperienceModalProps) => {
   const [values, setValues] = useState<QuickUseInputValues>({});
@@ -112,16 +114,8 @@ export const TemplateExperienceModal = ({
 
   const isExecuting = execution?.status === 'preparing' || execution?.status === 'running';
 
-  const footer = detail && !loading && !error && !isExecuting && execution?.status !== 'completed'
-    ? mode === 'view'
-      ? (
-          <div className="flex justify-end">
-            <Button variant="gradient" onClick={onUse} disabled={!definition?.blocks.length}>
-              Use this template
-            </Button>
-          </div>
-        )
-      : (
+  const footer = detail && mode === 'use' && !loading && !error && !isExecuting && !execution
+    ? (
           <div className="space-y-2">
             {!generationAvailable && (
               <p className="text-center text-xs text-slate-500">
@@ -137,23 +131,34 @@ export const TemplateExperienceModal = ({
               Generate
             </Button>
           </div>
-        )
+      )
     : null;
+
+  const modalTitle = mode === 'view'
+    ? 'Template preview'
+    : isExecuting
+      ? 'Generating...'
+      : execution?.status === 'completed'
+        ? 'Completed'
+        : execution?.status === 'failed'
+          ? 'Generation failed'
+          : 'Quick Use';
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={mode === 'view' ? detail?.name || 'Template preview' : 'Quick Use'}
+      title={modalTitle}
       size={mode === 'view' ? 'xl' : 'md'}
       footer={footer}
       className={mode === 'view' ? 'max-w-5xl' : 'max-w-xl'}
+      dismissible={!isExecuting}
     >
       {loading ? (
         <div className="flex min-h-72 items-center justify-center gap-3 text-sm text-slate-500">
           <Loader2 className="h-5 w-5 animate-spin" /> Loading published template...
         </div>
-      ) : error ? (
+      ) : error && execution?.status !== 'failed' ? (
         <div className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-700 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-300">{error}</div>
       ) : detail && mode === 'view' ? (
         <div className="mx-auto max-w-4xl">
@@ -161,7 +166,10 @@ export const TemplateExperienceModal = ({
           <div className="px-1 pt-5">
             <h2 className="text-2xl font-bold text-slate-950 dark:text-white">{detail.name}</h2>
             {detail.description && <p className="mt-2 text-sm leading-6 text-slate-500">{detail.description}</p>}
-            <div className="mt-4 text-xs font-medium text-slate-500">{detail.usageCount} uses</div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+              <div className="text-xs font-medium text-slate-500">{detail.usageCount} uses</div>
+              <Button variant="gradient" onClick={onUse} disabled={!definition?.blocks.length}>Use this template</Button>
+            </div>
           </div>
         </div>
       ) : detail && execution?.status === 'completed' && execution.result ? (
@@ -184,22 +192,23 @@ export const TemplateExperienceModal = ({
             <div><div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Generating with {detail.name}</div><h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">Your workflow is running</h2></div>
             {onMinimize && <Button variant="secondary" size="sm" onClick={onMinimize}><Minus className="mr-1 h-4 w-4" />Minimize</Button>}
           </div>
-          <div className="mt-10 flex items-center overflow-x-auto pb-2">
-            {detail.steps.map((step, index) => {
-              const completed = index + 1 < (execution?.currentStep || 0);
-              const active = index + 1 === (execution?.currentStep || 0);
-              return (
-                <React.Fragment key={step.id}>
-                  {index > 0 && <div className={`h-0.5 min-w-10 flex-1 ${completed || active ? 'bg-purple-500' : 'bg-slate-200 dark:bg-slate-700'}`} />}
-                  <div className="min-w-32 text-center">
-                    <div className={`mx-auto flex h-10 w-10 items-center justify-center rounded-full border-2 ${completed ? 'border-emerald-500 bg-emerald-500 text-white' : active ? 'border-purple-500 bg-purple-50 text-purple-600 dark:bg-purple-500/10' : 'border-slate-200 text-slate-400 dark:border-slate-700'}`}>
-                      {completed ? <Check className="h-4 w-4" /> : active ? <Loader2 className="h-4 w-4 animate-spin" /> : index + 1}
-                    </div>
-                    <div className="mt-2 text-xs font-medium text-slate-700 dark:text-slate-200">{step.featureName}</div>
-                  </div>
-                </React.Fragment>
-              );
-            })}
+          <ExecutionPipeline detail={detail} execution={execution!} />
+          <p className="mt-8 text-center text-base font-medium text-slate-600 animate-pulse dark:text-slate-300">
+            {execution?.status === 'preparing' ? 'Preparing your workflow...' : `Running ${execution?.stepTitle || 'the current step'}...`}
+          </p>
+        </div>
+      ) : detail && execution?.status === 'failed' ? (
+        <div className="mx-auto max-w-3xl">
+          <ExecutionPipeline detail={detail} execution={execution} />
+          <div className="mt-8 rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-500/20 dark:bg-red-500/10">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+              <div><div className="font-semibold text-red-800 dark:text-red-200">Generation stopped</div><p className="mt-1 text-sm leading-6 text-red-700 dark:text-red-300">{execution.error || error || 'The provider could not complete this step.'}</p></div>
+            </div>
+          </div>
+          <div className="mt-5 flex gap-3">
+            {onReset && <Button variant="secondary" className="flex-1" onClick={onReset}>Edit inputs</Button>}
+            <Button variant="gradient" className="flex-1" onClick={handleGenerate}>Retry</Button>
           </div>
         </div>
       ) : detail && definition ? (
@@ -235,6 +244,56 @@ export const TemplateExperienceModal = ({
         </div>
       )}
     </Modal>
+  );
+};
+
+const ExecutionPipeline = ({
+  detail,
+  execution,
+}: {
+  detail: RealTemplateDetail;
+  execution: QuickUseExecutionProgress;
+}) => {
+  const nodes = [
+    ...detail.steps.map((step, index) => ({ id: step.id, label: step.featureName, stepNumber: index + 1 })),
+    { id: 'done', label: 'Done', stepNumber: detail.steps.length + 1 },
+  ];
+  const stateForNode = (stepNumber: number): 'completed' | 'active' | 'failed' | 'pending' => {
+    if (stepNumber === nodes.length) return execution.status === 'completed' ? 'completed' : 'pending';
+    if (execution.status === 'completed' || stepNumber < execution.currentStep) return 'completed';
+    if (execution.status === 'failed' && stepNumber === Math.max(1, execution.currentStep)) return 'failed';
+    if ((execution.status === 'preparing' && stepNumber === 1) || (execution.status === 'running' && stepNumber === execution.currentStep)) return 'active';
+    return 'pending';
+  };
+
+  return (
+    <div className="mt-10 flex items-start overflow-x-auto px-1 pb-2">
+      {nodes.map((node, index) => {
+        const state = stateForNode(node.stepNumber);
+        const previousState = index > 0 ? stateForNode(nodes[index - 1].stepNumber) : 'pending';
+        return (
+          <React.Fragment key={node.id}>
+            {index > 0 && (
+              <div className={`mt-6 h-0.5 min-w-8 flex-1 transition-colors duration-700 ${previousState === 'completed' ? 'bg-purple-500' : 'bg-slate-200 dark:bg-slate-700'}`} />
+            )}
+            <div className="min-w-24 text-center sm:min-w-28">
+              <div className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full border-2 bg-white transition-all duration-300 dark:bg-slate-900 ${
+                state === 'completed'
+                  ? 'border-purple-500 text-purple-600'
+                  : state === 'active'
+                    ? 'border-purple-500 text-purple-600 shadow-[0_0_18px_rgba(168,85,247,0.35)]'
+                    : state === 'failed'
+                      ? 'border-red-500 bg-red-50 text-red-600 dark:bg-red-500/10'
+                      : 'border-slate-300 text-slate-300 dark:border-slate-700 dark:text-slate-600'
+              }`}>
+                {state === 'completed' ? <Check className="h-5 w-5" /> : state === 'active' ? <Loader2 className="h-5 w-5 animate-spin" /> : state === 'failed' ? <AlertCircle className="h-5 w-5" /> : <span className="h-3.5 w-3.5 rounded-full bg-current" />}
+              </div>
+              <div className={`mt-3 text-xs font-semibold ${state === 'active' ? 'text-purple-600 dark:text-purple-300' : state === 'failed' ? 'text-red-500' : 'text-slate-500 dark:text-slate-400'}`}>{node.label}</div>
+            </div>
+          </React.Fragment>
+        );
+      })}
+    </div>
   );
 };
 
@@ -289,15 +348,36 @@ const QuickUseInput = ({
 const QuickUseControl = ({ block, candidate, onChange, value }: { block: QuickUseBlockDefinition; candidate?: QuickUsePresentationCandidate; onChange: (value: QuickUseInputValue) => void; value: QuickUseInputValue }) => {
   const inputClass = 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:ring-purple-500/10';
   const placeholder = block.placeholder || (block.example?.kind === 'text' ? block.example.value : undefined);
+  const uploadedFile = value instanceof File ? value : null;
+  const previewUrl = useMemo(() => uploadedFile ? URL.createObjectURL(uploadedFile) : null, [uploadedFile]);
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
   if (block.control === 'image_upload' || block.control === 'video_upload' || block.control === 'audio_upload') {
+    const assetType = candidate?.assetType || block.control.split('_')[0];
     return (
       <label
-        className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-200 bg-white px-4 text-center hover:border-purple-300 dark:border-slate-700 dark:bg-slate-900 ${block.primary ? 'min-h-52' : 'min-h-28'}`}
+        className={`group/upload relative flex cursor-pointer flex-col items-center justify-center overflow-hidden rounded-xl border-2 border-dashed border-slate-200 bg-white text-center hover:border-purple-400 dark:border-slate-700 dark:bg-slate-900 ${block.primary ? 'min-h-52' : 'min-h-28'}`}
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => { event.preventDefault(); onChange(event.dataTransfer.files?.[0] || null); }}
       >
-        <Upload className="h-6 w-6 text-purple-500" /><span className="mt-3 text-sm font-medium text-slate-600 dark:text-slate-300">{value instanceof File ? value.name : 'Drag & drop or click to upload'}</span>
-        <span className="mt-1 text-xs text-slate-400">{value instanceof File ? 'Click to replace' : `Upload ${candidate?.assetType || block.control.split('_')[0]}`}</span>
+        {uploadedFile && previewUrl ? (
+          <>
+            {assetType === 'image' ? <img src={previewUrl} alt="Uploaded preview" className="absolute inset-0 h-full w-full object-contain bg-slate-100 dark:bg-slate-950" /> : null}
+            {assetType === 'video' ? <video src={previewUrl} className="absolute inset-0 h-full w-full object-contain bg-slate-950" muted playsInline /> : null}
+            {assetType === 'audio' ? <audio src={previewUrl} className="mx-5 w-[calc(100%-2.5rem)]" controls onClick={(event) => event.preventDefault()} /> : null}
+            <div className={`absolute inset-0 flex items-center justify-center bg-slate-950/0 transition group-hover/upload:bg-slate-950/35 ${assetType === 'audio' ? 'pointer-events-none' : ''}`}>
+              <span className="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-slate-800 opacity-0 shadow transition group-hover/upload:opacity-100">Replace {assetType}</span>
+            </div>
+            <div className="absolute inset-x-0 bottom-0 truncate bg-slate-950/65 px-3 py-2 text-xs font-medium text-white">{uploadedFile.name}</div>
+          </>
+        ) : (
+          <div className="flex flex-col items-center px-4 py-6">
+            <Upload className="h-6 w-6 text-purple-500" />
+            <span className="mt-3 text-sm font-medium text-slate-600 dark:text-slate-300">Drag & drop or click to upload</span>
+            <span className="mt-1 text-xs text-slate-400">Upload {assetType}</span>
+          </div>
+        )}
         <input type="file" className="hidden" accept={candidate?.acceptedMimeTypes?.join(',') || `${candidate?.assetType || 'image'}/*`} onChange={(event) => onChange(event.target.files?.[0] || null)} />
       </label>
     );

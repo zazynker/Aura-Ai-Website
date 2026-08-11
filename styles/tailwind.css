@@ -1,3 +1,6 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+body[data-quick-use-running='true'] [data-workflow-dock] {
+  display: none !important;
+}
