@@ -90,17 +90,17 @@ async function uploadQuickUseFile(
 ): Promise<QuickUseExecutionAsset> {
   if (!globalThis.crypto?.randomUUID) throw new Error('Secure upload identifiers are unavailable in this browser.');
   const extension = file.name.split('.').pop()?.replace(/[^a-z0-9]/gi, '').toLowerCase() || 'bin';
-  const safeCandidate = encodeURIComponent(candidateId).slice(0, 180);
+  const safeCandidate = candidateId.replace(/[^a-z0-9_-]/gi, '_').slice(0, 100) || 'input';
   const path = `${userId}/quick-use-inputs/${safeCandidate}/${crypto.randomUUID()}.${extension}`;
-  const { error } = await supabase.storage.from('user-uploads').upload(path, file, {
+  const { data: uploaded, error } = await supabase.storage.from('user-uploads').upload(path, file, {
     cacheControl: '3600',
     contentType: file.type || 'application/octet-stream',
     upsert: false,
   });
-  if (error) throw new Error(`Could not upload ${file.name}: ${error.message}`);
+  if (error || !uploaded?.path) throw new Error(`Could not upload ${file.name}: ${error?.message || 'storage path missing'}.`);
   const { data, error: signError } = await supabase.storage
     .from('user-uploads')
-    .createSignedUrl(path, 60 * 60);
+    .createSignedUrl(uploaded.path, 60 * 60);
   if (signError || !data?.signedUrl) {
     throw new Error(`Could not prepare ${file.name} for generation: ${signError?.message || 'signed URL missing'}.`);
   }
@@ -186,11 +186,11 @@ async function executeImageStep(
   const resolution = asString(step.parameters.resolution, '1K') as '1K' | '2K' | '4K';
   const model = asString(step.parameters.model, 'gpt-image-2');
   const sourceImageUrl = inputUrl('source_image');
-  const subjectReferences = [
-    { label: 'SUBJECT REFERENCE 1', url: inputUrl('reference_image') },
-    { label: 'SUBJECT REFERENCE 2', url: inputUrl('reference_image_2') },
-  ].filter((reference): reference is { label: string; url: string } => Boolean(reference.url));
-  const modifyInputUrls = [sourceImageUrl, ...subjectReferences.map((reference) => reference.url)]
+  const subjectReferenceUrls = [
+    inputUrl('reference_image'),
+    inputUrl('reference_image_2'),
+  ].filter((url): url is string => Boolean(url));
+  const modifyInputUrls = [sourceImageUrl, ...subjectReferenceUrls]
     .filter((url): url is string => Boolean(url));
   const referenceUrls = step.inputs
     .map((input) => getResolvedInputUrl(input, resultsByStepId))
@@ -200,6 +200,15 @@ async function executeImageStep(
     prompt,
     getWorkflowCapability(step.capability).inputs,
   );
+  if (step.capability === 'image.modify') {
+    // Preserve old published templates while presenting the provider with the
+    // same positional names used by GPT Image: image1, image2, image3.
+    resolvedPrompt = resolvedPrompt
+      .replace(/\bsubject reference(?: image)?\s*2\b/gi, 'image3')
+      .replace(/\bsubject reference(?: image)?\s*1\b/gi, 'image2')
+      .replace(/\bsubject reference image\b/gi, 'image2')
+      .replace(/\bsource image\b/gi, 'image1');
+  }
   if (step.capability === 'image.change_ratio' && !resolvedPrompt.trim()) {
     resolvedPrompt = `Extend this image to fit a ${asString(step.parameters.ratio, '1:1')} aspect ratio while preserving the original content and style.`;
   } else if (step.capability === 'image.enhance' && !resolvedPrompt.trim()) {
@@ -207,17 +216,6 @@ async function executeImageStep(
   } else if (step.capability === 'image.upscale' && !resolvedPrompt.trim()) {
     resolvedPrompt = `Upscale this image to ${resolution} while preserving its composition and details.`;
   }
-  if (step.capability === 'image.modify' && sourceImageUrl && subjectReferences.length > 0) {
-    resolvedPrompt = [
-      'Input roles are fixed for this edit:',
-      '- SOURCE IMAGE (first input): the base canvas. Preserve its composition, framing, background, text placement, aspect ratio, and resolution.',
-      ...subjectReferences.map((reference, index) => (
-        `- ${reference.label} (${index === 0 ? 'second' : 'third'} input): identity, object, or content to apply to the Source image. Do not use its canvas dimensions.`
-      )),
-      resolvedPrompt,
-    ].filter(Boolean).join('\n');
-  }
-
   return generateImages({
     prompt: resolvedPrompt,
     capability: step.capability,
@@ -227,7 +225,7 @@ async function executeImageStep(
       : sourceImageUrl || referenceUrls[0],
     productImageUrl: step.capability === 'image.replace_product'
       ? inputUrl('product_image')
-      : subjectReferences[0]?.url || referenceUrls[1],
+      : subjectReferenceUrls[0] || referenceUrls[1],
     referenceImageUrls: step.capability === 'image.modify'
       ? modifyInputUrls
       : step.capability === 'image.text_to_image'

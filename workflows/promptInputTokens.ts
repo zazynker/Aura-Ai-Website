@@ -8,14 +8,17 @@ export const getWorkflowInputPromptToken = (slot: string): string =>
 export const getWorkflowInputPromptTokenSlots = (prompt: string): string[] =>
   Array.from(prompt.matchAll(PROMPT_INPUT_TOKEN_PATTERN), (match) => match[1]);
 
-/** Converts stable, serializable slot tokens into provider-facing role names. */
+/** Converts stable slot tokens into provider-facing positional asset names. */
 export const resolveWorkflowInputPromptTokens = (
   prompt: string,
-  inputs: ReadonlyArray<Pick<CapabilityInputSlot, 'key' | 'label'>>,
+  inputs: ReadonlyArray<Pick<CapabilityInputSlot, 'key' | 'assetType'>>,
 ): string => {
-  const labelBySlot = new Map(inputs.map((input) => [input.key, input.label]));
+  const assetCounts = { image: 0, video: 0, audio: 0 };
+  const nameBySlot = new Map(inputs.map((input) => {
+    assetCounts[input.assetType] += 1;
+    return [input.key, `${input.assetType}${assetCounts[input.assetType]}`] as const;
+  }));
   return prompt.replace(PROMPT_INPUT_TOKEN_PATTERN, (token, slot: string) => {
-    const label = labelBySlot.get(slot);
-    return label ? label.toUpperCase() : token;
+    return nameBySlot.get(slot) || token;
   });
 };

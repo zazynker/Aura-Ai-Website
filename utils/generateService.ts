@@ -348,7 +348,10 @@ export async function generateImages(
         .catch(() => ({}))) as GenerateApiResponse;
       console.error("API error:", response.status, errorData);
 
-      if ([502, 503, 504].includes(response.status)) {
+      // Only recover ambiguous gateway failures. A structured API code means
+      // the provider was never queued (for example, input staging failed), so
+      // polling that requestId would hide the real error behind a false 404.
+      if ([502, 503, 504].includes(response.status) && !errorData.code) {
         const recovered = await recoverGeneratedImages(
           session.access_token,
           requestId,

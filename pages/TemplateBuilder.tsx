@@ -531,6 +531,12 @@ export const TemplateBuilder = () => {
         activeWorkflowStep.inputs.some((input) => input.slot === slot.key)
       ))
     : [];
+  const getPromptInputPositionLabel = (slot: (typeof promptInputOptions)[number]): string => {
+    const position = promptInputOptions
+      .filter((candidate) => candidate.assetType === slot.assetType)
+      .findIndex((candidate) => candidate.key === slot.key) + 1;
+    return `${slot.assetType.charAt(0).toUpperCase()}${slot.assetType.slice(1)} ${position}`;
+  };
   const cloneActiveWorkflowInputBindings = (): BuilderInputSelection[] | undefined =>
     activeWorkflowStep?.inputs.map((input) => ({ ...input }));
   const activePromptTemplate = adminDefinition.promptTemplates.find(
@@ -2715,15 +2721,15 @@ export const TemplateBuilder = () => {
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Prompt</label>
                   {activeStep.feature === 'Modify Image' && (
                     <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs leading-5 text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
-                      <div className="font-semibold">Use the input tags below instead of “image 1 / image 2”.</div>
+                      <div className="font-semibold">Use the positional input tags below: Image 1, Image 2, Image 3.</div>
                       <div className="mt-1">
-                        <span className="font-semibold">Source image</span> is the base canvas; its composition, framing, aspect ratio, and resolution are preserved.
+                        <span className="font-semibold">Image 1</span> is the first image sent to the model. For Modify Image, bind your base canvas here.
                       </div>
                       <div>
-                        <span className="font-semibold">Subject reference 1 / 2</span> supply identities or objects and can be exposed separately to Quick Use.
+                        <span className="font-semibold">Image 2 / Image 3</span> are the next images in order and can be exposed separately to Quick Use.
                       </div>
                       <div className="mt-1 text-blue-700 dark:text-blue-200">
-                        Example: Replace the woman in {'{{input.source_image}}'} with the woman from {'{{input.reference_image}}'}. Preserve the source pose, framing, news graphics, and text.
+                        Example: Replace the woman in Image 1 with the woman from Image 2. Preserve Image 1 framing, news graphics, and text.
                       </div>
                     </div>
                   )}
@@ -2744,7 +2750,7 @@ export const TemplateBuilder = () => {
                             {slot.assetType === 'image' && <ImageIcon className="h-3.5 w-3.5" />}
                             {slot.assetType === 'video' && <Video className="h-3.5 w-3.5" />}
                             {slot.assetType === 'audio' && <Music className="h-3.5 w-3.5" />}
-                            {slot.label}
+                            {getPromptInputPositionLabel(slot)}
                           </button>
                         ))}
                       </div>

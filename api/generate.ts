@@ -890,7 +890,9 @@ function normalizeReferenceUrls(body: GenerateRequestBody): string[] {
   const explicit = Array.isArray(body.referenceImageUrls)
     ? body.referenceImageUrls
     : [];
-  return [...explicit, body.imageUrl, body.productImageUrl]
+  // Provider input order is positional: image1 is the base image, image2 is
+  // the first reference, followed by any additional references.
+  return [body.imageUrl, body.productImageUrl, ...explicit]
     .filter((value): value is string =>
       typeof value === "string" &&
       (value.startsWith("https://") || value.startsWith("data:")),
@@ -930,7 +932,7 @@ async function stageFalInputImages(
 
     const response = await fetch(sourceUrl);
     if (!response.ok) {
-      throw new Error(`Input image ${index + 1} could not be downloaded (${response.status}).`);
+      throw new Error(`image${index + 1} could not be read from temporary storage (${response.status}). Please upload it again.`);
     }
     const mimeType = (response.headers.get("content-type") || "image/png")
       .split(";", 1)[0]
@@ -1675,14 +1677,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         try {
           falInputImageUrls = await stageFalInputImages(inputImageUrls, falKey as string);
         } catch (error) {
+          const message = error instanceof Error
+            ? error.message
+            : "The input images could not be read from temporary storage.";
           console.error(
             "Fal input staging failed:",
-            error instanceof Error ? error.message : "Unknown Fal storage error.",
+            message,
           );
           return res.status(502).json({
             success: false,
             code: "FAL_INPUT_UPLOAD_FAILED",
-            error: "The input images could not be prepared for generation. Please try again. No Lazora credits were deducted.",
+            error: `${message} No Lazora credits were deducted.`,
             requestId,
           });
         }
