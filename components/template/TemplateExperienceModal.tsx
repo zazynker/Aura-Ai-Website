@@ -17,7 +17,7 @@ import { QuickUseNumberControl } from './QuickUseNumberControl';
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
 type AdminDemoAssetType = 'image' | 'image_group' | 'video';
-type AdminDemoStage = 'upload' | 'running' | 'result';
+type AdminDemoStage = 'upload' | 'running' | 'result' | 'cancelled';
 
 const downloadGeneratedResult = async (
   result: { type: 'image' | 'video'; url: string },
@@ -51,6 +51,7 @@ interface TemplateExperienceModalProps {
   onUse: () => void;
   onGenerate?: (values: QuickUseInputValues) => void | Promise<void>;
   onMinimize?: () => void;
+  onCancel?: () => void;
   onReset?: () => void;
   isAdmin?: boolean;
 }
@@ -80,6 +81,7 @@ export const TemplateExperienceModal = ({
   loading,
   mode,
   onClose,
+  onCancel,
   onGenerate,
   onMinimize,
   onReset,
@@ -92,6 +94,8 @@ export const TemplateExperienceModal = ({
   const [adminDemoFiles, setAdminDemoFiles] = useState<File[]>([]);
   const [adminDemoStage, setAdminDemoStage] = useState<AdminDemoStage>('upload');
   const [adminDemoStep, setAdminDemoStep] = useState(1);
+  const [adminDemoMinimized, setAdminDemoMinimized] = useState(false);
+  const [showCancelConfirmation, setShowCancelConfirmation] = useState(false);
   const adminDemoTimersRef = useRef<number[]>([]);
   const adminDemoUrls = useMemo(
     () => adminDemoFiles.map((file) => URL.createObjectURL(file)),
@@ -130,6 +134,7 @@ export const TemplateExperienceModal = ({
     setAdminDemoFiles([]);
     setAdminDemoStage('upload');
     setAdminDemoStep(1);
+    setAdminDemoMinimized(false);
     if (close) setAdminDemoOpen(false);
   };
 
@@ -137,6 +142,8 @@ export const TemplateExperienceModal = ({
     if (!detail || adminDemoFiles.length === 0) return;
     adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     adminDemoTimersRef.current = [];
+    setAdminDemoOpen(true);
+    setAdminDemoMinimized(false);
     setAdminDemoStage('running');
     setAdminDemoStep(1);
     const stepCount = Math.max(1, detail.steps.length);
@@ -146,24 +153,46 @@ export const TemplateExperienceModal = ({
     adminDemoTimersRef.current.push(window.setTimeout(() => setAdminDemoStage('result'), stepCount * 850));
   };
 
+  const confirmCancellation = () => {
+    setShowCancelConfirmation(false);
+    if (adminDemoOpen && adminDemoStage === 'running') {
+      adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      adminDemoTimersRef.current = [];
+      setAdminDemoStage('cancelled');
+      return;
+    }
+    onCancel?.();
+  };
+
   const handleGenerate = () => {
-    if (!definition || !onGenerate) return;
+    if (!definition) return;
     const issues = validateQuickUseInputValues(definition, values);
     if (issues.length > 0) {
       setValidationError(issues[0]);
       return;
     }
     setValidationError(null);
+    if (isAdmin && adminDemoFiles.length > 0) {
+      startAdminDemo();
+      return;
+    }
+    if (!onGenerate) return;
     void onGenerate(values);
   };
 
   const isExecuting = execution?.status === 'preparing' || execution?.status === 'running';
   const isBusy = isExecuting || (adminDemoOpen && adminDemoStage === 'running');
+  const isAdminDemoArmed = isAdmin && adminDemoFiles.length > 0;
 
   const footer = detail && mode === 'use' && !adminDemoOpen && !loading && !error && !isExecuting && !execution
     ? (
           <div className="space-y-2">
-            {!generationAvailable && (
+            {isAdminDemoArmed && (
+              <p className="text-center text-xs font-medium text-emerald-600 dark:text-emerald-300">
+                Demo result loaded · generation API and credits are disabled
+              </p>
+            )}
+            {!generationAvailable && !isAdminDemoArmed && (
               <p className="text-center text-xs text-slate-500">
                 Automatic execution will be enabled in the executor integration step.
               </p>
@@ -171,7 +200,7 @@ export const TemplateExperienceModal = ({
             <Button
               variant="gradient"
               className="w-full"
-              disabled={!generationAvailable || !definition?.blocks.length || isExecuting}
+              disabled={(!generationAvailable && !isAdminDemoArmed) || !definition?.blocks.length || isExecuting}
               onClick={handleGenerate}
             >
               Generate
@@ -190,23 +219,33 @@ export const TemplateExperienceModal = ({
       ? 'Generating...'
       : execution?.status === 'completed'
         ? 'Completed'
+        : execution?.status === 'cancelled'
+          ? 'Cancelled'
         : execution?.status === 'failed'
           ? 'Generation failed'
           : 'Quick Use';
   const modalTitle = mode === 'use' && isAdmin && !adminDemoOpen && !execution && !isBusy
     ? <button type="button" onClick={() => setAdminDemoOpen(true)} className="select-none text-left">{modalTitleText}</button>
     : modalTitleText;
+  const busyHeaderActions = isBusy ? (
+    <div className="flex items-center gap-1">
+      {(onMinimize || (adminDemoOpen && adminDemoStage === 'running')) && <button type="button" onClick={adminDemoOpen && adminDemoStage === 'running' ? () => setAdminDemoMinimized(true) : onMinimize} className="rounded-md p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white" aria-label="Minimize generation"><Minus className="h-5 w-5" /></button>}
+      <button type="button" onClick={() => setShowCancelConfirmation(true)} className="rounded-md p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-red-600 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-red-300" aria-label="Cancel generation"><X className="h-5 w-5" /></button>
+    </div>
+  ) : undefined;
 
   return (
-    <Modal
-      isOpen={isOpen}
+    <>
+      <Modal
+      isOpen={isOpen && !adminDemoMinimized}
       onClose={() => {
-        if (adminDemoOpen) resetAdminDemo(true);
+        resetAdminDemo(true);
         onClose();
       }}
       title={modalTitle}
       size={mode === 'view' ? 'xl' : 'md'}
       footer={footer}
+      headerActions={busyHeaderActions}
       className={mode === 'view' ? 'max-w-5xl' : 'max-w-xl'}
       dismissible={!isBusy}
     >
@@ -225,9 +264,11 @@ export const TemplateExperienceModal = ({
           step={adminDemoStep}
           urls={adminDemoUrls}
           onAssetTypeChange={(assetType) => { setAdminDemoAssetType(assetType); setAdminDemoFiles([]); }}
-          onClose={() => resetAdminDemo(true)}
+          onClose={() => {
+            if (adminDemoStage === 'upload') setAdminDemoOpen(false);
+            else resetAdminDemo(true);
+          }}
           onFilesChange={setAdminDemoFiles}
-          onGenerate={startAdminDemo}
           onReset={() => resetAdminDemo(false)}
         />
       ) : detail && mode === 'view' ? (
@@ -258,15 +299,14 @@ export const TemplateExperienceModal = ({
         </div>
       ) : detail && isExecuting ? (
         <div className="mx-auto max-w-3xl">
-          <div className="flex items-start justify-between gap-4">
-            <div><div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Generating with {detail.name}</div><h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">Your workflow is running</h2></div>
-            {onMinimize && <Button variant="secondary" size="sm" onClick={onMinimize}><Minus className="mr-1 h-4 w-4" />Minimize</Button>}
-          </div>
+          <div><div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Generating with {detail.name}</div><h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">Your workflow is running</h2></div>
           <ExecutionPipeline detail={detail} execution={execution!} />
           <p className="mt-8 text-center text-base font-medium text-slate-600 animate-pulse dark:text-slate-300">
             {execution?.status === 'preparing' ? 'Preparing your workflow...' : `Running ${execution?.stepTitle || 'the current step'}...`}
           </p>
         </div>
+      ) : detail && execution?.status === 'cancelled' ? (
+        <CancelledExecution detail={detail} execution={execution} onBack={onReset} />
       ) : detail && execution?.status === 'failed' ? (
         <div className="mx-auto max-w-3xl">
           <ExecutionPipeline detail={detail} execution={execution} />
@@ -309,7 +349,30 @@ export const TemplateExperienceModal = ({
           {detail?.quickUseUnavailableReason || 'This published workflow has no Quick Use definition.'}
         </div>
       )}
-    </Modal>
+      </Modal>
+      {showCancelConfirmation && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="cancel-generation-title">
+          <div className="w-full max-w-md rounded-2xl border border-white/30 bg-white p-6 shadow-2xl dark:border-white/10 dark:bg-slate-900">
+            <h2 id="cancel-generation-title" className="text-xl font-bold text-slate-950 dark:text-white">Cancel generation?</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">Steps that have already started will still use credits. Steps that have not started will not be charged and will not run.</p>
+            <div className="mt-6 flex gap-3">
+              <Button variant="secondary" className="flex-1" onClick={() => setShowCancelConfirmation(false)}>Keep generating</Button>
+              <Button variant="danger" className="flex-1" onClick={confirmCancellation}>Cancel generation</Button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+      {adminDemoMinimized && typeof document !== 'undefined' && createPortal(
+        <button type="button" onClick={() => setAdminDemoMinimized(false)} className="fixed bottom-5 right-5 z-[90] w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-white/50 bg-white/95 p-4 text-left shadow-2xl backdrop-blur-xl transition hover:-translate-y-0.5 dark:border-white/10 dark:bg-slate-900/95">
+          <div className="flex items-center justify-between gap-3">
+            <div><div className="text-sm font-bold text-slate-950 dark:text-white">{adminDemoStage === 'result' ? 'Your demo result is ready' : 'Generating demo...'}</div><div className="mt-1 text-xs text-slate-500">{adminDemoStage === 'result' ? 'View Result' : detail?.steps[Math.max(0, adminDemoStep - 1)]?.featureName || 'Preparing workflow'}</div></div>
+            {adminDemoStage === 'result' ? <Check className="h-5 w-5 text-emerald-500" /> : <Loader2 className="h-5 w-5 animate-spin text-purple-500" />}
+          </div>
+        </button>,
+        document.body,
+      )}
+    </>
   );
 };
 
@@ -320,7 +383,6 @@ const AdminQuickUseDemo = ({
   onAssetTypeChange,
   onClose,
   onFilesChange,
-  onGenerate,
   onReset,
   stage,
   step,
@@ -332,7 +394,6 @@ const AdminQuickUseDemo = ({
   onAssetTypeChange: (assetType: AdminDemoAssetType) => void;
   onClose: () => void;
   onFilesChange: (files: File[]) => void;
-  onGenerate: () => void;
   onReset: () => void;
   stage: AdminDemoStage;
   step: number;
@@ -354,6 +415,16 @@ const AdminQuickUseDemo = ({
         <p className="mt-8 text-center text-base font-medium text-slate-600 animate-pulse dark:text-slate-300">Running {progress.stepTitle || 'the current step'}...</p>
       </div>
     );
+  }
+
+  if (stage === 'cancelled') {
+    const progress: QuickUseExecutionProgress = {
+      runId: 'admin-demo',
+      status: 'cancelled',
+      currentStep: step,
+      totalSteps: detail.steps.length,
+    };
+    return <CancelledExecution detail={detail} execution={progress} onBack={onClose} />;
   }
 
   if (stage === 'result') {
@@ -382,7 +453,7 @@ const AdminQuickUseDemo = ({
   return (
     <div className="mx-auto max-w-2xl">
       <div className="mb-5 rounded-xl border border-dashed border-purple-200 bg-purple-50/50 p-4 text-sm text-purple-800 dark:border-purple-500/25 dark:bg-purple-500/5 dark:text-purple-200">
-        Admin demo only. Uploaded media is returned as the result after the Pipeline animation. No generation API or credits are used.
+        Admin demo only. Choose the final result here, return to Quick Use, fill in the normal form, then press Generate. No generation API or credits will be used.
       </div>
       <div className="grid grid-cols-3 gap-2">
         {options.map((option) => <button key={option.type} type="button" onClick={() => onAssetTypeChange(option.type)} className={`flex flex-col items-center gap-2 rounded-xl border px-3 py-4 text-xs font-semibold transition ${assetType === option.type ? 'border-purple-500 bg-purple-50 text-purple-700 dark:bg-purple-500/10 dark:text-purple-200' : 'border-slate-200 text-slate-500 hover:border-purple-300 dark:border-slate-700'}`}><option.icon className="h-5 w-5" />{option.label}</button>)}
@@ -401,12 +472,32 @@ const AdminQuickUseDemo = ({
         </div>
       )}
       <div className="mt-5 flex gap-3">
-        <Button variant="secondary" className="flex-1" onClick={onClose}>Back</Button>
-        <Button variant="gradient" className="flex-1" disabled={files.length === 0} onClick={onGenerate}>Generate</Button>
+        <Button variant="gradient" className="w-full" onClick={onClose}>{files.length > 0 ? 'Back to Quick Use' : 'Back'}</Button>
       </div>
     </div>
   );
 };
+
+const CancelledExecution = ({
+  detail,
+  execution,
+  onBack,
+}: {
+  detail: RealTemplateDetail;
+  execution: QuickUseExecutionProgress;
+  onBack?: () => void;
+}) => (
+  <div className="mx-auto max-w-3xl">
+    <ExecutionPipeline detail={detail} execution={execution} />
+    <div className="mt-8 rounded-2xl border border-amber-200 bg-amber-50 p-5 dark:border-amber-500/20 dark:bg-amber-500/10">
+      <div className="flex items-start gap-3">
+        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+        <div><div className="font-semibold text-amber-900 dark:text-amber-100">Generation cancelled</div><p className="mt-1 text-sm leading-6 text-amber-800 dark:text-amber-200">The active step may still use credits. No later workflow steps will start.</p></div>
+      </div>
+    </div>
+    {onBack && <Button variant="secondary" className="mt-5 w-full" onClick={onBack}>Back to inputs</Button>}
+  </div>
+);
 
 const ExecutionPipeline = ({
   detail,
@@ -419,10 +510,11 @@ const ExecutionPipeline = ({
     ...detail.steps.map((step, index) => ({ id: step.id, label: step.featureName, stepNumber: index + 1 })),
     { id: 'done', label: 'Done', stepNumber: detail.steps.length + 1 },
   ];
-  const stateForNode = (stepNumber: number): 'completed' | 'active' | 'failed' | 'pending' => {
+  const stateForNode = (stepNumber: number): 'completed' | 'active' | 'failed' | 'cancelled' | 'pending' => {
     if (stepNumber === nodes.length) return execution.status === 'completed' ? 'completed' : 'pending';
     if (execution.status === 'completed' || stepNumber < execution.currentStep) return 'completed';
     if (execution.status === 'failed' && stepNumber === Math.max(1, execution.currentStep)) return 'failed';
+    if (execution.status === 'cancelled' && stepNumber === Math.max(1, execution.currentStep)) return 'cancelled';
     if ((execution.status === 'preparing' && stepNumber === 1) || (execution.status === 'running' && stepNumber === execution.currentStep)) return 'active';
     return 'pending';
   };
@@ -445,11 +537,13 @@ const ExecutionPipeline = ({
                     ? 'border-purple-500 text-purple-600 shadow-[0_0_18px_rgba(168,85,247,0.35)]'
                     : state === 'failed'
                       ? 'border-red-500 bg-red-50 text-red-600 dark:bg-red-500/10'
+                      : state === 'cancelled'
+                        ? 'border-amber-500 bg-amber-50 text-amber-600 dark:bg-amber-500/10'
                       : 'border-slate-300 text-slate-300 dark:border-slate-700 dark:text-slate-600'
               }`}>
-                {state === 'completed' ? <Check className="h-5 w-5" /> : state === 'active' ? <Loader2 className="h-5 w-5 animate-spin" /> : state === 'failed' ? <AlertCircle className="h-5 w-5" /> : <span className="h-3.5 w-3.5 rounded-full bg-current" />}
+                {state === 'completed' ? <Check className="h-5 w-5" /> : state === 'active' ? <Loader2 className="h-5 w-5 animate-spin" /> : state === 'failed' ? <AlertCircle className="h-5 w-5" /> : state === 'cancelled' ? <X className="h-5 w-5" /> : <span className="h-3.5 w-3.5 rounded-full bg-current" />}
               </div>
-              <div className={`mt-3 text-xs font-semibold ${state === 'active' ? 'text-purple-600 dark:text-purple-300' : state === 'failed' ? 'text-red-500' : 'text-slate-500 dark:text-slate-400'}`}>{node.label}</div>
+              <div className={`mt-3 text-xs font-semibold ${state === 'active' ? 'text-purple-600 dark:text-purple-300' : state === 'failed' ? 'text-red-500' : state === 'cancelled' ? 'text-amber-600 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'}`}>{node.label}</div>
             </div>
           </React.Fragment>
         );

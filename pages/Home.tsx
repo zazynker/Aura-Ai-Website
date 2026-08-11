@@ -343,6 +343,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const lastScrollY = useRef(0);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const experienceRequestRef = useRef(0);
+  const quickUseAbortRef = useRef<AbortController | null>(null);
   const quickUseIsRunning = executionProgress?.status === 'preparing' || executionProgress?.status === 'running';
 
   useEffect(() => {
@@ -632,6 +633,8 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       currentStep: 0,
       totalSteps: experienceDetail.steps.length,
     });
+    const abortController = new AbortController();
+    quickUseAbortRef.current = abortController;
     try {
       const { executeQuickUseTemplate } = await import('../utils/quickUseExecutor');
       await executeQuickUseTemplate({
@@ -641,6 +644,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
         userPlan: user.plan,
         values: values as Parameters<typeof executeQuickUseTemplate>[0]['values'],
         onProgress: setExecutionProgress,
+        signal: abortController.signal,
       });
       const [creditsResult] = await Promise.all([
         import('../utils/api').then(({ fetchUserCredits }) => fetchUserCredits()),
@@ -649,11 +653,27 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       if (creditsResult.data) updateUser({ credits: creditsResult.data.credits });
       addToast('success', 'Your Template result is ready.');
     } catch (executionError) {
+      if (executionError instanceof Error && executionError.name === 'QuickUseCancelledError') {
+        setExperienceError(null);
+        setExperienceMinimized(false);
+        return;
+      }
       const message = executionError instanceof Error ? executionError.message : 'Template generation failed.';
       setExperienceError(message);
       addToast('error', message);
       setExperienceMinimized(false);
+    } finally {
+      if (quickUseAbortRef.current === abortController) quickUseAbortRef.current = null;
     }
+  };
+
+  const cancelQuickUseExecution = () => {
+    quickUseAbortRef.current?.abort();
+    setExecutionProgress((current) => current && (current.status === 'preparing' || current.status === 'running')
+      ? { ...current, status: 'cancelled', error: undefined }
+      : current);
+    setExperienceError(null);
+    setExperienceMinimized(false);
   };
 
   const resetQuickUseExecution = () => {
@@ -1013,6 +1033,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
             onUse={switchExperienceToUse}
             onGenerate={handleQuickUseGenerate}
             onMinimize={() => setExperienceMinimized(true)}
+            onCancel={cancelQuickUseExecution}
             onReset={resetQuickUseExecution}
           />
         </React.Suspense>

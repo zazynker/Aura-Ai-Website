@@ -7,12 +7,13 @@ interface ModalProps {
   title?: React.ReactNode;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  headerActions?: React.ReactNode;
   className?: string;
   size?: 'sm' | 'md' | 'lg' | 'xl';
   dismissible?: boolean;
 }
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, className = '', size = 'md', dismissible = true }) => {
+export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, footer, headerActions, className = '', size = 'md', dismissible = true }) => {
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
       if (dismissible && e.key === 'Escape') onClose();
@@ -39,11 +40,11 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, 
       <div className={`relative w-full ${sizeClass} glass-panel rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 overflow-hidden ${className}`}>
         <div className="flex items-center justify-between p-4 border-b border-slate-200/50 dark:border-white/10">
           <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h3>
-          {dismissible ? (
+          {headerActions || (dismissible ? (
             <button onClick={onClose} className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-white/10 transition-colors">
               <X className="w-5 h-5 text-slate-500 dark:text-slate-400" />
             </button>
-          ) : <span className="w-7" aria-hidden="true" />}
+          ) : <span className="w-7" aria-hidden="true" />)}
         </div>
         <div 
           className="p-6 max-h-[70vh] overflow-y-auto"

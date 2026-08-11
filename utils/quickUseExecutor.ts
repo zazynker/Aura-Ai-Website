@@ -27,7 +27,7 @@ export type QuickUseBrowserValues = Partial<Record<QuickUseCandidateId, QuickUse
 
 export interface QuickUseExecutionProgress {
   runId: string;
-  status: 'preparing' | 'running' | 'completed' | 'failed';
+  status: 'preparing' | 'running' | 'completed' | 'failed' | 'cancelled';
   currentStep: number;
   totalSteps: number;
   stepId?: string;
@@ -46,7 +46,38 @@ export interface ExecuteQuickUseOptions {
   userPlan: Plan;
   values: QuickUseBrowserValues;
   onProgress?: (progress: QuickUseExecutionProgress) => void;
+  signal?: AbortSignal;
 }
+
+export class QuickUseCancelledError extends Error {
+  constructor() {
+    super('Template generation was cancelled.');
+    this.name = 'QuickUseCancelledError';
+  }
+}
+
+const throwIfCancelled = (signal?: AbortSignal): void => {
+  if (signal?.aborted) throw new QuickUseCancelledError();
+};
+
+const awaitWithCancellation = <T,>(promise: Promise<T>, signal?: AbortSignal): Promise<T> => {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new QuickUseCancelledError());
+  return new Promise<T>((resolve, reject) => {
+    const handleAbort = () => reject(new QuickUseCancelledError());
+    signal.addEventListener('abort', handleAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', handleAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', handleAbort);
+        reject(error);
+      },
+    );
+  });
+};
 
 interface AssetRow {
   id: string;
@@ -295,6 +326,7 @@ async function executeVideoStep(
 export async function executeQuickUseTemplate(
   options: ExecuteQuickUseOptions,
 ): Promise<QuickUseExecutionProgress> {
+  throwIfCancelled(options.signal);
   const run = await startTemplateRun(options.templateId, createRunIdempotencyKey(options.templateId));
   let currentStep = 0;
   const report = (progress: Omit<QuickUseExecutionProgress, 'runId' | 'totalSteps'>) => {
@@ -303,11 +335,12 @@ export async function executeQuickUseTemplate(
   report({ status: 'preparing', currentStep: 0 });
 
   try {
-    const [definition, templateAssetUrls, resolvedValues] = await Promise.all([
+    throwIfCancelled(options.signal);
+    const [definition, templateAssetUrls, resolvedValues] = await awaitWithCancellation(Promise.all([
       loadLockedQuickUseDefinition(run.templateId, run.templateVersionId),
       loadTemplateAssetUrls(run.templateId, run.templateVersionId),
       resolveBrowserValues(options.userId, options.values),
-    ]);
+    ]), options.signal);
     const plan = compileQuickUseExecutionPlan(
       run.workflow as unknown as WorkflowDefinition,
       definition,
@@ -317,10 +350,11 @@ export async function executeQuickUseTemplate(
     const resultsByStepId = new Map<string, StepResult>();
 
     for (let index = 0; index < plan.steps.length; index += 1) {
+      throwIfCancelled(options.signal);
       const step = plan.steps[index];
       currentStep = index + 1;
       report({ status: 'running', currentStep: index + 1, stepId: step.id, stepTitle: step.title });
-      await engageTemplateRunStep(run.id, step.id, 'all');
+      await awaitWithCancellation(engageTemplateRunStep(run.id, step.id, 'all'), options.signal);
       const context: TemplateGenerationContext = {
         templateRunId: run.id,
         templateStepId: step.id,
@@ -329,7 +363,7 @@ export async function executeQuickUseTemplate(
       const inputAssets = toInputSnapshots(step, resultsByStepId);
 
       if (step.output.assetType === 'image') {
-        const result = await executeImageStep(step, context, resultsByStepId);
+        const result = await awaitWithCancellation(executeImageStep(step, context, resultsByStepId), options.signal);
         if (!result.success || !result.images?.length || !result.requestId) {
           throw new Error(result.error || 'Image generation did not return a result.');
         }
@@ -355,7 +389,7 @@ export async function executeQuickUseTemplate(
         await completeTemplateRunStep(run.id, step.id, saved.data[0].id);
         resultsByStepId.set(step.id, { type: 'image', url: result.images[0] });
       } else {
-        const result = await executeVideoStep(step, context, resultsByStepId);
+        const result = await awaitWithCancellation(executeVideoStep(step, context, resultsByStepId), options.signal);
         if (!result.success || !result.videoUrl || !result.requestId) {
           throw new Error(result.error || 'Video generation did not return a result.');
         }
@@ -386,6 +420,7 @@ export async function executeQuickUseTemplate(
         await completeTemplateRunStep(run.id, step.id, saved.data[0].id);
         resultsByStepId.set(step.id, { type: 'video', url: result.videoUrl });
       }
+      throwIfCancelled(options.signal);
     }
 
     const finalResult = resultsByStepId.get(plan.steps[plan.steps.length - 1].id);
@@ -400,6 +435,18 @@ export async function executeQuickUseTemplate(
     options.onProgress?.(completed);
     return completed;
   } catch (error) {
+    if (error instanceof QuickUseCancelledError) {
+      await cancelTemplateRun(run.id).catch((cancelError) => {
+        console.error('Could not mark the cancelled Quick Use run:', cancelError);
+      });
+      options.onProgress?.({
+        runId: run.id,
+        status: 'cancelled',
+        currentStep,
+        totalSteps: run.workflow.steps.length,
+      });
+      throw error;
+    }
     const message = error instanceof Error ? error.message : 'Quick Use execution failed.';
     if (currentStep === 0) {
       await cancelTemplateRun(run.id).catch((cancelError) => {
