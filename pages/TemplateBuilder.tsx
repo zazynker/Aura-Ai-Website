@@ -444,6 +444,16 @@ export const TemplateBuilder = () => {
         return [{ input, slot }];
       })
     : [];
+  const previousStepInputOptions = activeWorkflowStep && activeCapability
+    ? activeWorkflowStep.inputs.flatMap((input) => {
+        if (input.source !== 'previous_step' || !input.fromStepId) return [];
+        const slot = activeCapability.inputs.find((candidate) => candidate.key === input.slot);
+        const upstreamStep = workflowConversion.workflow.steps.find(
+          (candidate) => candidate.id === input.fromStepId,
+        );
+        return slot && upstreamStep ? [{ input, slot, upstreamStep }] : [];
+      })
+    : [];
   const promptInputOptions = activeWorkflowStep && activeCapability
     ? activeCapability.inputs.filter((slot) => (
         activeWorkflowStep.inputs.some((input) => input.slot === slot.key)
@@ -1929,6 +1939,37 @@ export const TemplateBuilder = () => {
                 </Button>
               </div>
 
+              {previousStepInputOptions.length > 0 && (
+                <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/75 p-4 dark:border-blue-500/20 dark:bg-blue-500/5">
+                  <div className="text-sm font-semibold text-blue-950 dark:text-blue-100">Automatic workflow connections</div>
+                  <div className="mt-1 text-xs text-blue-700 dark:text-blue-300">
+                    These inputs are filled by earlier step results at runtime. The user does not upload them again.
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {previousStepInputOptions.map(({ input, slot, upstreamStep }) => (
+                      <div
+                        key={`${input.fromStepId}:${input.slot}`}
+                        className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-white px-3 py-2.5 text-sm dark:border-blue-500/15 dark:bg-slate-900/70"
+                      >
+                        <span className="font-medium text-slate-800 dark:text-slate-200">
+                          Step {upstreamStep.order} · {upstreamStep.title} result
+                        </span>
+                        <ArrowRight className="h-4 w-4 text-blue-500" />
+                        <span className="font-semibold text-blue-800 dark:text-blue-200">
+                          Step {activeWorkflowStep?.order} · {slot.label}
+                        </span>
+                        <span className="ml-auto rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-500/15 dark:text-blue-200">
+                          Auto-connected
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-[11px] text-blue-700 dark:text-blue-300">
+                    Uploading a material into an auto-connected slot intentionally overrides this connection with a fixed template asset.
+                  </p>
+                </div>
+              )}
+
               {isAdminTemplateMode && (
                 <div className="mb-4 rounded-xl border border-purple-200 bg-purple-50/70 p-4 dark:border-purple-500/20 dark:bg-purple-500/5">
                   <div className="mb-3">
@@ -1971,7 +2012,9 @@ export const TemplateBuilder = () => {
                     </div>
                   ) : (
                     <div className="rounded-lg border border-dashed border-purple-200 px-3 py-3 text-xs text-purple-700 dark:border-purple-500/20 dark:text-purple-300">
-                      This step has no eligible upload input yet. Add the required material or choose a capability that accepts user uploads.
+                      {previousStepInputOptions.length > 0
+                        ? 'No user upload is needed for this step. Its required input is automatically supplied by an earlier step result.'
+                        : 'This step has no eligible upload input yet. Add the required material or choose a capability that accepts user uploads.'}
                     </div>
                   )}
                 </div>
@@ -2041,7 +2084,11 @@ export const TemplateBuilder = () => {
                           className="flex h-full w-full cursor-pointer flex-col items-center justify-center gap-2"
                         >
                           <Plus className="w-6 h-6 text-slate-400" />
-                          <span className="text-xs text-slate-500">Upload {material.type}</span>
+                          <span className="text-xs text-slate-500">
+                            {!material.url && previousStepInputOptions.some(({ input }) => input.slot === material.inputSlot)
+                              ? `Override with ${material.type}`
+                              : `Upload ${material.type}`}
+                          </span>
                         </label>
                       )}
                       {material.url && (
@@ -2099,6 +2146,11 @@ export const TemplateBuilder = () => {
                             <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
                               {activeCapability.inputs.find((slot) => slot.key === material.inputSlot)?.description}
                             </p>
+                          )}
+                          {!material.url && previousStepInputOptions.some(({ input }) => input.slot === material.inputSlot) && (
+                            <div className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] leading-4 text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">
+                              Filled automatically from the previous step result. Leave this material empty to keep the pipeline connection.
+                            </div>
                           )}
                         </div>
                       )}

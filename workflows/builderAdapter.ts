@@ -301,6 +301,16 @@ function buildInputBindings(
         };
       }
 
+      if (material) {
+        usedMaterialIds.add(material.id);
+        return {
+          slot: slot.key,
+          assetType: slot.assetType,
+          source: 'user_upload',
+          required: slot.required,
+        };
+      }
+
       const existing = existingInputBySlot.get(slot.key);
       if (existing && !material) return { ...existing };
 
@@ -322,9 +332,6 @@ function buildInputBindings(
           outputKey: previousCapability.output.key,
         };
       }
-
-      if (material) usedMaterialIds.add(material.id);
-
       return {
         slot: slot.key,
         assetType: slot.assetType,
