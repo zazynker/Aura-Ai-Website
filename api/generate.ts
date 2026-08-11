@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { fal } from "@fal-ai/client";
 import { createClient } from "@supabase/supabase-js";
 
 export const config = { maxDuration: 60 };
@@ -20,6 +21,7 @@ const FAL_IMAGE_INPUT_USD_PER_MILLION = 8.0;
 const FAL_IMAGE_OUTPUT_USD_PER_MILLION = 30.0;
 const FAL_MIN_EXTRA_INPUT_IMAGE_USD = 0.006;
 const FAL_MAX_TOTAL_PIXELS = 8_294_400;
+const FAL_MAX_INPUT_FILE_BYTES = 25 * 1024 * 1024;
 const EVOLINK_API_BASE_URL = "https://api.evolink.ai/v1";
 const EVOLINK_MJ_MODEL = "mj-v8.1";
 const EVOLINK_MJ_STANDARD_USD = Number(process.env.EVOLINK_MJ_STANDARD_USD || 0.08);
@@ -897,6 +899,73 @@ function normalizeReferenceUrls(body: GenerateRequestBody): string[] {
     .slice(0, 3);
 }
 
+function isFalHostedUrl(value: string): boolean {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === "fal.media" || host.endsWith(".fal.media");
+  } catch {
+    return false;
+  }
+}
+
+function extensionForImageMimeType(mimeType: string): string {
+  if (mimeType === "image/jpeg") return "jpg";
+  if (mimeType === "image/webp") return "webp";
+  return "png";
+}
+
+async function stageFalInputImages(
+  urls: string[],
+  falKey: string,
+): Promise<string[]> {
+  fal.config({ credentials: falKey });
+  const staged: string[] = [];
+
+  for (let index = 0; index < urls.length; index += 1) {
+    const sourceUrl = urls[index];
+    if (sourceUrl.startsWith("data:") || isFalHostedUrl(sourceUrl)) {
+      staged.push(sourceUrl);
+      continue;
+    }
+
+    const response = await fetch(sourceUrl);
+    if (!response.ok) {
+      throw new Error(`Input image ${index + 1} could not be downloaded (${response.status}).`);
+    }
+    const mimeType = (response.headers.get("content-type") || "image/png")
+      .split(";", 1)[0]
+      .trim()
+      .toLowerCase();
+    if (!mimeType.startsWith("image/")) {
+      throw new Error(`Input image ${index + 1} returned an unsupported content type.`);
+    }
+    const declaredSize = Number(response.headers.get("content-length") || 0);
+    if (declaredSize > FAL_MAX_INPUT_FILE_BYTES) {
+      throw new Error(`Input image ${index + 1} exceeds the 25 MB limit.`);
+    }
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength === 0) {
+      throw new Error(`Input image ${index + 1} was empty.`);
+    }
+    if (bytes.byteLength > FAL_MAX_INPUT_FILE_BYTES) {
+      throw new Error(`Input image ${index + 1} exceeds the 25 MB limit.`);
+    }
+
+    const file = new File(
+      [bytes],
+      `lazora-input-${index + 1}.${extensionForImageMimeType(mimeType)}`,
+      { type: mimeType },
+    );
+    const stagedUrl = await fal.storage.upload(file);
+    if (typeof stagedUrl !== "string" || !isFalHostedUrl(stagedUrl)) {
+      throw new Error(`Fal storage did not return a usable URL for input image ${index + 1}.`);
+    }
+    staged.push(stagedUrl);
+  }
+
+  return staged;
+}
+
 function buildEvoLinkMjPrompt(body: GenerateRequestBody): string {
   const prompt = String(body.prompt || "").trim();
   if (/(^|\s)--[a-z]/i.test(prompt)) {
@@ -1601,6 +1670,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
       }
 
+      let falInputImageUrls = inputImageUrls;
+      if (mode === "edit") {
+        try {
+          falInputImageUrls = await stageFalInputImages(inputImageUrls, falKey as string);
+        } catch (error) {
+          console.error(
+            "Fal input staging failed:",
+            error instanceof Error ? error.message : "Unknown Fal storage error.",
+          );
+          return res.status(502).json({
+            success: false,
+            code: "FAL_INPUT_UPLOAD_FAILED",
+            error: "The input images could not be prepared for generation. Please try again. No Lazora credits were deducted.",
+            requestId,
+          });
+        }
+      }
+
       const falImageSize = toFalImageSize(imageSize, aspectRatio, mode);
       const falPayload: Record<string, unknown> = {
         prompt,
@@ -1609,7 +1696,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         num_images: validatedNumberOfImages,
         output_format: "png",
         sync_mode: false,
-        ...(mode === "edit" ? { image_urls: inputImageUrls } : {}),
+        ...(mode === "edit" ? { image_urls: falInputImageUrls } : {}),
       };
 
       console.log("Submitting Fal GPT Image 2 request:", {
@@ -1618,7 +1705,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         imageSize: falImageSize,
         quality: normalizedQuality,
         imageCount: validatedNumberOfImages,
-        inputImageCount: inputImageUrls.length,
+        inputImageCount: falInputImageUrls.length,
       });
 
       let falJob: FalQueueSubmitResult;
@@ -1656,7 +1743,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         requestedImageSize: imageSize,
         aspectRatio,
         requestedImages: validatedNumberOfImages,
-        inputImageCount: inputImageUrls.length,
+        inputImageCount: falInputImageUrls.length,
         templateRunId: body.templateRunId,
         templateStepId: body.templateStepId,
         templateCapability: body.templateCapability,
