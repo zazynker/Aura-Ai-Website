@@ -26,6 +26,8 @@ export interface BuilderMaterial {
   allowDownload: boolean;
   templateAssetId?: string;
   sourceGenerationId?: string;
+  /** Stable capability input slot this material supplies (for example source_image). */
+  inputSlot?: string;
   referenceRole?: 'image' | 'style' | 'omni';
 }
 
@@ -88,6 +90,70 @@ export const BUILDER_FEATURE_TO_CAPABILITY: Record<
   'Image Lip Sync': 'video.lip_sync_image',
   'Video Lip Sync': 'video.lip_sync_video',
 };
+
+const materialAssetType = (
+  material: Pick<BuilderMaterial, 'type'>,
+): 'image' | 'video' | 'audio' => material.type.toLowerCase() as 'image' | 'video' | 'audio';
+
+const mjRoleSlot = (
+  role: BuilderMaterial['referenceRole'],
+): string | undefined => role === 'image'
+  ? 'image_reference'
+  : role === 'style'
+    ? 'style_reference'
+    : role === 'omni'
+      ? 'omni_reference'
+      : undefined;
+
+export function getBuilderMaterialInputSlots(
+  feature: BuilderFeatureType,
+  type?: BuilderMaterial['type'],
+) {
+  const capability = getWorkflowCapability(BUILDER_FEATURE_TO_CAPABILITY[feature]);
+  return capability.inputs.filter((slot) => (
+    slot.key !== 'reference_images'
+    && (!type || slot.assetType === type.toLowerCase())
+  ));
+}
+
+/**
+ * Assigns each material to a capability input without relying on its array
+ * index at execution time. Existing valid bindings win; unbound legacy cards
+ * are deterministically assigned to the first compatible free slot.
+ */
+export function assignBuilderMaterialInputSlots(
+  feature: BuilderFeatureType,
+  materials: BuilderMaterial[],
+): BuilderMaterial[] {
+  const slots = getBuilderMaterialInputSlots(feature);
+  const slotByKey = new Map(slots.map((slot) => [slot.key, slot]));
+  const used = new Set<string>();
+
+  const preserved = materials.map((material) => {
+    const preferredSlot = material.inputSlot || mjRoleSlot(material.referenceRole);
+    const slot = preferredSlot ? slotByKey.get(preferredSlot) : undefined;
+    if (
+      slot
+      && slot.assetType === materialAssetType(material)
+      && !used.has(slot.key)
+    ) {
+      used.add(slot.key);
+      return { ...material, inputSlot: slot.key };
+    }
+    return { ...material, inputSlot: undefined };
+  });
+
+  return preserved.map((material) => {
+    if (material.inputSlot) return material;
+    const slot = slots.find((candidate) => (
+      candidate.assetType === materialAssetType(material)
+      && !used.has(candidate.key)
+    ));
+    if (!slot) return material;
+    used.add(slot.key);
+    return { ...material, inputSlot: slot.key };
+  });
+}
 
 function buildDefaultParameters(
   capabilityKey: WorkflowCapabilityKey,
@@ -174,7 +240,8 @@ function buildInputBindings(
   allSteps: BuilderDraftStep[],
   capabilityKey: WorkflowCapabilityKey,
 ): WorkflowInputBinding[] {
-  if (step.inputBindings) {
+  const hasExplicitMaterialSlots = step.materials.some((material) => Boolean(material.inputSlot));
+  if (step.inputBindings && !hasExplicitMaterialSlots) {
     return step.inputBindings.map((input) => ({ ...input }));
   }
 
@@ -186,15 +253,19 @@ function buildInputBindings(
     ? capability.inputs.filter((slot) => slot.key !== 'reference_images')
     : capability.inputs;
 
+  const existingInputBySlot = new Map(
+    (step.inputBindings || []).map((input) => [input.slot, input]),
+  );
+
   return capabilityInputs
     .filter(
-      (slot) =>
-        slot.required ||
-        step.materials.some(
-          (material) =>
-            Boolean(material.url) &&
-            material.type.toLowerCase() === slot.assetType,
-        ),
+      (slot) => slot.required
+        || existingInputBySlot.has(slot.key)
+        || step.materials.some((material) => (
+          Boolean(material.url)
+          && material.inputSlot === slot.key
+          && materialAssetType(material) === slot.assetType
+        )),
     )
     .map((slot): WorkflowInputBinding => {
       const roleForSlot = capabilityKey === 'image.text_to_image'
@@ -207,8 +278,15 @@ function buildInputBindings(
         (candidate) =>
           !usedMaterialIds.has(candidate.id) &&
           Boolean(candidate.url) &&
-          candidate.type.toLowerCase() === slot.assetType &&
-          (!roleForSlot || !candidate.referenceRole || candidate.referenceRole === roleForSlot),
+          materialAssetType(candidate) === slot.assetType &&
+          (
+            candidate.inputSlot === slot.key
+            || (!hasExplicitMaterialSlots && (
+              !roleForSlot
+              || !candidate.referenceRole
+              || candidate.referenceRole === roleForSlot
+            ))
+          ),
       );
       if (
         material?.templateAssetId &&
@@ -223,6 +301,9 @@ function buildInputBindings(
           templateAssetId: material.templateAssetId,
         };
       }
+
+      const existing = existingInputBySlot.get(slot.key);
+      if (existing && !material) return { ...existing };
 
       const previous = previousStepUsed
         ? undefined

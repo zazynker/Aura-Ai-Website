@@ -7,8 +7,10 @@ import { useStore } from '../context/StoreContext';
 import type { Generation } from '../types';
 import type { WorkflowCapabilityKey } from '../workflows/types';
 import {
+  assignBuilderMaterialInputSlots,
   BUILDER_FEATURE_TO_CAPABILITY,
   convertAndValidateBuilderWorkflow,
+  getBuilderMaterialInputSlots,
   type BuilderDraftStep as WorkflowStep,
   type BuilderFeatureType as FeatureType,
   type BuilderMaterial as Material,
@@ -157,10 +159,18 @@ const MJ_REFERENCE_ROLES = [
 const assignMjReferenceRoles = (materials: Material[]): Material[] => {
   const used = new Set(materials.map((material) => material.referenceRole).filter(Boolean));
   return materials.map((material) => {
-    if (material.type !== 'Image' || material.referenceRole) return material;
-    const role = MJ_REFERENCE_ROLES.find((item) => !used.has(item.value))?.value;
+    if (material.type !== 'Image') return material;
+    const role = material.referenceRole
+      || MJ_REFERENCE_ROLES.find((item) => !used.has(item.value))?.value;
     if (role) used.add(role);
-    return role ? { ...material, referenceRole: role } : material;
+    const inputSlot = role === 'image'
+      ? 'image_reference'
+      : role === 'style'
+        ? 'style_reference'
+        : role === 'omni'
+          ? 'omni_reference'
+          : undefined;
+    return role ? { ...material, referenceRole: role, inputSlot } : material;
   });
 };
 
@@ -213,7 +223,8 @@ const getMissingRequiredMaterialTypes = (
     const material = unusedMaterials.find(
       (candidate) =>
         !usedMaterialIds.has(candidate.id) &&
-        candidate.type.toLowerCase() === slot.assetType,
+        candidate.type.toLowerCase() === slot.assetType &&
+        (candidate.inputSlot === slot.key || !candidate.inputSlot),
     );
     if (material) {
       usedMaterialIds.add(material.id);
@@ -263,7 +274,7 @@ const ensureRequiredMaterialCards = (
     reservedIds.add(id);
     next.push({ id, type, url: null, allowDownload: true });
   });
-  return next;
+  return assignBuilderMaterialInputSlots(feature, next);
 };
 
 const createInitialStep = (): WorkflowStep => ({
@@ -271,7 +282,13 @@ const createInitialStep = (): WorkflowStep => ({
   feature: 'Image Generation',
   resultUrl: null,
   materials: [
-    { id: 'mat-1', type: 'Image', url: null, allowDownload: true },
+    {
+      id: 'mat-1',
+      type: 'Image',
+      url: null,
+      allowDownload: true,
+      inputSlot: 'image_reference',
+    },
   ],
   prompt: '',
   imageParams: createDefaultImageParams(),
@@ -721,33 +738,70 @@ export const TemplateBuilder = () => {
         url: null,
         allowDownload: true,
         referenceRole: role,
+        inputSlot: role === 'image'
+          ? 'image_reference'
+          : role === 'style'
+            ? 'style_reference'
+            : 'omni_reference',
       }],
       inputBindings: undefined,
     });
   };
 
   const setMjReferenceRole = (materialId: string, referenceRole: 'image' | 'style' | 'omni') => {
+    const inputSlot = referenceRole === 'image'
+      ? 'image_reference'
+      : referenceRole === 'style'
+        ? 'style_reference'
+        : 'omni_reference';
     updateActiveStep({
-      materials: activeStep.materials.map((material) => {
-        if (material.id === materialId) return { ...material, type: 'Image', referenceRole };
+      materials: assignBuilderMaterialInputSlots(activeStep.feature, activeStep.materials.map((material) => {
+        if (material.id === materialId) {
+          return { ...material, type: 'Image', referenceRole, inputSlot };
+        }
         return material.referenceRole === referenceRole
-          ? { ...material, referenceRole: undefined }
+          ? { ...material, referenceRole: undefined, inputSlot: undefined }
           : material;
-      }),
+      })),
       inputBindings: undefined,
     });
   };
 
   const addMaterial = () => {
     updateActiveStep({
-      materials: [...activeStep.materials, { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true }],
+      materials: assignBuilderMaterialInputSlots(activeStep.feature, [
+        ...activeStep.materials,
+        { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true },
+      ]),
       inputBindings: undefined,
     });
   };
 
   const updateMaterial = (id: string, updates: Partial<Material>) => {
+    const materials = activeStep.materials.map((material) => {
+      if (material.id !== id) return material;
+      const typeChanged = Boolean(updates.type && updates.type !== material.type);
+      return {
+        ...material,
+        ...updates,
+        ...(typeChanged ? { inputSlot: undefined, referenceRole: undefined } : {}),
+      };
+    });
     updateActiveStep({
-      materials: activeStep.materials.map(m => m.id === id ? { ...m, ...updates } : m),
+      materials: assignBuilderMaterialInputSlots(activeStep.feature, materials),
+      inputBindings: undefined,
+    });
+  };
+
+  const setMaterialInputSlot = (materialId: string, inputSlot: string) => {
+    const materials = activeStep.materials.map((material) => {
+      if (material.id === materialId) return { ...material, inputSlot };
+      return material.inputSlot === inputSlot
+        ? { ...material, inputSlot: undefined }
+        : material;
+    });
+    updateActiveStep({
+      materials: assignBuilderMaterialInputSlots(activeStep.feature, materials),
       inputBindings: undefined,
     });
   };
@@ -955,6 +1009,7 @@ export const TemplateBuilder = () => {
       url: asset.url,
       allowDownload: true,
       sourceGenerationId: generation.id,
+      inputSlot: asset.key,
       referenceRole:
         asset.key === 'style_reference' ? 'style' as const
           : asset.key === 'omni_reference' ? 'omni' as const
@@ -1993,6 +2048,35 @@ export const TemplateBuilder = () => {
                         </div>
                       </div>
 
+                      {getBuilderMaterialInputSlots(activeStep.feature, material.type).length > 0 && (
+                        <div>
+                          <label
+                            htmlFor={`material-slot-${material.id}`}
+                            className="mb-2 block text-xs font-medium text-slate-500 dark:text-slate-400"
+                          >
+                            Bind to workflow input
+                          </label>
+                          <select
+                            id={`material-slot-${material.id}`}
+                            value={material.inputSlot || ''}
+                            onChange={(event) => setMaterialInputSlot(material.id, event.target.value)}
+                            className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-medium text-slate-800 focus:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-200 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                          >
+                            {!material.inputSlot && (
+                              <option value="" disabled>Choose an input role</option>
+                            )}
+                            {getBuilderMaterialInputSlots(activeStep.feature, material.type).map((slot) => (
+                              <option key={slot.key} value={slot.key}>{slot.label}</option>
+                            ))}
+                          </select>
+                          {activeCapability?.inputs.find((slot) => slot.key === material.inputSlot)?.description && (
+                            <p className="mt-1.5 text-[11px] leading-4 text-slate-500 dark:text-slate-400">
+                              {activeCapability.inputs.find((slot) => slot.key === material.inputSlot)?.description}
+                            </p>
+                          )}
+                        </div>
+                      )}
+
                       {activeStep.feature === 'Image Generation'
                         && (activeStep.imageParams?.model || 'gpt-image-2') === 'mj-v8.1'
                         && material.type === 'Image' && (
@@ -2048,6 +2132,20 @@ export const TemplateBuilder = () => {
               <div className="space-y-6">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Prompt</label>
+                  {activeStep.feature === 'Modify Image' && (
+                    <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs leading-5 text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
+                      <div className="font-semibold">Use input role names in the prompt, not “image 1 / image 2”.</div>
+                      <div className="mt-1">
+                        <span className="font-semibold">Source image</span> is the base canvas; its composition, framing, aspect ratio, and resolution are preserved.
+                      </div>
+                      <div>
+                        <span className="font-semibold">Subject reference</span> supplies the person/object identity and can be marked User replaceable.
+                      </div>
+                      <div className="mt-1 text-blue-700 dark:text-blue-200">
+                        Example: Replace the woman in the Source image with the woman from the Subject reference. Preserve the Source image background, news graphics, framing, and text.
+                      </div>
+                    </div>
+                  )}
                   <textarea 
                     value={activeStep.prompt}
                     onChange={(e) => updateActiveStep({ prompt: e.target.value })}

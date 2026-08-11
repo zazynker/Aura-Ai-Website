@@ -34,6 +34,9 @@ const sourceImageInput = (
 ): CapabilityInputSlot => ({
   key,
   label,
+  description: key === 'source_image'
+    ? 'Base canvas. Its composition, aspect ratio, and output framing are preserved.'
+    : undefined,
   assetType: 'image' as const,
   required: true,
   maxCount: 1,
@@ -305,7 +308,7 @@ export const WORKFLOW_CAPABILITIES: Record<
     key: 'image.modify',
     version: 1,
     displayName: 'Modify Image',
-    description: 'Edit an image using a prompt and optional style reference.',
+    description: 'Edit a source image using an optional subject or content reference.',
     editorTarget: {
       route: '/modify',
       editor: 'modify',
@@ -315,7 +318,8 @@ export const WORKFLOW_CAPABILITIES: Record<
       sourceImageInput(),
       {
         key: 'reference_image',
-        label: 'Style reference',
+        label: 'Subject reference',
+        description: 'Identity or content to apply to the Source image. This is normally the user-replaceable input.',
         assetType: 'image',
         required: false,
         maxCount: 1,

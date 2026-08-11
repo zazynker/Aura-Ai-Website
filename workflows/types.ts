@@ -61,6 +61,7 @@ export interface WorkflowDefinition {
 export interface CapabilityInputSlot {
   key: string;
   label: string;
+  description?: string;
   assetType: WorkflowAssetType;
   required: boolean;
   maxCount: number;
@@ -117,4 +118,3 @@ export interface WorkflowValidationResult {
   valid: boolean;
   issues: WorkflowValidationIssue[];
 }
-

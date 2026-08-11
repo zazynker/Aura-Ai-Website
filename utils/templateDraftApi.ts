@@ -1061,6 +1061,7 @@ export async function loadTemplateDraft(
         allowDownload: Boolean(asset.is_reusable),
         templateAssetId: asset.id,
         sourceGenerationId: asset.generation_id || undefined,
+        inputSlot: input?.slot,
         referenceRole:
           input?.slot === 'style_reference' ? 'style'
             : input?.slot === 'omni_reference' ? 'omni'

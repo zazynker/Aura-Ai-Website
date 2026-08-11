@@ -183,6 +183,8 @@ async function executeImageStep(
   const outputCount = Math.max(1, Math.floor(asNumber(step.parameters.outputCount, 1)));
   const resolution = asString(step.parameters.resolution, '1K') as '1K' | '2K' | '4K';
   const model = asString(step.parameters.model, 'gpt-image-2');
+  const sourceImageUrl = inputUrl('source_image');
+  const subjectReferenceUrl = inputUrl('reference_image');
   const referenceUrls = step.inputs
     .map((input) => getResolvedInputUrl(input, resultsByStepId))
     .filter((url): url is string => Boolean(url));
@@ -195,6 +197,14 @@ async function executeImageStep(
   } else if (step.capability === 'image.upscale' && !resolvedPrompt.trim()) {
     resolvedPrompt = `Upscale this image to ${resolution} while preserving its composition and details.`;
   }
+  if (step.capability === 'image.modify' && sourceImageUrl && subjectReferenceUrl) {
+    resolvedPrompt = [
+      'Input roles are fixed for this edit:',
+      '- SOURCE IMAGE (first input): the base canvas. Preserve its composition, framing, background, text placement, aspect ratio, and resolution.',
+      '- SUBJECT REFERENCE (second input): the person, identity, object, or content to apply to the Source image. Do not use its canvas dimensions.',
+      resolvedPrompt,
+    ].filter(Boolean).join('\n');
+  }
 
   return generateImages({
     prompt: resolvedPrompt,
@@ -202,14 +212,16 @@ async function executeImageStep(
     provider: model === 'mj-v8.1' ? 'evolink-mj-v8.1' : step.capability === 'image.modify' ? 'fal-gpt-image-2-edit' : undefined,
     imageUrl: step.capability === 'image.replace_product'
       ? inputUrl('scene_image')
-      : inputUrl('source_image') || referenceUrls[0],
+      : sourceImageUrl || referenceUrls[0],
     productImageUrl: step.capability === 'image.replace_product'
       ? inputUrl('product_image')
-      : inputUrl('reference_image') || referenceUrls[1],
+      : subjectReferenceUrl || referenceUrls[1],
     referenceImageUrls: step.capability === 'image.text_to_image' ? referenceUrls : undefined,
     numberOfImages: model === 'mj-v8.1' ? 4 : outputCount,
     imageSize: resolution,
-    aspectRatio: asString(step.parameters.ratio) || undefined,
+    aspectRatio: step.capability === 'image.modify'
+      ? 'auto'
+      : asString(step.parameters.ratio) || undefined,
     quality: 'medium',
     mjQuality: asString(step.parameters.quality) === 'hd' ? 'hd' : 'standard',
     mjParams: model === 'mj-v8.1' ? {
