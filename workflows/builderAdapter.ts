@@ -223,9 +223,11 @@ function findPreviousCompatibleStep(
   steps: BuilderDraftStep[],
   currentIndex: number,
   assetType: 'image' | 'video' | 'audio',
+  excludedStepIds = new Set<string>(),
 ): BuilderDraftStep | undefined {
   for (let index = currentIndex - 1; index >= 0; index -= 1) {
     const previous = steps[index];
+    if (excludedStepIds.has(previous.id)) continue;
     const previousCapability = getWorkflowCapability(
       BUILDER_FEATURE_TO_CAPABILITY[previous.feature],
     );
@@ -246,7 +248,7 @@ function buildInputBindings(
   }
 
   const capability = getWorkflowCapability(capabilityKey);
-  let previousStepUsed = false;
+  const autoRoutedPreviousStepIds = new Set<string>();
   const usedMaterialIds = new Set<string>();
 
   const capabilityInputs = capabilityKey === 'image.text_to_image'
@@ -267,6 +269,10 @@ function buildInputBindings(
         )),
     )
     .map((slot): WorkflowInputBinding => {
+      const existing = existingInputBySlot.get(slot.key);
+      if (existing?.source === 'previous_step') {
+        return { ...existing };
+      }
       const roleForSlot = capabilityKey === 'image.text_to_image'
         ? slot.key === 'image_reference' ? 'image'
           : slot.key === 'style_reference' ? 'style'
@@ -311,15 +317,19 @@ function buildInputBindings(
         };
       }
 
-      const existing = existingInputBySlot.get(slot.key);
-      if (existing && !material) return { ...existing };
+      if (existing) return { ...existing };
 
-      const previous = previousStepUsed
-        ? undefined
-        : findPreviousCompatibleStep(allSteps, stepIndex, slot.assetType);
+      const previous = slot.required
+        ? findPreviousCompatibleStep(
+            allSteps,
+            stepIndex,
+            slot.assetType,
+            autoRoutedPreviousStepIds,
+          )
+        : undefined;
 
       if (previous && slot.allowedSources.includes('previous_step')) {
-        previousStepUsed = true;
+        autoRoutedPreviousStepIds.add(previous.id);
         const previousCapability = getWorkflowCapability(
           BUILDER_FEATURE_TO_CAPABILITY[previous.feature],
         );

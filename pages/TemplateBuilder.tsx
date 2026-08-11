@@ -13,6 +13,7 @@ import {
   getBuilderMaterialInputSlots,
   type BuilderDraftStep as WorkflowStep,
   type BuilderFeatureType as FeatureType,
+  type BuilderInputSelection,
   type BuilderMaterial as Material,
 } from '../workflows/builderAdapter';
 import {
@@ -454,11 +455,25 @@ export const TemplateBuilder = () => {
         return slot && upstreamStep ? [{ input, slot, upstreamStep }] : [];
       })
     : [];
+  const inputRoutingOptions = activeWorkflowStep && activeCapability
+    ? activeWorkflowStep.inputs.flatMap((input) => {
+        const slot = activeCapability.inputs.find((candidate) => candidate.key === input.slot);
+        if (!slot) return [];
+        const upstreamSteps = workflowConversion.workflow.steps.filter((candidate) => (
+          candidate.order < activeWorkflowStep.order
+          && candidate.output.assetType === slot.assetType
+          && slot.allowedSources.includes('previous_step')
+        ));
+        return [{ input, slot, upstreamSteps }];
+      })
+    : [];
   const promptInputOptions = activeWorkflowStep && activeCapability
     ? activeCapability.inputs.filter((slot) => (
         activeWorkflowStep.inputs.some((input) => input.slot === slot.key)
       ))
     : [];
+  const cloneActiveWorkflowInputBindings = (): BuilderInputSelection[] | undefined =>
+    activeWorkflowStep?.inputs.map((input) => ({ ...input }));
   const activePromptTemplate = adminDefinition.promptTemplates.find(
     (template) => template.stepId === activeStepId && template.parameterKey === 'prompt',
   );
@@ -638,6 +653,65 @@ export const TemplateBuilder = () => {
     setBuilderError(null);
   };
 
+  const handleInputRoutingChange = (slotKey: string, route: string) => {
+    if (!activeWorkflowStep || !activeCapability) return;
+    const slot = activeCapability.inputs.find((candidate) => candidate.key === slotKey);
+    if (!slot) return;
+    let binding: BuilderInputSelection;
+    if (route.startsWith('step:')) {
+      const fromStepId = route.slice('step:'.length);
+      const upstreamStep = workflowConversion.workflow.steps.find((candidate) => (
+        candidate.id === fromStepId
+        && candidate.order < activeWorkflowStep.order
+        && candidate.output.assetType === slot.assetType
+      ));
+      if (!upstreamStep || !slot.allowedSources.includes('previous_step')) return;
+      binding = {
+        slot: slot.key,
+        assetType: slot.assetType,
+        source: 'previous_step',
+        required: slot.required,
+        fromStepId: upstreamStep.id,
+        outputKey: upstreamStep.output.key,
+      };
+    } else {
+      const material = activeStep.materials.find((candidate) => candidate.inputSlot === slot.key);
+      binding = material?.templateAssetId && slot.allowedSources.includes('template_asset')
+        ? {
+            slot: slot.key,
+            assetType: slot.assetType,
+            source: 'template_asset',
+            required: slot.required,
+            templateAssetId: material.templateAssetId,
+          }
+        : {
+            slot: slot.key,
+            assetType: slot.assetType,
+            source: 'user_upload',
+            required: slot.required,
+          };
+    }
+    const bindingBySlot = new Map<string, BuilderInputSelection>(
+      activeWorkflowStep.inputs.map((input) => [input.slot, { ...input } as BuilderInputSelection]),
+    );
+    bindingBySlot.set(slot.key, binding);
+    updateActiveStep({
+      inputBindings: activeCapability.inputs.flatMap((candidate) => {
+        const next = bindingBySlot.get(candidate.key);
+        return next ? [next] : [];
+      }),
+    });
+    if (binding.source === 'previous_step') {
+      setQuickUseDefinition((current) => current
+        ? setQuickUseMaterialReplaceable(
+            current,
+            { kind: 'workflow_input', stepId: activeWorkflowStep.id, slot: slot.key },
+            false,
+          )
+        : current);
+    }
+  };
+
   const handlePromptSelection = (event: React.SyntheticEvent<HTMLTextAreaElement>) => {
     if (!isAdminTemplateMode || !activeStep) return;
     const target = event.currentTarget;
@@ -758,7 +832,7 @@ export const TemplateBuilder = () => {
       materials: model === 'mj-v8.1'
         ? assignMjReferenceRoles(activeStep.materials)
         : activeStep.materials,
-      inputBindings: undefined,
+      inputBindings: cloneActiveWorkflowInputBindings(),
     });
   };
 
@@ -780,7 +854,7 @@ export const TemplateBuilder = () => {
             ? 'style_reference'
             : 'omni_reference',
       }],
-      inputBindings: undefined,
+      inputBindings: cloneActiveWorkflowInputBindings(),
     });
   };
 
@@ -799,7 +873,7 @@ export const TemplateBuilder = () => {
           ? { ...material, referenceRole: undefined, inputSlot: undefined }
           : material;
       })),
-      inputBindings: undefined,
+      inputBindings: cloneActiveWorkflowInputBindings(),
     });
   };
 
@@ -809,7 +883,7 @@ export const TemplateBuilder = () => {
         ...activeStep.materials,
         { id: `mat-${Date.now()}`, type: 'Image', url: null, allowDownload: true },
       ]),
-      inputBindings: undefined,
+      inputBindings: cloneActiveWorkflowInputBindings(),
     });
   };
 
@@ -823,10 +897,28 @@ export const TemplateBuilder = () => {
         ...(typeChanged ? { inputSlot: undefined, referenceRole: undefined } : {}),
       };
     });
-    updateActiveStep({
-      materials: assignBuilderMaterialInputSlots(activeStep.feature, materials),
-      inputBindings: undefined,
-    });
+    const assignedMaterials = assignBuilderMaterialInputSlots(activeStep.feature, materials);
+    let inputBindings = cloneActiveWorkflowInputBindings();
+    const updatedMaterial = assignedMaterials.find((material) => material.id === id);
+    if (updates.url && updatedMaterial?.inputSlot && activeCapability && activeWorkflowStep) {
+      const slot = activeCapability.inputs.find((candidate) => candidate.key === updatedMaterial.inputSlot);
+      if (slot) {
+        const bindingBySlot = new Map<string, BuilderInputSelection>(
+          activeWorkflowStep.inputs.map((input) => [input.slot, { ...input } as BuilderInputSelection]),
+        );
+        bindingBySlot.set(slot.key, {
+          slot: slot.key,
+          assetType: slot.assetType,
+          source: 'user_upload',
+          required: slot.required,
+        });
+        inputBindings = activeCapability.inputs.flatMap((candidate) => {
+          const binding = bindingBySlot.get(candidate.key);
+          return binding ? [binding] : [];
+        });
+      }
+    }
+    updateActiveStep({ materials: assignedMaterials, inputBindings });
   };
 
   const setMaterialInputSlot = (materialId: string, inputSlot: string) => {
@@ -838,11 +930,12 @@ export const TemplateBuilder = () => {
     });
     updateActiveStep({
       materials: assignBuilderMaterialInputSlots(activeStep.feature, materials),
-      inputBindings: undefined,
+      inputBindings: cloneActiveWorkflowInputBindings(),
     });
   };
 
   const removeMaterial = (id: string) => {
+    const removedMaterial = activeStep.materials.find((material) => material.id === id);
     setMaterialFiles((current) => {
       const next = { ...current };
       delete next[id];
@@ -853,9 +946,19 @@ export const TemplateBuilder = () => {
       delete next[id];
       return next;
     });
+    const inputBindings = cloneActiveWorkflowInputBindings()?.map((binding) => (
+      removedMaterial?.inputSlot === binding.slot && binding.source === 'template_asset'
+        ? {
+            slot: binding.slot,
+            assetType: binding.assetType,
+            source: 'user_upload' as const,
+            required: binding.required,
+          }
+        : binding
+    ));
     updateActiveStep({
       materials: activeStep.materials.filter(m => m.id !== id),
-      inputBindings: undefined,
+      inputBindings,
     });
   };
 
@@ -907,7 +1010,11 @@ export const TemplateBuilder = () => {
       return next;
     });
     setSaveState('idle');
-    updateMaterial(materialId, { url: URL.createObjectURL(file) });
+    updateMaterial(materialId, {
+      url: URL.createObjectURL(file),
+      templateAssetId: undefined,
+      sourceGenerationId: undefined,
+    });
   };
 
   const applyStepResultFile = (file: File) => {
@@ -1939,33 +2046,41 @@ export const TemplateBuilder = () => {
                 </Button>
               </div>
 
-              {previousStepInputOptions.length > 0 && (
+              {inputRoutingOptions.length > 0 && (
                 <div className="mb-4 rounded-xl border border-blue-200 bg-blue-50/75 p-4 dark:border-blue-500/20 dark:bg-blue-500/5">
-                  <div className="text-sm font-semibold text-blue-950 dark:text-blue-100">Automatic workflow connections</div>
+                  <div className="text-sm font-semibold text-blue-950 dark:text-blue-100">Workflow input routing</div>
                   <div className="mt-1 text-xs text-blue-700 dark:text-blue-300">
-                    These inputs are filled by earlier step results at runtime. The user does not upload them again.
+                    Route each input independently. A step can merge results from several earlier branches; it is not limited to the immediately previous step.
                   </div>
                   <div className="mt-3 space-y-2">
-                    {previousStepInputOptions.map(({ input, slot, upstreamStep }) => (
+                    {inputRoutingOptions.map(({ input, slot, upstreamSteps }) => (
                       <div
-                        key={`${input.fromStepId}:${input.slot}`}
-                        className="flex flex-wrap items-center gap-2 rounded-lg border border-blue-100 bg-white px-3 py-2.5 text-sm dark:border-blue-500/15 dark:bg-slate-900/70"
+                        key={input.slot}
+                        className="grid gap-2 rounded-lg border border-blue-100 bg-white px-3 py-2.5 text-sm dark:border-blue-500/15 dark:bg-slate-900/70 sm:grid-cols-[minmax(150px,0.7fr)_minmax(240px,1.3fr)] sm:items-center"
                       >
-                        <span className="font-medium text-slate-800 dark:text-slate-200">
-                          Step {upstreamStep.order} · {upstreamStep.title} result
-                        </span>
-                        <ArrowRight className="h-4 w-4 text-blue-500" />
-                        <span className="font-semibold text-blue-800 dark:text-blue-200">
-                          Step {activeWorkflowStep?.order} · {slot.label}
-                        </span>
-                        <span className="ml-auto rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-500/15 dark:text-blue-200">
-                          Auto-connected
-                        </span>
+                        <div>
+                          <div className="font-semibold text-slate-800 dark:text-slate-200">{slot.label}</div>
+                          <div className="text-[11px] text-slate-500">{slot.assetType} input · Step {activeWorkflowStep?.order}</div>
+                        </div>
+                        <select
+                          value={input.source === 'previous_step' && input.fromStepId
+                            ? `step:${input.fromStepId}`
+                            : 'material'}
+                          onChange={(event) => handleInputRoutingChange(input.slot, event.target.value)}
+                          className="h-10 w-full rounded-lg border border-blue-200 bg-white px-3 text-sm font-medium text-slate-800 focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100 dark:border-blue-500/25 dark:bg-slate-950 dark:text-slate-100"
+                        >
+                          <option value="material">Template material / Quick Use upload</option>
+                          {upstreamSteps.map((upstreamStep) => (
+                            <option key={upstreamStep.id} value={`step:${upstreamStep.id}`}>
+                              Step {upstreamStep.order} · {upstreamStep.title} result
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     ))}
                   </div>
                   <p className="mt-2 text-[11px] text-blue-700 dark:text-blue-300">
-                    Uploading a material into an auto-connected slot intentionally overrides this connection with a fixed template asset.
+                    Previous-step routes are saved as stable fromStepId bindings. Choosing Template material / Quick Use upload lets the material card or exposed Quick Use block supply that slot.
                   </p>
                 </div>
               )}
@@ -2013,7 +2128,7 @@ export const TemplateBuilder = () => {
                   ) : (
                     <div className="rounded-lg border border-dashed border-purple-200 px-3 py-3 text-xs text-purple-700 dark:border-purple-500/20 dark:text-purple-300">
                       {previousStepInputOptions.length > 0
-                        ? 'No user upload is needed for this step. Its required input is automatically supplied by an earlier step result.'
+                        ? 'Inputs currently routed from step results are not user uploads. Change a route to Template material / Quick Use upload if users should supply it.'
                         : 'This step has no eligible upload input yet. Add the required material or choose a capability that accepts user uploads.'}
                     </div>
                   )}
