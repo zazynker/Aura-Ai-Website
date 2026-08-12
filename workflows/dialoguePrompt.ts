@@ -187,7 +187,11 @@ export function normalizeDialogueValue(
           if (typeof turn.characterId !== 'string' || !validCharacterIds.has(turn.characterId)) return [];
           if (typeof turn.text !== 'string') return [];
           seenTurnIds.add(turn.id);
-          return [{ id: turn.id, characterId: turn.characterId, text: cleanText(turn.text) }];
+          // Editing-time sanitization: strip newlines/quotes and cap length, but do
+          // NOT trim() — trimming here kills a space the moment the user types it,
+          // because this value flows straight back into a controlled input.
+          // Trimming still happens later in compileDialoguePrompt / compileDialogueProviderPrompt.
+          return [{ id: turn.id, characterId: turn.characterId, text: turn.text.replace(/[\r\n“”"]/g, "'").slice(0, 240) }];
         }).slice(0, 12)
       : [];
     return { characterNames, turns: turns.length > 0 ? turns : fallback.turns };
