@@ -201,13 +201,10 @@ export function compileDialoguePrompt(
   serialized?: string,
 ): string {
   const value = normalizeDialogueValue(definition, serialized);
-  const characterNames = definition.characters.map((character) => (
-    `- ${character.id}: ${value.characterNames[character.id] || character.defaultName}`
-  ));
   const turns = value.turns.map((turn) => (
     `${value.characterNames[turn.characterId] || turn.characterId}: “${cleanText(turn.text)}”`
   ));
-  return `Characters:\n${characterNames.join('\n')}\nDialogue:\n${turns.join('\n')}`;
+  return `Dialogue:\n${turns.join('\n')}`;
 }
 
 export function replaceDialoguePromptLine(value: string, line: Pick<DialoguePromptLine, 'textStart' | 'textEnd'>, nextText: string): string {
