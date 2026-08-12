@@ -4,7 +4,7 @@ import type {
   QuickUseDefinition,
 } from './quickUseTypes';
 import { assertValidQuickUseDefinition } from './quickUseValidators';
-import { compileDialoguePrompt } from './dialoguePrompt';
+import { compileDialogueProviderPrompt } from './dialoguePrompt';
 import type {
   JsonObject,
   JsonPrimitive,
@@ -116,7 +116,7 @@ export function compileQuickUseExecutionPlan(
             if (!candidateId) throw new Error(`Prompt variable binding is missing: ${variable.key}.`);
             const value = getPrimitiveValue(candidateId, definition, values, variable.defaultValue);
             const renderedValue = variable.dialogue
-              ? compileDialoguePrompt(variable.dialogue, typeof value === 'string' ? value : undefined)
+              ? compileDialogueProviderPrompt(variable.dialogue, typeof value === 'string' ? value : undefined)
               : String(value ?? '');
             return prompt.replaceAll(getQuickUsePromptVariableToken(variable.key), renderedValue);
           }, template.template);

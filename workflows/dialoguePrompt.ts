@@ -201,6 +201,25 @@ export function compileDialoguePrompt(
   serialized?: string,
 ): string {
   const value = normalizeDialogueValue(definition, serialized);
+  const characterNames = definition.characters.map((character) => (
+    `- ${character.id}: ${value.characterNames[character.id] || character.defaultName}`
+  ));
+  const turns = value.turns.map((turn) => (
+    `${value.characterNames[turn.characterId] || turn.characterId}: “${cleanText(turn.text)}”`
+  ));
+  return `Characters:\n${characterNames.join('\n')}\nDialogue:\n${turns.join('\n')}`;
+}
+
+/**
+ * Renders structured dialogue for a generation provider. Stable character IDs
+ * remain in the versioned domain value but are intentionally not sent to the
+ * model; the spoken lines already carry the resolved character names.
+ */
+export function compileDialogueProviderPrompt(
+  definition: QuickUseDialogueDefinition,
+  serialized?: string,
+): string {
+  const value = normalizeDialogueValue(definition, serialized);
   const turns = value.turns.map((turn) => (
     `${value.characterNames[turn.characterId] || turn.characterId}: “${cleanText(turn.text)}”`
   ));
