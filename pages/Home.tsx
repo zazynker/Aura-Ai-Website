@@ -275,22 +275,24 @@ const TemplateCardItem: React.FC<{
         )}
 
         {t.isWorkflow && (
-          <div className="absolute bottom-0 left-0 right-0 p-4 pt-12 bg-gradient-to-t from-slate-900/90 via-slate-900/60 to-transparent flex flex-row items-end justify-between z-20 translate-y-2 group-hover:translate-y-0 transition-all duration-300">
-            <div className="flex flex-col">
+          <div className="absolute bottom-0 left-0 right-0 p-4 pt-12 bg-gradient-to-t from-slate-900/90 via-slate-900/60 to-transparent flex flex-row items-end justify-center sm:justify-between z-20 translate-y-0 sm:translate-y-2 group-hover:translate-y-0 transition-all duration-300">
+            {/* Metadata is desktop-only: on a phone it squeezes the buttons out of the card. */}
+            <div className="hidden sm:flex flex-col min-w-0 pr-2">
               <h3 className="text-white font-bold text-sm line-clamp-1">{t.name}</h3>
-              <p className="text-white/70 text-xs">{t.authorName}</p>
+              <p className="text-white/70 text-xs line-clamp-1">{t.authorName}</p>
               <span className="text-white/60 text-[10px] mt-0.5">{t.usesCount} uses</span>
             </div>
 
+            {/* Touch devices have no hover, so the actions must be visible by default there. */}
             {t.isQuickUseTemplate ? (
-              <div className="flex gap-2 opacity-0 transition group-hover:opacity-100">
-                <button onClick={handleViewDetails} className="flex items-center gap-1 rounded-lg bg-white/90 px-2.5 py-2 text-[11px] font-semibold text-slate-900 shadow hover:bg-white"><Eye className="h-3.5 w-3.5" />View</button>
-                <button onClick={handleUseWorkflow} className="rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 px-3 py-2 text-[11px] font-bold text-white shadow-lg shadow-purple-500/25 hover:scale-105">Use</button>
+              <div className="flex shrink-0 gap-2 opacity-100 transition sm:opacity-0 sm:group-hover:opacity-100">
+                <button onClick={handleViewDetails} className="flex items-center gap-1 rounded-lg bg-white/90 px-3.5 py-2.5 text-xs font-semibold text-slate-900 shadow hover:bg-white sm:px-2.5 sm:py-2 sm:text-[11px]"><Eye className="h-3.5 w-3.5" />View</button>
+                <button onClick={handleUseWorkflow} className="rounded-lg bg-gradient-to-r from-purple-600 to-pink-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-purple-500/25 hover:scale-105 sm:px-3 sm:py-2 sm:text-[11px]">Use</button>
               </div>
             ) : (
               <button
                 onClick={handleViewDetails}
-                className="flex items-center justify-center w-10 h-10 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-full text-[11px] font-bold transition-all shadow-lg shadow-purple-500/25 pointer-events-auto hover:scale-105 shrink-0 opacity-0 group-hover:opacity-100"
+                className="flex items-center justify-center w-11 h-11 sm:w-10 sm:h-10 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-full text-[11px] font-bold transition-all shadow-lg shadow-purple-500/25 pointer-events-auto hover:scale-105 shrink-0 opacity-100 sm:opacity-0 sm:group-hover:opacity-100"
               >
                 View
               </button>
