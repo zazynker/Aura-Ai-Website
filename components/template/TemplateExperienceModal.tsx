@@ -18,6 +18,10 @@ import { estimateQuickUseCredits } from '../../utils/quickUseCredits';
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
 type AdminDemoAssetType = 'image' | 'image_group' | 'video';
+
+// Module-level, so the admin demo selection survives the modal unmounting.
+// Intentionally in-memory only: cleared on page reload.
+let cachedAdminDemo: { assetType: AdminDemoAssetType; files: File[] } = { assetType: 'image', files: [] };
 type AdminDemoStage = 'upload' | 'running' | 'result' | 'cancelled';
 
 const downloadGeneratedResult = async (
@@ -91,8 +95,8 @@ export const TemplateExperienceModal = ({
   const [values, setValues] = useState<QuickUseInputValues>({});
   const [validationError, setValidationError] = useState<string | null>(null);
   const [adminDemoOpen, setAdminDemoOpen] = useState(false);
-  const [adminDemoAssetType, setAdminDemoAssetType] = useState<AdminDemoAssetType>('image');
-  const [adminDemoFiles, setAdminDemoFiles] = useState<File[]>([]);
+  const [adminDemoAssetType, setAdminDemoAssetType] = useState<AdminDemoAssetType>(cachedAdminDemo.assetType);
+  const [adminDemoFiles, setAdminDemoFiles] = useState<File[]>(cachedAdminDemo.files);
   const [adminDemoStage, setAdminDemoStage] = useState<AdminDemoStage>('upload');
   const [adminDemoStep, setAdminDemoStep] = useState(1);
   const [adminDemoMinimized, setAdminDemoMinimized] = useState(false);
@@ -129,6 +133,10 @@ export const TemplateExperienceModal = ({
     adminDemoUrls.forEach((url) => URL.revokeObjectURL(url));
   }, [adminDemoUrls]);
 
+  useEffect(() => {
+    cachedAdminDemo = { assetType: adminDemoAssetType, files: adminDemoFiles };
+  }, [adminDemoAssetType, adminDemoFiles]);
+
   useEffect(() => () => {
     adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
   }, []);
@@ -136,7 +144,6 @@ export const TemplateExperienceModal = ({
   const resetAdminDemo = (close = false) => {
     adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     adminDemoTimersRef.current = [];
-    setAdminDemoFiles([]);
     setAdminDemoStage('upload');
     setAdminDemoStep(1);
     setAdminDemoMinimized(false);
