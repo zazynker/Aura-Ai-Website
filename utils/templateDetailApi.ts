@@ -10,6 +10,7 @@ import {
   toQuickUsePresentationDefinition,
 } from '../workflows/quickUseCandidates';
 import { validateQuickUseDefinition } from '../workflows/quickUseValidators';
+import type { WorkflowCapabilityKey } from '../workflows/types';
 
 export interface TemplateDetailMaterial {
   id: string;
@@ -38,6 +39,13 @@ export interface TemplateDetailStep {
   locked?: boolean;
 }
 
+export interface TemplateQuickUseCreditStep {
+  id: string;
+  capability: WorkflowCapabilityKey;
+  parameters: Record<string, unknown>;
+  imageInputs: Array<{ slot: string; hasDefault: boolean }>;
+}
+
 export interface RealTemplateDetail {
   id: string;
   versionId: string;
@@ -51,6 +59,7 @@ export interface RealTemplateDetail {
   description: string;
   finalResult: TemplateDetailResult;
   steps: TemplateDetailStep[];
+  quickUseCreditSteps: TemplateQuickUseCreditStep[];
   quickUseDefinition: QuickUsePresentationDefinition | null;
   quickUseUnavailableReason?: string;
   quickUseExampleUrls: Record<string, string>;
@@ -97,6 +106,13 @@ function displaySettings(
   }
   return settings;
 }
+
+const creditParameters = (parameters: Record<string, unknown> | undefined) => Object.fromEntries(
+  Object.entries(parameters || {}).filter(([key, value]) => (
+    ['model', 'quality', 'resolution', 'ratio', 'outputCount', 'duration', 'generateAudio'].includes(key)
+    && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+  )),
+);
 
 export async function fetchPublicTemplateDetail(
   idOrSlug: string,
@@ -196,6 +212,7 @@ export async function fetchTemplateDetail(
       capability: string;
       instruction?: string;
       parameters?: Record<string, unknown>;
+      inputs?: Array<{ slot?: string; assetType?: string; source?: string; templateAssetId?: string; fromStepId?: string }>;
     }>;
   };
   if (!Array.isArray(workflow?.steps) || workflow.steps.length === 0) {
@@ -379,6 +396,17 @@ export async function fetchTemplateDetail(
       thumbnail: coverThumbnail,
     },
     steps,
+    quickUseCreditSteps: workflow.steps.map((step) => ({
+      id: step.id,
+      capability: step.capability as WorkflowCapabilityKey,
+      parameters: creditParameters(step.parameters),
+      imageInputs: (step.inputs || []).filter((input) => input.assetType === 'image' && input.slot).map((input) => ({
+        slot: input.slot!,
+        hasDefault: input.source === 'previous_step'
+          ? Boolean(input.fromStepId)
+          : input.source === 'template_asset' && Boolean(input.templateAssetId),
+      })),
+    })),
     quickUseDefinition: quickUseDefinition
       ? toQuickUsePresentationDefinition(quickUseDefinition, quickUseCandidates)
       : null,

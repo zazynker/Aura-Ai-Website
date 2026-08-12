@@ -10,6 +10,7 @@ import { AuthGateModal } from '../components/AuthGateModal';
 import type { RealTemplateDetail } from '../utils/templateDetailApi';
 import type { QuickUseInputValues } from '../components/template/TemplateExperienceModal';
 import type { QuickUseExecutionProgress } from '../utils/quickUseExecutor';
+import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 
 const TemplateExperienceModal = React.lazy(() => import('../components/template/TemplateExperienceModal').then((module) => ({
   default: module.TemplateExperienceModal,
@@ -318,6 +319,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const [activeCategory, setActiveCategory] = useState(browsing.category);
   const [selectedTemplateForModal, setSelectedTemplateForModal] = useState<Template | null>(null);
   const [modalType, setModalType] = useState<'share' | 'collect' | 'upgrade' | 'auth' | null>(null);
+  const [showWelcomeGift, setShowWelcomeGift] = useState(false);
   const [experienceMode, setExperienceMode] = useState<'view' | 'use' | null>(null);
   const [experienceDetail, setExperienceDetail] = useState<RealTemplateDetail | null>(null);
   const [experienceLoading, setExperienceLoading] = useState(false);
@@ -620,12 +622,24 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
     setExperienceMode('use');
   };
 
-  const handleQuickUseGenerate = async (values: QuickUseInputValues) => {
+  const handleQuickUseInsufficientCredits = () => {
+    if (user?.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
+      setShowWelcomeGift(true);
+      return;
+    }
+    navigate('/pricing');
+  };
+
+  const handleQuickUseGenerate = async (values: QuickUseInputValues, estimatedCredits: number) => {
     if (!user) {
       setModalType('auth');
       return;
     }
     if (!selectedTemplateForModal || !experienceDetail) return;
+    if (!user.isWhitelisted && user.credits < estimatedCredits) {
+      handleQuickUseInsufficientCredits();
+      return;
+    }
     setExperienceError(null);
     setExecutionProgress({
       runId: 'starting',
@@ -659,6 +673,9 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
         return;
       }
       const message = executionError instanceof Error ? executionError.message : 'Template generation failed.';
+      if (/insufficient credits?/i.test(message)) {
+        handleQuickUseInsufficientCredits();
+      }
       setExperienceError(message);
       addToast('error', message);
       setExperienceMinimized(false);
@@ -1073,6 +1090,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
         title="Sign up to use Lazora"
         description="Browsing and previewing templates is free. Create an account when you are ready to save or generate."
       />
+      <WelcomeGiftModal isOpen={showWelcomeGift} onClose={() => setShowWelcomeGift(false)} />
     </div>
   );
 };

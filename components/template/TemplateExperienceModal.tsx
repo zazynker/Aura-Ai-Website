@@ -13,6 +13,7 @@ import type {
 import type { QuickUseExecutionProgress } from '../../utils/quickUseExecutor';
 import { DialogueEditor } from './DialogueEditor';
 import { QuickUseNumberControl } from './QuickUseNumberControl';
+import { estimateQuickUseCredits } from '../../utils/quickUseCredits';
 
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
@@ -49,7 +50,7 @@ interface TemplateExperienceModalProps {
   execution?: QuickUseExecutionProgress | null;
   onClose: () => void;
   onUse: () => void;
-  onGenerate?: (values: QuickUseInputValues) => void | Promise<void>;
+  onGenerate?: (values: QuickUseInputValues, estimatedCredits: number) => void | Promise<void>;
   onMinimize?: () => void;
   onCancel?: () => void;
   onReset?: () => void;
@@ -106,6 +107,10 @@ export const TemplateExperienceModal = ({
   const candidateById = useMemo(
     () => new Map(definition?.candidates.map((candidate) => [candidate.id, candidate]) || []),
     [definition],
+  );
+  const estimatedCredits = useMemo(
+    () => estimateQuickUseCredits(detail?.quickUseCreditSteps || [], values),
+    [detail?.quickUseCreditSteps, values],
   );
 
   useEffect(() => {
@@ -182,7 +187,7 @@ export const TemplateExperienceModal = ({
       return;
     }
     if (!onGenerate) return;
-    void onGenerate(values);
+    void onGenerate(values, estimatedCredits);
   };
 
   const isExecuting = execution?.status === 'preparing' || execution?.status === 'running';
@@ -203,7 +208,7 @@ export const TemplateExperienceModal = ({
               disabled={(!generationAvailable && !isAdminDemoArmed) || !definition?.blocks.length || isExecuting}
               onClick={handleGenerate}
             >
-              Generate
+              ~{estimatedCredits} credits · Generate
             </Button>
           </div>
       )

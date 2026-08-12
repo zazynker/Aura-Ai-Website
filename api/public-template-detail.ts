@@ -43,6 +43,7 @@ type WorkflowStep = {
   capability: string;
   instruction?: string;
   parameters?: Record<string, unknown>;
+  inputs?: Array<{ slot?: string; assetType?: string; source?: string; templateAssetId?: string; fromStepId?: string }>;
 };
 
 type TemplateRow = {
@@ -83,6 +84,13 @@ function safeSettings(
   }
   return settings;
 }
+
+const creditParameters = (parameters: Record<string, unknown> | undefined) => Object.fromEntries(
+  Object.entries(parameters || {}).filter(([key, value]) => (
+    ['model', 'quality', 'resolution', 'ratio', 'outputCount', 'duration', 'generateAudio'].includes(key)
+    && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')
+  )),
+);
 
 function safeImageUrl(value: string | null | undefined) {
   return value && !VIDEO_URL_PATTERN.test(value) ? value : undefined;
@@ -337,6 +345,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         description: template.description || '',
         finalResult,
         steps: publicSteps,
+        quickUseCreditSteps: steps.map((step) => ({
+          id: step.id,
+          capability: step.capability,
+          parameters: creditParameters(step.parameters),
+          imageInputs: (step.inputs || []).filter((input) => input.assetType === 'image' && input.slot).map((input) => ({
+            slot: input.slot!,
+            hasDefault: input.source === 'previous_step'
+              ? Boolean(input.fromStepId)
+              : input.source === 'template_asset' && Boolean(input.templateAssetId),
+          })),
+        })),
         quickUseDefinition: quickUseDefinition
           ? toQuickUsePresentationDefinition(quickUseDefinition, quickUseCandidates)
           : null,
