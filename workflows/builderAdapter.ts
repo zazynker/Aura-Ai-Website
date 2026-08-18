@@ -180,7 +180,10 @@ function buildParameters(
   const parameters = buildDefaultParameters(capabilityKey);
 
   if ('prompt' in parameters) {
-    parameters.prompt = step.prompt.trim();
+    // Keep the authored value byte-for-byte. Quick Use prompt templates retain
+    // their original whitespace, and their defaults are validated against this
+    // workflow parameter before a draft can be saved.
+    parameters.prompt = step.prompt;
   }
 
   if (capabilityKey === 'video.image_to_video') {

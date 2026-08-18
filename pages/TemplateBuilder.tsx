@@ -542,6 +542,7 @@ export const TemplateBuilder = () => {
   const activePromptTemplate = adminDefinition.promptTemplates.find(
     (template) => template.stepId === activeStepId && template.parameterKey === 'prompt',
   );
+  const promptHasConfiguredVariables = Boolean(activePromptTemplate?.variables.length);
   const detectedDialogueRange = findDialoguePromptRange(activeStep.prompt);
   const configuredDialogueVariable = activePromptTemplate?.variables.find(
     (variable) => variable.inputKind === 'dialogue',
@@ -944,6 +945,10 @@ export const TemplateBuilder = () => {
   };
 
   const insertPromptInputToken = (slot: string) => {
+    if (promptHasConfiguredVariables) {
+      addToast('error', 'Remove the configured Prompt Variables before editing this Prompt.');
+      return;
+    }
     const token = getWorkflowInputPromptToken(slot);
     const textarea = promptTextAreaRef.current;
     const start = textarea?.selectionStart ?? activeStep.prompt.length;
@@ -2788,9 +2793,16 @@ export const TemplateBuilder = () => {
                     value={activeStep.prompt}
                     onChange={(e) => updateActiveStep({ prompt: e.target.value })}
                     onSelect={handlePromptSelection}
+                    readOnly={promptHasConfiguredVariables}
+                    aria-describedby={promptHasConfiguredVariables ? 'prompt-variable-edit-lock' : undefined}
                     placeholder="Enter the prompt used for this step..."
-                    className="w-full h-32 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+                    className={`w-full h-32 border border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none ${promptHasConfiguredVariables ? 'cursor-not-allowed bg-slate-100 dark:bg-slate-800/70' : 'bg-white dark:bg-slate-900'}`}
                   />
+                  {promptHasConfiguredVariables && (
+                    <p id="prompt-variable-edit-lock" className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                      This Prompt is locked to keep its Prompt Variables synchronized. Edit a Dialogue group with its editor, or remove the Prompt Variables below before changing the Prompt text.
+                    </p>
+                  )}
                   {isAdminTemplateMode && dialogueAuthoringDraft && (
                     <div className="mt-3">
                       <AdminDialogueEditor
