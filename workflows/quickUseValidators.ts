@@ -4,6 +4,10 @@ import {
   getSuggestedQuickUseControl,
 } from './quickUseCandidates.js';
 import {
+  QUICK_USE_FINAL_VIDEO_MAX_CLIPS,
+  QUICK_USE_FINAL_VIDEO_MIN_CLIPS,
+} from './quickUseFinalVideo.js';
+import {
   QUICK_USE_SCHEMA_VERSION,
   type QuickUseBlockDefinition,
   type QuickUseCandidate,
@@ -14,6 +18,7 @@ import {
 } from './quickUseTypes.js';
 
 const PROMPT_INPUT_KINDS = new Set(['text', 'textarea', 'dialogue']);
+const FINAL_VIDEO_TRANSITIONS = new Set(['none']);
 const CONTROL_TYPES = new Set<QuickUseControlType>([
   'image_upload',
   'video_upload',
@@ -47,6 +52,7 @@ export function validateQuickUseDefinition(
   if (!derivation.valid) return { valid: false, issues };
 
   validateBlocks(definition.blocks, derivation.candidates, issues);
+  validateFinalVideo(workflow, definition, issues);
   return { valid: issues.length === 0, issues };
 }
 
@@ -131,6 +137,146 @@ function validateDefinitionShape(
       validateBlockShape(item, index, issues);
     });
   }
+  if (value.finalVideo !== undefined) {
+    validateFinalVideoShape(value.finalVideo, issues);
+  }
+  if (value.stepReuse !== undefined) {
+    if (!isRecord(value.stepReuse) || typeof value.stepReuse.enabled !== 'boolean') {
+      issues.push({
+        path: '$.stepReuse.enabled',
+        code: 'invalid_type',
+        message: 'Step reuse must be an object with a boolean enabled flag.',
+      });
+    }
+  }
+}
+
+function validateFinalVideoShape(
+  value: unknown,
+  issues: QuickUseValidationIssue[],
+): void {
+  const path = '$.finalVideo';
+  if (!isRecord(value)) {
+    issues.push({ path, code: 'invalid_type', message: 'Final video configuration must be an object.' });
+    return;
+  }
+  if (typeof value.enabled !== 'boolean') {
+    issues.push({ path: `${path}.enabled`, code: 'invalid_type', message: 'Final video enabled flag must be boolean.' });
+  }
+  if (typeof value.transition !== 'string' || !FINAL_VIDEO_TRANSITIONS.has(value.transition)) {
+    issues.push({
+      path: `${path}.transition`,
+      code: 'invalid_final_video_transition',
+      message: 'Final video transition must be "none".',
+    });
+  }
+  if (!Array.isArray(value.stepIds)) {
+    issues.push({ path: `${path}.stepIds`, code: 'invalid_type', message: 'Final video step ids must be an array.' });
+    return;
+  }
+  if (value.stepIds.length > QUICK_USE_FINAL_VIDEO_MAX_CLIPS) {
+    issues.push({
+      path: `${path}.stepIds`,
+      code: 'too_many_final_video_clips',
+      message: `A final video can join at most ${QUICK_USE_FINAL_VIDEO_MAX_CLIPS} clips.`,
+    });
+  }
+  const seen = new Set<string>();
+  value.stepIds.forEach((stepId, index) => {
+    if (typeof stepId !== 'string' || !stepId) {
+      issues.push({
+        path: `${path}.stepIds[${index}]`,
+        code: 'invalid_step_id',
+        message: 'Final video step id must be a non-empty string.',
+      });
+      return;
+    }
+    if (seen.has(stepId)) {
+      issues.push({
+        path: `${path}.stepIds[${index}]`,
+        code: 'duplicate_final_video_step',
+        message: `A step can only appear once in the final video: ${stepId}.`,
+      });
+    }
+    seen.add(stepId);
+  });
+}
+
+/**
+ * Cross-checks the final cut against the workflow it belongs to. Only a step
+ * whose capability output is a video may contribute a clip, and an enabled
+ * final cut must actually join something.
+ */
+function validateFinalVideo(
+  workflow: unknown,
+  definition: QuickUseDefinition,
+  issues: QuickUseValidationIssue[],
+): void {
+  const finalVideo = definition.finalVideo;
+  if (!finalVideo) return;
+
+  const steps = readWorkflowSteps(workflow);
+  const stepById = new Map(steps.map((step) => [step.id, step]));
+
+  finalVideo.stepIds.forEach((stepId, index) => {
+    const step = stepById.get(stepId);
+    if (!step) {
+      issues.push({
+        path: `$.finalVideo.stepIds[${index}]`,
+        code: 'unknown_final_video_step',
+        message: `Final video references a step that is not in this workflow: ${stepId}.`,
+      });
+      return;
+    }
+    if (step.outputAssetType !== 'video') {
+      issues.push({
+        path: `$.finalVideo.stepIds[${index}]`,
+        code: 'final_video_step_not_video',
+        message: `Only a video step can be part of the final video: ${stepId}.`,
+      });
+    }
+  });
+
+  const orderedIds = steps
+    .filter((step) => finalVideo.stepIds.includes(step.id) && step.outputAssetType === 'video')
+    .map((step) => step.id);
+  const authoredOrder = finalVideo.stepIds.filter((stepId) => orderedIds.includes(stepId));
+  if (authoredOrder.some((stepId, index) => orderedIds[index] !== stepId)) {
+    issues.push({
+      path: '$.finalVideo.stepIds',
+      code: 'final_video_order_mismatch',
+      message: 'Final video step ids must be stored in workflow order.',
+    });
+  }
+
+  if (finalVideo.enabled && orderedIds.length < QUICK_USE_FINAL_VIDEO_MIN_CLIPS) {
+    issues.push({
+      path: '$.finalVideo.stepIds',
+      code: 'not_enough_final_video_clips',
+      message: `Turn off the final video or include at least ${QUICK_USE_FINAL_VIDEO_MIN_CLIPS} video steps.`,
+    });
+  }
+}
+
+interface WorkflowStepSummary {
+  id: string;
+  order: number;
+  outputAssetType: string;
+}
+
+function readWorkflowSteps(workflow: unknown): WorkflowStepSummary[] {
+  if (!isRecord(workflow) || !Array.isArray(workflow.steps)) return [];
+  return workflow.steps
+    .flatMap((step): WorkflowStepSummary[] => {
+      if (!isRecord(step) || typeof step.id !== 'string') return [];
+      const output = isRecord(step.output) ? step.output : {};
+      return [{
+        id: step.id,
+        order: typeof step.order === 'number' ? step.order : Number.MAX_SAFE_INTEGER,
+        outputAssetType: typeof output.assetType === 'string' ? output.assetType : '',
+      }];
+    })
+    .sort((left, right) => left.order - right.order);
 }
 
 function validatePromptTemplateShape(

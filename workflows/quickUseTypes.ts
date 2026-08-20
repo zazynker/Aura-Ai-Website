@@ -188,6 +188,37 @@ export interface QuickUseBlockDefinition {
   example?: QuickUseExampleDefinition;
 }
 
+/**
+ * MVP joins clips back-to-back with no transition. The field exists so a
+ * later transition mode can be added without a schema version bump.
+ */
+export type QuickUseFinalVideoTransition = 'none';
+
+/**
+ * Version-scoped final cut contract.
+ *
+ * `stepIds` lists the authored workflow step ids whose video result is part of
+ * the deliverable, in workflow order. Only steps whose capability output is a
+ * video may appear here; an image step is never auto-converted to a clip.
+ * A run with fewer than two included clips delivers the last step result
+ * directly, exactly as before this feature existed.
+ */
+export interface QuickUseFinalVideoDefinition {
+  enabled: boolean;
+  stepIds: string[];
+  transition: QuickUseFinalVideoTransition;
+}
+
+/**
+ * Controls whether a Quick Use run may serve the template's own demo result
+ * for a step the user did not change. Reuse costs no credits and calls no
+ * provider. Defaults to enabled when the field is absent, so published legacy
+ * versions keep working and immediately benefit.
+ */
+export interface QuickUseStepReuseDefinition {
+  enabled: boolean;
+}
+
 export interface QuickUseDefinition {
   schemaVersion: typeof QUICK_USE_SCHEMA_VERSION;
   title: string;
@@ -195,6 +226,8 @@ export interface QuickUseDefinition {
   replaceableMaterials: UserReplaceableMaterialDefinition[];
   promptTemplates: QuickUsePromptTemplateDefinition[];
   blocks: QuickUseBlockDefinition[];
+  finalVideo?: QuickUseFinalVideoDefinition;
+  stepReuse?: QuickUseStepReuseDefinition;
 }
 
 export type QuickUsePresentationCandidate = Pick<

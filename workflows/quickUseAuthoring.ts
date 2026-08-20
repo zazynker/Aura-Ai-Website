@@ -2,6 +2,7 @@ import {
   getQuickUsePromptVariableToken,
   renderQuickUsePromptTemplateDefaults,
 } from './quickUseCandidates';
+import { createDefaultFinalVideoDefinition } from './quickUseFinalVideo';
 import {
   QUICK_USE_SCHEMA_VERSION,
   type QuickUseDefinition,
@@ -45,9 +46,34 @@ export function createEmptyQuickUseDefinition(
     replaceableMaterials: [],
     promptTemplates: [],
     blocks: [],
+    finalVideo: createDefaultFinalVideoDefinition(),
+    stepReuse: { enabled: true },
   };
   if (subtitle?.trim()) definition.subtitle = subtitle.trim();
   return definition;
+}
+
+/**
+ * Backfills the fields introduced with the final-video release onto a
+ * definition loaded from an older draft, without changing anything the
+ * administrator already authored.
+ */
+export function withQuickUseDefaults(
+  definition: QuickUseDefinition,
+): QuickUseDefinition {
+  if (definition.finalVideo && definition.stepReuse) return definition;
+  return {
+    ...definition,
+    finalVideo: definition.finalVideo || createDefaultFinalVideoDefinition(),
+    stepReuse: definition.stepReuse || { enabled: true },
+  };
+}
+
+export function setQuickUseStepReuseEnabled(
+  definition: QuickUseDefinition,
+  enabled: boolean,
+): QuickUseDefinition {
+  return { ...definition, stepReuse: { enabled } };
 }
 
 export function setQuickUseMaterialReplaceable(

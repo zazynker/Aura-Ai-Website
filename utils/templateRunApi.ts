@@ -3,6 +3,13 @@ import { supabase } from './supabase';
 export type TemplateRunStatus = 'started' | 'completed' | 'failed' | 'cancelled';
 export type TemplateRunStepStatus = 'pending' | 'active' | 'completed' | 'failed' | 'skipped';
 
+/**
+ * generated               = a provider call was made and credits were charged.
+ * reused_template_result  = the template's own demo result was served because
+ *                           the user changed nothing bound to that step.
+ */
+export type TemplateRunStepExecutionMode = 'generated' | 'reused_template_result';
+
 export interface TemplateRunWorkflowStep {
   id: string;
   order: number;
@@ -30,6 +37,9 @@ export interface TemplateRunStepRecord {
   creditsUsed: number;
   creditsRefunded: number;
   errorCode: string | null;
+  /** Absent on runs created before the final-video release. */
+  executionMode?: TemplateRunStepExecutionMode;
+  resultUrl?: string | null;
 }
 
 export interface StartedTemplateRun {
@@ -52,6 +62,14 @@ export interface TemplateRunMaterial {
   type: 'image' | 'video' | 'audio';
   url: string;
   isReusable: boolean;
+}
+
+export interface TemplateRunFinalVideo {
+  finalVideoUrl: string | null;
+  finalThumbnailUrl: string | null;
+  finalMediaType: 'image' | 'video' | null;
+  stepIds: string[];
+  assembledAt: string | null;
 }
 
 const normalizeRun = (value: unknown): StartedTemplateRun => {
@@ -137,6 +155,51 @@ export async function fetchReusableTemplateAssets(
   return materials.filter((item): item is TemplateRunMaterial => Boolean(item));
 }
 
+/**
+ * Loads the template's own per-step demo results for one locked version,
+ * keyed by `step-N-result`. These are the clips a Quick Use run may serve
+ * back when the user changed nothing bound to that step.
+ *
+ * Signed for an hour rather than five minutes: the URL is handed to the merge
+ * provider, which downloads it after the run finishes.
+ */
+export async function fetchTemplateStepResultAssets(
+  templateId: string,
+  versionId: string,
+): Promise<Record<string, { url: string; type: 'image' | 'video' | 'audio' }>> {
+  const { data, error } = await supabase
+    .from('template_assets')
+    .select('id,asset_key,asset_type,storage_bucket,storage_path,public_url')
+    .eq('template_id', templateId)
+    .eq('version_id', versionId)
+    .order('sort_order', { ascending: true });
+  if (error) throw new Error(`Could not load the template step results: ${error.message}`);
+
+  const rows = ((data || []) as Array<{
+    asset_key: string;
+    asset_type: 'image' | 'video' | 'audio';
+    storage_bucket: string | null;
+    storage_path: string | null;
+    public_url: string | null;
+  }>).filter((row) => /^step-\d+-result$/.test(row.asset_key));
+
+  const entries = await Promise.all(rows.map(async (row) => {
+    let url = row.public_url || '';
+    if (!url && row.storage_bucket && row.storage_path) {
+      const { data: signed, error: signError } = await supabase.storage
+        .from(row.storage_bucket)
+        .createSignedUrl(row.storage_path, 60 * 60);
+      if (!signError) url = signed?.signedUrl || '';
+    }
+    if (!url) return null;
+    return [row.asset_key, { url, type: row.asset_type }] as const;
+  }));
+
+  return Object.fromEntries(
+    entries.filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
+  );
+}
+
 export async function setTemplateRunCurrentStep(runId: string, stepId: string): Promise<StartedTemplateRun> {
   const { data, error } = await supabase.rpc('set_template_run_current_step', {
     p_run_id: runId,
@@ -180,6 +243,24 @@ export async function completeTemplateRunStep(
   if (error) throw new Error(`Could not complete this workflow step: ${error.message}`);
 }
 
+/**
+ * Closes a step that was served from the template's own demo result.
+ * No generation row is written and no credits are charged; the step is marked
+ * `reused_template_result` so review and analytics can tell the two apart.
+ */
+export async function reuseTemplateRunStep(
+  runId: string,
+  stepId: string,
+  resultUrl: string,
+): Promise<void> {
+  const { error } = await supabase.rpc('reuse_template_run_step', {
+    p_run_id: runId,
+    p_step_id: stepId,
+    p_result_url: resultUrl,
+  });
+  if (error) throw new Error(`Could not reuse this template step: ${error.message}`);
+}
+
 export async function failTemplateRunStep(
   runId: string,
   stepId: string,
@@ -191,6 +272,30 @@ export async function failTemplateRunStep(
     p_error_code: errorCode,
   });
   if (error) throw new Error(`Could not record this workflow step failure: ${error.message}`);
+}
+
+export async function fetchTemplateRunFinalVideo(
+  runId: string,
+): Promise<TemplateRunFinalVideo | null> {
+  const { data, error } = await supabase
+    .from('template_runs')
+    .select('final_video_url,final_thumbnail_url,final_media_type,final_video_step_ids,assembled_at')
+    .eq('id', runId)
+    .maybeSingle();
+  if (error) throw new Error(`Could not read this workflow result: ${error.message}`);
+  if (!data) return null;
+  const row = data as Record<string, unknown>;
+  return {
+    finalVideoUrl: typeof row.final_video_url === 'string' ? row.final_video_url : null,
+    finalThumbnailUrl: typeof row.final_thumbnail_url === 'string' ? row.final_thumbnail_url : null,
+    finalMediaType: row.final_media_type === 'video' || row.final_media_type === 'image'
+      ? row.final_media_type
+      : null,
+    stepIds: Array.isArray(row.final_video_step_ids)
+      ? row.final_video_step_ids.filter((id): id is string => typeof id === 'string')
+      : [],
+    assembledAt: typeof row.assembled_at === 'string' ? row.assembled_at : null,
+  };
 }
 
 export async function cancelTemplateRun(runId: string): Promise<void> {

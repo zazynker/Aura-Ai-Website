@@ -10,6 +10,12 @@ import {
   type QuickUseExecutionStep,
   type QuickUseExecutionValues,
 } from '../workflows/quickUseExecution';
+import {
+  resolveQuickUseStepExecution,
+  type QuickUseStepExecutionDecision,
+  type QuickUseTemplateStepResult,
+} from '../workflows/quickUseReuse';
+import { selectFinalVideoStepIds } from '../workflows/quickUseFinalVideo';
 import { generateImages, generateVideo } from './generateService';
 import { saveGenerationsToDb } from './api';
 import { supabase } from './supabase';
@@ -18,16 +24,42 @@ import {
   completeTemplateRunStep,
   createRunIdempotencyKey,
   engageTemplateRunStep,
+  fetchTemplateStepResultAssets,
+  reuseTemplateRunStep,
   startTemplateRun,
 } from './templateRunApi';
+import { finalizeWorkflowVideo } from './workflowFinalizer';
 import type { TemplateGenerationContext } from './templateRunGeneration';
 
 export type QuickUseBrowserValue = JsonPrimitive | File;
 export type QuickUseBrowserValues = Partial<Record<QuickUseCandidateId, QuickUseBrowserValue>>;
 
+export type QuickUseStepExecutionMode = 'generated' | 'reused_template_result';
+
+export interface QuickUseStepOutcome {
+  stepId: string;
+  stepTitle: string;
+  order: number;
+  type: 'image' | 'video';
+  url: string;
+  executionMode: QuickUseStepExecutionMode;
+}
+
+export interface QuickUseFinalVideoOutcome {
+  url: string;
+  thumbnailUrl: string | null;
+  durationSeconds: number | null;
+  stepIds: string[];
+}
+
 export interface QuickUseExecutionProgress {
   runId: string;
-  status: 'preparing' | 'running' | 'completed' | 'failed' | 'cancelled';
+  /**
+   * `assembling` covers the window after the last step finished and before the
+   * merged deliverable exists. It only occurs on templates whose published
+   * version asks for a final video.
+   */
+  status: 'preparing' | 'running' | 'assembling' | 'completed' | 'failed' | 'cancelled';
   currentStep: number;
   totalSteps: number;
   stepId?: string;
@@ -37,6 +69,10 @@ export interface QuickUseExecutionProgress {
     type: 'image' | 'video';
     url: string;
   };
+  /** Every step result in workflow order, generated or reused. */
+  stepResults?: QuickUseStepOutcome[];
+  /** Present only when the run produced a merged deliverable. */
+  finalVideo?: QuickUseFinalVideoOutcome;
 }
 
 export interface ExecuteQuickUseOptions {
@@ -195,6 +231,26 @@ async function loadTemplateAssetUrls(
   return Object.fromEntries(entries.filter((entry): entry is [string, string] => Boolean(entry)));
 }
 
+/**
+ * Maps the template's `step-N-result` demo assets onto authored step ids so a
+ * step the user left untouched can be served without calling a provider.
+ * Audio results are ignored: no workflow step outputs audio.
+ */
+function mapTemplateStepResults(
+  steps: QuickUseExecutionStep[],
+  assetsByKey: Readonly<Record<string, { url: string; type: 'image' | 'video' | 'audio' }>>,
+): Record<string, QuickUseTemplateStepResult> {
+  const ordered = [...steps].sort((left, right) => left.order - right.order);
+  const results: Record<string, QuickUseTemplateStepResult> = {};
+  ordered.forEach((step, index) => {
+    const asset = assetsByKey[`step-${step.order}-result`]
+      || assetsByKey[`step-${index + 1}-result`];
+    if (!asset || asset.type === 'audio') return;
+    results[step.id] = { url: asset.url, type: asset.type };
+  });
+  return results;
+}
+
 const toInputSnapshots = (
   step: QuickUseExecutionStep,
   resultsByStepId: ReadonlyMap<string, StepResult>,
@@ -329,25 +385,45 @@ export async function executeQuickUseTemplate(
   throwIfCancelled(options.signal);
   const run = await startTemplateRun(options.templateId, createRunIdempotencyKey(options.templateId));
   let currentStep = 0;
+  const stepOutcomes: QuickUseStepOutcome[] = [];
   const report = (progress: Omit<QuickUseExecutionProgress, 'runId' | 'totalSteps'>) => {
-    options.onProgress?.({ ...progress, runId: run.id, totalSteps: run.workflow.steps.length });
+    options.onProgress?.({
+      stepResults: [...stepOutcomes],
+      ...progress,
+      runId: run.id,
+      totalSteps: run.workflow.steps.length,
+    });
   };
   report({ status: 'preparing', currentStep: 0 });
 
   try {
     throwIfCancelled(options.signal);
-    const [definition, templateAssetUrls, resolvedValues] = await awaitWithCancellation(Promise.all([
+    const [definition, templateAssetUrls, stepResultAssets, resolvedValues] = await awaitWithCancellation(Promise.all([
       loadLockedQuickUseDefinition(run.templateId, run.templateVersionId),
       loadTemplateAssetUrls(run.templateId, run.templateVersionId),
+      fetchTemplateStepResultAssets(run.templateId, run.templateVersionId),
       resolveBrowserValues(options.userId, options.values),
     ]), options.signal);
+    const workflow = run.workflow as unknown as WorkflowDefinition;
     const plan = compileQuickUseExecutionPlan(
-      run.workflow as unknown as WorkflowDefinition,
+      workflow,
       definition,
       resolvedValues,
       templateAssetUrls,
     );
     const resultsByStepId = new Map<string, StepResult>();
+
+    // Decide once, before anything runs, which steps must call a provider.
+    // A step is only reused when the user changed nothing bound to it *and*
+    // every upstream step it consumes was reused too, so the delivered clips
+    // always belong to the same take.
+    const decisions: ReadonlyMap<string, QuickUseStepExecutionDecision> = resolveQuickUseStepExecution({
+      workflow,
+      definition,
+      steps: plan.steps,
+      values: resolvedValues,
+      templateStepResults: mapTemplateStepResults(plan.steps, stepResultAssets),
+    });
 
     for (let index = 0; index < plan.steps.length; index += 1) {
       throwIfCancelled(options.signal);
@@ -355,6 +431,26 @@ export async function executeQuickUseTemplate(
       currentStep = index + 1;
       report({ status: 'running', currentStep: index + 1, stepId: step.id, stepTitle: step.title });
       await awaitWithCancellation(engageTemplateRunStep(run.id, step.id, 'all'), options.signal);
+
+      const decision = decisions.get(step.id);
+      if (decision?.mode === 'reuse' && decision.reusableUrl && decision.reusableType) {
+        await awaitWithCancellation(
+          reuseTemplateRunStep(run.id, step.id, decision.reusableUrl),
+          options.signal,
+        );
+        resultsByStepId.set(step.id, { type: decision.reusableType, url: decision.reusableUrl });
+        stepOutcomes.push({
+          stepId: step.id,
+          stepTitle: step.title,
+          order: step.order,
+          type: decision.reusableType,
+          url: decision.reusableUrl,
+          executionMode: 'reused_template_result',
+        });
+        throwIfCancelled(options.signal);
+        continue;
+      }
+
       const context: TemplateGenerationContext = {
         templateRunId: run.id,
         templateStepId: step.id,
@@ -388,6 +484,14 @@ export async function executeQuickUseTemplate(
         if (saved.error || !saved.data[0]) throw new Error(saved.error || 'Could not persist the generated image.');
         await completeTemplateRunStep(run.id, step.id, saved.data[0].id);
         resultsByStepId.set(step.id, { type: 'image', url: result.images[0] });
+        stepOutcomes.push({
+          stepId: step.id,
+          stepTitle: step.title,
+          order: step.order,
+          type: 'image',
+          url: result.images[0],
+          executionMode: 'generated',
+        });
       } else {
         const result = await awaitWithCancellation(executeVideoStep(step, context, resultsByStepId), options.signal);
         if (!result.success || !result.videoUrl || !result.requestId) {
@@ -419,18 +523,61 @@ export async function executeQuickUseTemplate(
         if (saved.error || !saved.data[0]) throw new Error(saved.error || 'Could not persist the generated video.');
         await completeTemplateRunStep(run.id, step.id, saved.data[0].id);
         resultsByStepId.set(step.id, { type: 'video', url: result.videoUrl });
+        stepOutcomes.push({
+          stepId: step.id,
+          stepTitle: step.title,
+          order: step.order,
+          type: 'video',
+          url: result.videoUrl,
+          executionMode: 'generated',
+        });
       }
       throwIfCancelled(options.signal);
     }
 
-    const finalResult = resultsByStepId.get(plan.steps[plan.steps.length - 1].id);
-    if (!finalResult) throw new Error('Quick Use completed without a final result.');
+    const lastStepResult = resultsByStepId.get(plan.steps[plan.steps.length - 1].id);
+    if (!lastStepResult) throw new Error('Quick Use completed without a final result.');
+
+    // Assemble the deliverable when the published version asks for one. A
+    // failure here never loses the run: the per-step results are already
+    // saved, so the last step result is delivered instead.
+    let finalVideo: QuickUseFinalVideoOutcome | undefined;
+    if (selectFinalVideoStepIds(plan, definition).length > 0) {
+      throwIfCancelled(options.signal);
+      report({
+        status: 'assembling',
+        currentStep: plan.steps.length,
+        stepTitle: 'Joining your shots',
+      });
+      try {
+        const assembled = await awaitWithCancellation(
+          finalizeWorkflowVideo(run.id, { signal: options.signal }),
+          options.signal,
+        );
+        if (assembled.finalVideoUrl) {
+          finalVideo = {
+            url: assembled.finalVideoUrl,
+            thumbnailUrl: assembled.thumbnailUrl,
+            durationSeconds: assembled.durationSeconds,
+            stepIds: assembled.stepIds,
+          };
+        }
+      } catch (assemblyError) {
+        if (assemblyError instanceof QuickUseCancelledError) throw assemblyError;
+        console.error('[Quick Use] Final video assembly failed:', assemblyError);
+      }
+    }
+
     const completed: QuickUseExecutionProgress = {
       runId: run.id,
       status: 'completed',
       currentStep: plan.steps.length,
       totalSteps: plan.steps.length,
-      result: finalResult,
+      result: finalVideo
+        ? { type: 'video', url: finalVideo.url }
+        : lastStepResult,
+      stepResults: [...stepOutcomes],
+      finalVideo,
     };
     options.onProgress?.(completed);
     return completed;
@@ -444,6 +591,7 @@ export async function executeQuickUseTemplate(
         status: 'cancelled',
         currentStep,
         totalSteps: run.workflow.steps.length,
+        stepResults: [...stepOutcomes],
       });
       throw error;
     }
@@ -459,6 +607,7 @@ export async function executeQuickUseTemplate(
       currentStep,
       totalSteps: run.workflow.steps.length,
       error: message,
+      stepResults: [...stepOutcomes],
     };
     options.onProgress?.(failed);
     throw error;

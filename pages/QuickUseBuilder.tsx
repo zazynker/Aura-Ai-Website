@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   Clock,
+  Film,
   GripVertical,
   Image as ImageIcon,
   Layout,
@@ -38,7 +39,19 @@ import {
   createQuickUseExampleAssetKey,
   deriveQuickUseCandidates,
 } from '../workflows/quickUseCandidates';
-import { createEmptyQuickUseDefinition } from '../workflows/quickUseAuthoring';
+import {
+  createEmptyQuickUseDefinition,
+  setQuickUseStepReuseEnabled,
+  withQuickUseDefaults,
+} from '../workflows/quickUseAuthoring';
+import {
+  QUICK_USE_FINAL_VIDEO_MIN_CLIPS,
+  isStepIncludedInFinalVideo,
+  listFinalVideoEligibleSteps,
+  pruneFinalVideoDefinition,
+  setFinalVideoEnabled,
+  setStepIncludedInFinalVideo,
+} from '../workflows/quickUseFinalVideo';
 import {
   addQuickUseBlock,
   reorderQuickUseBlock,
@@ -139,9 +152,15 @@ export const QuickUseBuilder = () => {
         if (!conversion.validation.valid) {
           throw new Error(conversion.validation.issues[0]?.message || 'The workflow draft is invalid.');
         }
-        const nextDefinition = loaded.quickUseDefinition || createEmptyQuickUseDefinition(
-          loaded.title,
-          loaded.description,
+        // Backfill the fields added with the final-video release, then drop any
+        // final-cut membership whose step was removed or is no longer a video
+        // step in the current draft.
+        const nextDefinition = pruneFinalVideoDefinition(
+          withQuickUseDefaults(loaded.quickUseDefinition || createEmptyQuickUseDefinition(
+            loaded.title,
+            loaded.description,
+          )),
+          conversion.workflow,
         );
         setDraft(loaded);
         setWorkflow(conversion.workflow);
@@ -174,6 +193,10 @@ export const QuickUseBuilder = () => {
   const exposedIds = useMemo(
     () => new Set(definition?.blocks.map((block) => block.candidateId) || []),
     [definition?.blocks],
+  );
+  const videoSteps = useMemo(
+    () => workflow ? listFinalVideoEligibleSteps(workflow) : [],
+    [workflow],
   );
   const selectedBlock = definition?.blocks.find(
     (block) => block.candidateId === selectedCandidateId,
@@ -235,6 +258,20 @@ export const QuickUseBuilder = () => {
   const handleUpdateBlock = (updates: Partial<QuickUseBlockDefinition>) => {
     if (!definition || !selectedBlock) return;
     mutateDefinition(updateQuickUseBlock(definition, selectedBlock.candidateId, updates));
+  };
+
+  const handleToggleFinalVideoStep = (stepId: string, included: boolean) => {
+    if (!definition || !workflow) return;
+    try {
+      mutateDefinition(setStepIncludedInFinalVideo(definition, workflow, stepId, included));
+    } catch (toggleError) {
+      addToast('error', toggleError instanceof Error ? toggleError.message : 'This step cannot be added to the final video.');
+    }
+  };
+
+  const handleToggleFinalVideoEnabled = (enabled: boolean) => {
+    if (!definition) return;
+    mutateDefinition(setFinalVideoEnabled(definition, enabled));
   };
 
   const handleExampleKind = (kind: 'none' | 'text' | 'image' | 'video' | 'audio') => {
@@ -567,6 +604,25 @@ export const QuickUseBuilder = () => {
               <div className="border-b border-slate-200 pb-4 dark:border-white/10"><h2 className="font-semibold text-slate-900 dark:text-white">Template settings</h2><p className="mt-1 text-xs text-slate-400">Configure the end-user Quick Use panel.</p></div>
               <SettingField label="Quick Use title"><input className={inputClassName} value={definition.title} maxLength={120} onChange={(event) => mutateDefinition({ ...definition, title: event.target.value })} /></SettingField>
               <SettingField label="Subtitle"><textarea className={`${inputClassName} min-h-24 resize-y`} value={definition.subtitle || ''} maxLength={300} onChange={(event) => mutateDefinition({ ...definition, subtitle: event.target.value || undefined })} /></SettingField>
+
+              <FinalVideoSettings
+                definition={definition}
+                videoSteps={videoSteps}
+                onToggleEnabled={handleToggleFinalVideoEnabled}
+                onToggleStep={handleToggleFinalVideoStep}
+              />
+
+              <ToggleSetting
+                label="Reuse unchanged steps"
+                checked={definition.stepReuse?.enabled !== false}
+                onChange={(checked) => mutateDefinition(setQuickUseStepReuseEnabled(definition, checked))}
+              />
+              <p className="-mt-3 text-[11px] leading-4 text-slate-400">
+                When a user leaves every input of a step at its default, that step serves this
+                template's own result instead of calling the model. Uploading a photo counts as a
+                change, so the step and everything after it are regenerated.
+              </p>
+
               <div className="rounded-xl border border-purple-100 bg-purple-50 p-3 text-xs leading-5 text-purple-800 dark:border-purple-500/20 dark:bg-purple-500/10 dark:text-purple-200">Only blocks placed on the center canvas are exposed to Template users. Unused candidates keep their Workflow defaults.</div>
             </div>
           )}
@@ -579,6 +635,91 @@ export const QuickUseBuilder = () => {
       <Modal isOpen={Boolean(expandedExample)} onClose={() => setExpandedExample(null)} title="Example preview" size="xl" className="max-w-6xl">
         {expandedExample && <ExpandedExampleMedia assetType={expandedExample.assetType} url={expandedExample.url} />}
       </Modal>
+    </div>
+  );
+};
+
+/**
+ * Final cut authoring.
+ *
+ * Membership is opt-in per video step so a template can build an image in
+ * step 1, animate it in step 2 and lip-sync it in step 3 while only shipping
+ * steps 2 and 3 as the deliverable. Image steps are shown greyed out rather
+ * than hidden, so it is obvious why they cannot be picked.
+ */
+const FinalVideoSettings = ({
+  definition,
+  onToggleEnabled,
+  onToggleStep,
+  videoSteps,
+}: {
+  definition: QuickUseDefinition;
+  onToggleEnabled: (enabled: boolean) => void;
+  onToggleStep: (stepId: string, included: boolean) => void;
+  videoSteps: Array<{ id: string; order: number; title?: string }>;
+}) => {
+  const enabled = Boolean(definition.finalVideo?.enabled);
+  const includedCount = (definition.finalVideo?.stepIds || []).length;
+  const notEnoughClips = enabled && includedCount < QUICK_USE_FINAL_VIDEO_MIN_CLIPS;
+
+  return (
+    <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        <Film className="h-3.5 w-3.5" />
+        Final video
+      </div>
+
+      {videoSteps.length < QUICK_USE_FINAL_VIDEO_MIN_CLIPS ? (
+        <p className="mt-3 text-[11px] leading-4 text-slate-400">
+          This workflow has {videoSteps.length === 0 ? 'no' : 'only one'} video step. Add at least
+          {' '}{QUICK_USE_FINAL_VIDEO_MIN_CLIPS} video steps in Workflow Builder to deliver a joined cut.
+        </p>
+      ) : (
+        <>
+          <div className="mt-3">
+            <ToggleSetting
+              label="Deliver one joined video"
+              checked={enabled}
+              onChange={onToggleEnabled}
+            />
+          </div>
+          <p className="mt-2 text-[11px] leading-4 text-slate-400">
+            Selected shots are joined back-to-back in workflow order. Every step result stays
+            available on its own.
+          </p>
+          <div className="mt-3 space-y-2">
+            {videoSteps.map((step) => {
+              const included = isStepIncludedInFinalVideo(definition, step.id);
+              return (
+                <label
+                  key={step.id}
+                  className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs transition ${
+                    included
+                      ? 'border-purple-300 bg-purple-50 text-purple-800 dark:border-purple-500/40 dark:bg-purple-500/10 dark:text-purple-200'
+                      : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'
+                  }`}
+                >
+                  <span className="min-w-0 truncate">
+                    <span className="font-semibold">{step.order}.</span> {step.title || step.id}
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={included}
+                    onChange={(event) => onToggleStep(step.id, event.target.checked)}
+                    className="h-4 w-4 shrink-0 accent-purple-600"
+                  />
+                </label>
+              );
+            })}
+          </div>
+          {notEnoughClips && (
+            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
+              Pick at least {QUICK_USE_FINAL_VIDEO_MIN_CLIPS} shots, or turn the final video off.
+              The draft cannot be saved until this is resolved.
+            </p>
+          )}
+        </>
+      )}
     </div>
   );
 };

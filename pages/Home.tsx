@@ -26,6 +26,21 @@ const getHomeColumnCount = (): number => {
 
 const HOME_PAGE_SIZE = 24;
 
+/**
+ * Preparing、running、assembling 都表示：
+ * 当前流程正在占用 Modal，不能关闭或者重新启动。
+ *
+ * assembling 是最终视频合并阶段，
+ * 它发生在最后一个步骤完成之后。
+ *
+ * 此时 provider 请求已经开始执行，
+ * 因此设计上不能取消。
+ */
+const isQuickUseBusy = (progress: QuickUseExecutionProgress | null): boolean =>
+  progress?.status === 'preparing'
+  || progress?.status === 'running'
+  || progress?.status === 'assembling';
+
 // Lazy loading image component with skeleton - 使用 aspect-ratio 防止跳动
 const LazyImage = ({ 
   src, 
@@ -358,7 +373,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const experienceRequestRef = useRef(0);
   const quickUseAbortRef = useRef<AbortController | null>(null);
-  const quickUseIsRunning = executionProgress?.status === 'preparing' || executionProgress?.status === 'running';
+  const quickUseIsRunning = isQuickUseBusy(executionProgress);
 
   useEffect(() => {
     if (quickUseIsRunning) document.body.dataset.quickUseRunning = 'true';
@@ -571,7 +586,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   };
 
   const openTemplateExperience = (template: Template, mode: 'view' | 'use') => {
-    if (executionProgress?.status === 'preparing' || executionProgress?.status === 'running') {
+    if (isQuickUseBusy(executionProgress)) {
       setExperienceMinimized(false);
       addToast('info', 'Your current Template generation is still running.');
       return;
@@ -611,7 +626,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   };
 
   const closeTemplateExperience = () => {
-    if (executionProgress?.status === 'preparing' || executionProgress?.status === 'running') {
+    if (isQuickUseBusy(executionProgress)) {
       setExperienceMinimized(true);
       return;
     }
@@ -1078,12 +1093,22 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
                 {executionProgress.status === 'completed' ? <Check className="h-4 w-4 text-emerald-500" /> : executionProgress.status === 'failed' ? <AlertCircle className="h-4 w-4" /> : null}
                 {executionProgress.status === 'completed' ? 'Your result is ready' : executionProgress.status === 'failed' ? 'Generation needs attention' : executionProgress.stepTitle || 'Preparing workflow'}
               </div>
-              {executionProgress.status === 'preparing' || executionProgress.status === 'running' ? (
+              {isQuickUseBusy(executionProgress) ? (
                 <div className="mt-2 flex items-center gap-1.5">
                   {Array.from({ length: executionProgress.totalSteps + 1 }, (_, index) => {
                     const nodeNumber = index + 1;
-                    const completed = nodeNumber < executionProgress.currentStep;
-                    const active = index < executionProgress.totalSteps && nodeNumber === Math.max(1, executionProgress.currentStep);
+                    // assembling 阶段所有步骤已经完成；
+// 最后的节点代表视频合并过程。
+const assembling = executionProgress.status === 'assembling';
+
+const completed = assembling
+  ? index < executionProgress.totalSteps
+  : nodeNumber < executionProgress.currentStep;
+
+const active = assembling
+  ? index === executionProgress.totalSteps
+  : index < executionProgress.totalSteps
+    && nodeNumber === Math.max(1, executionProgress.currentStep);
                     return <React.Fragment key={nodeNumber}>{index > 0 && <span className={`h-0.5 w-4 ${completed ? 'bg-purple-500' : 'bg-slate-200 dark:bg-slate-700'}`} />}<span className={`flex h-3.5 w-3.5 items-center justify-center rounded-full ${completed ? 'bg-purple-500' : active ? 'bg-purple-500 animate-pulse' : 'bg-slate-200 dark:bg-slate-700'}`}>{completed && <Check className="h-2.5 w-2.5 text-white" />}</span></React.Fragment>;
                   })}
                 </div>

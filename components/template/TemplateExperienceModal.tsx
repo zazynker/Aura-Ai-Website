@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, Check, ChevronDown, Download, Eye, Image as ImageIcon, Images, Loader2, Minus, RotateCcw, Upload, Video, X } from 'lucide-react';
+import { AlertCircle, Check, ChevronDown, Download, Eye, Film, Image as ImageIcon, Images, Loader2, Minus, RotateCcw, Sparkles, Upload, Video, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import type { RealTemplateDetail } from '../../utils/templateDetailApi';
@@ -10,7 +10,10 @@ import type {
   QuickUsePresentationCandidate,
   QuickUsePresentationDefinition,
 } from '../../workflows/quickUseTypes';
-import type { QuickUseExecutionProgress } from '../../utils/quickUseExecutor';
+import type {
+  QuickUseExecutionProgress,
+  QuickUseStepOutcome,
+} from '../../utils/quickUseExecutor';
 import { DialogueEditor } from './DialogueEditor';
 import { QuickUseNumberControl } from './QuickUseNumberControl';
 import { estimateQuickUseCredits } from '../../utils/quickUseCredits';
@@ -197,7 +200,10 @@ export const TemplateExperienceModal = ({
     void onGenerate(values, estimatedCredits);
   };
 
-  const isExecuting = execution?.status === 'preparing' || execution?.status === 'running';
+  const isAssembling = execution?.status === 'assembling';
+  const isExecuting = execution?.status === 'preparing'
+    || execution?.status === 'running'
+    || isAssembling;
   const isBusy = isExecuting || (adminDemoOpen && adminDemoStage === 'running');
   const isAdminDemoArmed = isAdmin && adminDemoFiles.length > 0;
 
@@ -227,7 +233,9 @@ export const TemplateExperienceModal = ({
       ? 'Generating...'
       : adminDemoOpen && adminDemoStage === 'result'
         ? 'Completed'
-        : isExecuting
+        : isAssembling
+          ? 'Joining your shots...'
+          : isExecuting
       ? 'Generating...'
       : execution?.status === 'completed'
         ? 'Completed'
@@ -242,9 +250,13 @@ export const TemplateExperienceModal = ({
   const busyHeaderActions = isBusy ? (
     <div className="flex items-center gap-1">
       {(onMinimize || (adminDemoOpen && adminDemoStage === 'running')) && <button type="button" onClick={adminDemoOpen && adminDemoStage === 'running' ? () => setAdminDemoMinimized(true) : onMinimize} className="rounded-md p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-white" aria-label="Minimize generation"><Minus className="h-5 w-5" /></button>}
-      <button type="button" onClick={() => setShowCancelConfirmation(true)} className="rounded-md p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-red-600 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-red-300" aria-label="Cancel generation"><X className="h-5 w-5" /></button>
+      {/* Assembly is a paid provider call that is already in flight: it cannot be cancelled without leaving the run half-finished. */}
+      {!isAssembling && <button type="button" onClick={() => setShowCancelConfirmation(true)} className="rounded-md p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-red-600 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-red-300" aria-label="Cancel generation"><X className="h-5 w-5" /></button>}
     </div>
   ) : undefined;
+
+  const hasFinalVideo = Boolean(execution?.finalVideo?.url);
+  const expectsFinalVideo = hasFinalVideo || isAssembling;
 
   return (
     <>
@@ -301,12 +313,27 @@ export const TemplateExperienceModal = ({
       ) : detail && execution?.status === 'completed' && execution.result ? (
         <div className="mx-auto max-w-3xl text-center">
           <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-300"><Check className="h-6 w-6" /></div>
-          <h2 className="text-2xl font-bold text-slate-950 dark:text-white">Your {execution.result.type} is ready</h2>
+          <h2 className="text-2xl font-bold text-slate-950 dark:text-white">
+            {hasFinalVideo ? 'Your video is ready' : `Your ${execution.result.type} is ready`}
+          </h2>
+          {hasFinalVideo && (
+            <p className="mt-2 text-sm text-slate-500">
+              {execution.finalVideo!.stepIds.length} shots joined in order
+              {typeof execution.finalVideo!.durationSeconds === 'number'
+                ? ` · ${Math.round(execution.finalVideo!.durationSeconds)}s`
+                : ''}
+            </p>
+          )}
           <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-xs font-medium text-emerald-600 dark:text-emerald-300">
             {detail.steps.map((step) => <span key={step.id} className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" />{step.featureName}</span>)}
             <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" />Done</span>
           </div>
-          <div className="mt-6"><ExecutionResultMedia result={execution.result} /></div>
+          <div className="mt-6"><ExecutionResultMedia result={execution.result} poster={execution.finalVideo?.thumbnailUrl || undefined} /></div>
+          <StepResultsStrip
+            stepResults={execution.stepResults || []}
+            finalVideoStepIds={execution.finalVideo?.stepIds || []}
+            highlightFinal={hasFinalVideo}
+          />
           <div className="mt-5 flex gap-3 border-t border-slate-100 pt-5 dark:border-white/5">
             <Button variant="secondary" className="flex-1" onClick={onClose}>Close</Button>
             <Button variant="gradient" className="flex-1" onClick={() => void downloadGeneratedResult(execution.result!)}><Download className="mr-2 h-4 w-4" />Download</Button>
@@ -314,17 +341,26 @@ export const TemplateExperienceModal = ({
         </div>
       ) : detail && isExecuting ? (
         <div className="mx-auto max-w-3xl">
-          <div><div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Generating with {detail.name}</div><h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">Your workflow is running</h2></div>
-          <ExecutionPipeline detail={detail} execution={execution!} />
+          <div>
+            <div className="text-xs font-semibold uppercase tracking-wider text-purple-600">Generating with {detail.name}</div>
+            <h2 className="mt-2 text-2xl font-bold text-slate-950 dark:text-white">
+              {isAssembling ? 'Putting your video together' : 'Your workflow is running'}
+            </h2>
+          </div>
+          <ExecutionPipeline detail={detail} execution={execution!} expectsFinalVideo={expectsFinalVideo} />
           <p className="mt-8 text-center text-base font-medium text-slate-600 animate-pulse dark:text-slate-300">
-            {execution?.status === 'preparing' ? 'Preparing your workflow...' : `Running ${execution?.stepTitle || 'the current step'}...`}
+            {isAssembling
+              ? 'Joining your shots into one video...'
+              : execution?.status === 'preparing'
+                ? 'Preparing your workflow...'
+                : `Running ${execution?.stepTitle || 'the current step'}...`}
           </p>
         </div>
       ) : detail && execution?.status === 'cancelled' ? (
         <CancelledExecution detail={detail} execution={execution} onBack={onReset} />
       ) : detail && execution?.status === 'failed' ? (
         <div className="mx-auto max-w-3xl">
-          <ExecutionPipeline detail={detail} execution={execution} />
+          <ExecutionPipeline detail={detail} execution={execution} expectsFinalVideo={expectsFinalVideo} />
           <div className="mt-8 rounded-2xl border border-red-200 bg-red-50 p-5 dark:border-red-500/20 dark:bg-red-500/10">
             <div className="flex items-start gap-3">
               <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
@@ -388,6 +424,62 @@ export const TemplateExperienceModal = ({
         document.body,
       )}
     </>
+  );
+};
+
+/**
+ * Every step result stays visible next to the deliverable. Creators review
+ * shot by shot, and a later Remix needs the individual clips, so the merged
+ * video is presented as an addition rather than a replacement.
+ */
+const StepResultsStrip = ({
+  finalVideoStepIds,
+  highlightFinal,
+  stepResults,
+}: {
+  finalVideoStepIds: string[];
+  highlightFinal: boolean;
+  stepResults: QuickUseStepOutcome[];
+}) => {
+  if (stepResults.length < 2) return null;
+  const included = new Set(finalVideoStepIds);
+  const reusedCount = stepResults.filter((step) => step.executionMode === 'reused_template_result').length;
+  return (
+    <div className="mt-6 border-t border-slate-100 pt-5 text-left dark:border-white/5">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Step results</h3>
+        {reusedCount > 0 && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-white/5 dark:text-slate-400">
+            <Sparkles className="h-3 w-3" />
+            {reusedCount} reused from the template · no credits
+          </span>
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-3">
+        {[...stepResults].sort((left, right) => left.order - right.order).map((step) => (
+          <a
+            key={step.stepId}
+            href={step.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`group relative h-20 w-20 overflow-hidden rounded-xl border ${
+              highlightFinal && included.has(step.stepId)
+                ? 'border-purple-400 ring-2 ring-purple-100 dark:ring-purple-500/15'
+                : 'border-slate-200 dark:border-slate-700'
+            }`}
+            title={`${step.order}. ${step.stepTitle}`}
+          >
+            {step.type === 'video'
+              ? <video src={step.url} className="h-full w-full bg-slate-950 object-cover" muted playsInline preload="metadata" />
+              : <img src={step.url} alt={step.stepTitle} className="h-full w-full bg-slate-100 object-cover dark:bg-slate-950" />}
+            <span className="absolute left-1 top-1 rounded bg-slate-950/70 px-1.5 text-[10px] font-semibold text-white">{step.order}</span>
+            {highlightFinal && included.has(step.stepId) && (
+              <span className="absolute bottom-1 right-1 rounded bg-purple-600/90 p-0.5 text-white"><Film className="h-3 w-3" /></span>
+            )}
+          </a>
+        ))}
+      </div>
+    </div>
   );
 };
 
@@ -532,17 +624,30 @@ const CancelledExecution = ({
 const ExecutionPipeline = ({
   detail,
   execution,
+  expectsFinalVideo = false,
 }: {
   detail: RealTemplateDetail;
   execution: QuickUseExecutionProgress;
+  expectsFinalVideo?: boolean;
 }) => {
   const nodes = [
     ...detail.steps.map((step, index) => ({ id: step.id, label: step.featureName, stepNumber: index + 1 })),
-    { id: 'done', label: 'Done', stepNumber: detail.steps.length + 1 },
+    {
+      id: 'done',
+      label: expectsFinalVideo ? 'Final video' : 'Done',
+      stepNumber: detail.steps.length + 1,
+    },
   ];
   const stateForNode = (stepNumber: number): 'completed' | 'active' | 'failed' | 'cancelled' | 'pending' => {
-    if (stepNumber === nodes.length) return execution.status === 'completed' ? 'completed' : 'pending';
-    if (execution.status === 'completed' || stepNumber < execution.currentStep) return 'completed';
+    if (stepNumber === nodes.length) {
+      if (execution.status === 'completed') return 'completed';
+      if (execution.status === 'assembling') return 'active';
+      return 'pending';
+    }
+    // Assembly only starts after every step finished, so all step nodes read
+    // as completed while the merge runs.
+    if (execution.status === 'completed' || execution.status === 'assembling') return 'completed';
+    if (stepNumber < execution.currentStep) return 'completed';
     if (execution.status === 'failed' && stepNumber === Math.max(1, execution.currentStep)) return 'failed';
     if (execution.status === 'cancelled' && stepNumber === Math.max(1, execution.currentStep)) return 'cancelled';
     if ((execution.status === 'preparing' && stepNumber === 1) || (execution.status === 'running' && stepNumber === execution.currentStep)) return 'active';
@@ -710,10 +815,10 @@ const ExpandedExampleMedia = ({ assetType, url }: { assetType: 'image' | 'video'
   return <img src={url} alt="Example preview" className="max-h-[85vh] w-full object-contain" />;
 };
 
-const ExecutionResultMedia = ({ result }: { result: { type: 'image' | 'video'; url: string } }) => (
+const ExecutionResultMedia = ({ poster, result }: { poster?: string; result: { type: 'image' | 'video'; url: string } }) => (
   <div className="flex min-h-80 items-center justify-center overflow-hidden rounded-2xl bg-slate-950">
     {result.type === 'video'
-      ? <video src={result.url} className="max-h-[65vh] w-full object-contain" controls playsInline />
+      ? <video src={result.url} poster={poster} className="max-h-[65vh] w-full object-contain" controls playsInline />
       : <img src={result.url} alt="Generated result" className="max-h-[65vh] w-full object-contain" />}
   </div>
 );
