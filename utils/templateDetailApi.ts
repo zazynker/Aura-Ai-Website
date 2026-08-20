@@ -44,6 +44,17 @@ export interface TemplateQuickUseCreditStep {
   capability: WorkflowCapabilityKey;
   parameters: Record<string, unknown>;
   imageInputs: Array<{ slot: string; hasDefault: boolean }>;
+  /**
+   * Steps this one consumes through a previous_step input. If any of them has
+   * to be regenerated, so does this one — which is what makes the credit quote
+   * match what the run actually charges.
+   */
+  dependsOnStepIds: string[];
+  /**
+   * Whether the template ships its own result for this step. Without one there
+   * is nothing to reuse and the step always runs.
+   */
+  hasTemplateResult: boolean;
 }
 
 export interface RealTemplateDetail {
@@ -63,6 +74,8 @@ export interface RealTemplateDetail {
   quickUseDefinition: QuickUsePresentationDefinition | null;
   quickUseUnavailableReason?: string;
   quickUseExampleUrls: Record<string, string>;
+  /** False when the admin turned step reuse off for this published version. */
+  quickUseStepReuseEnabled: boolean;
 }
 
 interface AssetRow {
@@ -396,7 +409,7 @@ export async function fetchTemplateDetail(
       thumbnail: coverThumbnail,
     },
     steps,
-    quickUseCreditSteps: workflow.steps.map((step) => ({
+    quickUseCreditSteps: workflow.steps.map((step, stepIndex) => ({
       id: step.id,
       capability: step.capability as WorkflowCapabilityKey,
       parameters: creditParameters(step.parameters),
@@ -406,10 +419,17 @@ export async function fetchTemplateDetail(
           ? Boolean(input.fromStepId)
           : input.source === 'template_asset' && Boolean(input.templateAssetId),
       })),
+      dependsOnStepIds: (step.inputs || [])
+        .filter((input) => input.source === 'previous_step' && input.fromStepId)
+        .map((input) => input.fromStepId!),
+      hasTemplateResult: steps[stepIndex].results.length > 0,
     })),
     quickUseDefinition: quickUseDefinition
       ? toQuickUsePresentationDefinition(quickUseDefinition, quickUseCandidates)
       : null,
     quickUseExampleUrls,
+    quickUseStepReuseEnabled: quickUseDefinition
+      ? quickUseDefinition.stepReuse?.enabled !== false
+      : false,
   };
 }

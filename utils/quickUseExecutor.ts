@@ -24,8 +24,10 @@ import {
   completeTemplateRunStep,
   createRunIdempotencyKey,
   engageTemplateRunStep,
+  fetchTemplateRunFinalVideo,
   fetchTemplateStepResultAssets,
   reuseTemplateRunStep,
+  setTemplateRunMode,
   startTemplateRun,
 } from './templateRunApi';
 import { finalizeWorkflowVideo } from './workflowFinalizer';
@@ -73,6 +75,12 @@ export interface QuickUseExecutionProgress {
   stepResults?: QuickUseStepOutcome[];
   /** Present only when the run produced a merged deliverable. */
   finalVideo?: QuickUseFinalVideoOutcome;
+  /**
+   * Set when this template asked for a joined video and the run could not
+   * deliver one. The last step result is served instead — silently swapping
+   * the deliverable with no explanation is worse than saying so.
+   */
+  finalVideoError?: string;
 }
 
 export interface ExecuteQuickUseOptions {
@@ -251,6 +259,76 @@ function mapTemplateStepResults(
   return results;
 }
 
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((resolve, reject) => {
+  const timer = setTimeout(() => {
+    signal?.removeEventListener('abort', handleAbort);
+    resolve();
+  }, ms);
+  function handleAbort() {
+    clearTimeout(timer);
+    reject(new QuickUseCancelledError());
+  }
+  if (signal?.aborted) {
+    clearTimeout(timer);
+    reject(new QuickUseCancelledError());
+    return;
+  }
+  signal?.addEventListener('abort', handleAbort, { once: true });
+});
+
+/**
+ * Asks the server to join the run's clips, and does not give up if the reply
+ * is lost.
+ *
+ * Assembly is a server-side job that stores its result on the run before it
+ * answers. A dropped response, an expired token, or a proxy timing the request
+ * out would otherwise throw away a video that already exists and had already
+ * been paid for, so the run falls back to reading the stored result.
+ */
+async function resolveFinalVideo(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<{ video?: QuickUseFinalVideoOutcome; error?: string }> {
+  let lastError: string | undefined;
+  try {
+    const assembled = await awaitWithCancellation(finalizeWorkflowVideo(runId, { signal }), signal);
+    if (assembled.finalVideoUrl) {
+      return {
+        video: {
+          url: assembled.finalVideoUrl,
+          thumbnailUrl: assembled.thumbnailUrl,
+          durationSeconds: assembled.durationSeconds,
+          stepIds: assembled.stepIds,
+        },
+      };
+    }
+    // The server answered "this version does not ask for a joined video".
+    // That is a normal outcome, not a failure, and needs no recovery.
+    if (!assembled.assembled) return {};
+  } catch (error) {
+    if (error instanceof QuickUseCancelledError) throw error;
+    lastError = error instanceof Error ? error.message : 'The joined video could not be assembled.';
+    console.error('[Quick Use] Final video assembly failed:', error);
+  }
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await sleep(3_000, signal);
+    const stored = await fetchTemplateRunFinalVideo(runId).catch(() => null);
+    if (stored?.finalVideoUrl) {
+      return {
+        video: {
+          url: stored.finalVideoUrl,
+          thumbnailUrl: stored.finalThumbnailUrl,
+          durationSeconds: null,
+          stepIds: stored.stepIds,
+        },
+      };
+    }
+  }
+
+  return { error: lastError || 'The joined video is not ready yet.' };
+}
+
 const toInputSnapshots = (
   step: QuickUseExecutionStep,
   resultsByStepId: ReadonlyMap<string, StepResult>,
@@ -384,6 +462,12 @@ export async function executeQuickUseTemplate(
 ): Promise<QuickUseExecutionProgress> {
   throwIfCancelled(options.signal);
   const run = await startTemplateRun(options.templateId, createRunIdempotencyKey(options.templateId));
+  // A Template run is not a Workflow run. Tagging it keeps the Workflow Dock
+  // from adopting it as a resumable step-by-step session. Best-effort: an
+  // untagged run must still be able to generate.
+  await setTemplateRunMode(run.id, 'quick_use').catch((modeError) => {
+    console.warn('Could not tag this run as Quick Use:', modeError);
+  });
   let currentStep = 0;
   const stepOutcomes: QuickUseStepOutcome[] = [];
   const report = (progress: Omit<QuickUseExecutionProgress, 'runId' | 'totalSteps'>) => {
@@ -542,6 +626,7 @@ export async function executeQuickUseTemplate(
     // failure here never loses the run: the per-step results are already
     // saved, so the last step result is delivered instead.
     let finalVideo: QuickUseFinalVideoOutcome | undefined;
+    let finalVideoError: string | undefined;
     if (selectFinalVideoStepIds(plan, definition).length > 0) {
       throwIfCancelled(options.signal);
       report({
@@ -549,23 +634,9 @@ export async function executeQuickUseTemplate(
         currentStep: plan.steps.length,
         stepTitle: 'Joining your shots',
       });
-      try {
-        const assembled = await awaitWithCancellation(
-          finalizeWorkflowVideo(run.id, { signal: options.signal }),
-          options.signal,
-        );
-        if (assembled.finalVideoUrl) {
-          finalVideo = {
-            url: assembled.finalVideoUrl,
-            thumbnailUrl: assembled.thumbnailUrl,
-            durationSeconds: assembled.durationSeconds,
-            stepIds: assembled.stepIds,
-          };
-        }
-      } catch (assemblyError) {
-        if (assemblyError instanceof QuickUseCancelledError) throw assemblyError;
-        console.error('[Quick Use] Final video assembly failed:', assemblyError);
-      }
+      const outcome = await resolveFinalVideo(run.id, options.signal);
+      finalVideo = outcome.video;
+      finalVideoError = outcome.error;
     }
 
     const completed: QuickUseExecutionProgress = {
@@ -578,6 +649,7 @@ export async function executeQuickUseTemplate(
         : lastStepResult,
       stepResults: [...stepOutcomes],
       finalVideo,
+      finalVideoError,
     };
     options.onProgress?.(completed);
     return completed;

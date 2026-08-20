@@ -3,6 +3,7 @@ import {
   cancelTemplateRun,
   fetchActiveTemplateRun,
   fetchTemplateRun,
+  fetchTemplateRunMode,
   engageTemplateRunStep,
   fetchReusableTemplateAssets,
   setTemplateRunCurrentStep,
@@ -279,6 +280,14 @@ export const restoreActiveWorkflow = async (): Promise<WorkflowSession | null> =
   const run = await fetchActiveTemplateRun();
   if (!run || run.status !== 'started') {
     clearStoredWorkflow();
+    return null;
+  }
+
+  // A Template (Quick Use) run is not a Workflow. It runs to completion on its
+  // own and has no step-by-step dock; adopting it here used to show a 1-2-3
+  // stepper over the Templates page and let the user cancel a finished run.
+  if (await fetchTemplateRunMode(run.id) === 'quick_use') {
+    if (existingSession?.runId === run.id) clearStoredWorkflow();
     return null;
   }
 

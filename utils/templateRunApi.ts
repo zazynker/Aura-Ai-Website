@@ -10,6 +10,14 @@ export type TemplateRunStepStatus = 'pending' | 'active' | 'completed' | 'failed
  */
 export type TemplateRunStepExecutionMode = 'generated' | 'reused_template_result';
 
+/**
+ * workflow  = the hand-driven Workflow Dock flow started from a template page.
+ * quick_use = a one-shot Template run. The dock must never adopt one of these:
+ *             a Template is not a Workflow, and showing its steps as a
+ *             resumable dock let users cancel a run that had already finished.
+ */
+export type TemplateRunMode = 'workflow' | 'quick_use';
+
 export interface TemplateRunWorkflowStep {
   id: string;
   order: number;
@@ -95,6 +103,38 @@ export async function startTemplateRun(templateId: string, idempotencyKey: strin
   });
   if (error) throw new Error(`Could not start this workflow: ${error.message}`);
   return normalizeRun(data);
+}
+
+/**
+ * Tags a run as Quick Use so the Workflow Dock ignores it.
+ *
+ * Best-effort by design: it is called immediately after the run starts, and a
+ * deployment where the migration has not been applied yet must still be able
+ * to generate. The caller logs and continues.
+ */
+export async function setTemplateRunMode(
+  runId: string,
+  mode: TemplateRunMode,
+): Promise<void> {
+  const { error } = await supabase.rpc('set_template_run_mode', {
+    p_run_id: runId,
+    p_mode: mode,
+  });
+  if (error) throw new Error(`Could not tag this workflow run: ${error.message}`);
+}
+
+/**
+ * Falls back to 'workflow' when the column does not exist yet, which keeps the
+ * dock behaving exactly as it did before this feature shipped.
+ */
+export async function fetchTemplateRunMode(runId: string): Promise<TemplateRunMode> {
+  const { data, error } = await supabase
+    .from('template_runs')
+    .select('run_mode')
+    .eq('id', runId)
+    .maybeSingle();
+  if (error || !data) return 'workflow';
+  return (data as { run_mode?: unknown }).run_mode === 'quick_use' ? 'quick_use' : 'workflow';
 }
 
 export async function fetchTemplateRun(runId: string): Promise<StartedTemplateRun> {

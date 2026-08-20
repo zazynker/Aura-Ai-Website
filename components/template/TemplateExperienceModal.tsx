@@ -16,7 +16,7 @@ import type {
 } from '../../utils/quickUseExecutor';
 import { DialogueEditor } from './DialogueEditor';
 import { QuickUseNumberControl } from './QuickUseNumberControl';
-import { estimateQuickUseCredits } from '../../utils/quickUseCredits';
+import { estimateQuickUseCreditsDetailed } from '../../utils/quickUseCredits';
 
 export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
@@ -115,10 +115,18 @@ export const TemplateExperienceModal = ({
     () => new Map(definition?.candidates.map((candidate) => [candidate.id, candidate]) || []),
     [definition],
   );
-  const estimatedCredits = useMemo(
-    () => estimateQuickUseCredits(detail?.quickUseCreditSteps || [], values),
-    [detail?.quickUseCreditSteps, values],
+  // Priced the way the run will actually be charged: steps whose inputs are
+  // untouched serve the template's own shots and cost nothing.
+  const creditEstimate = useMemo(
+    () => estimateQuickUseCreditsDetailed({
+      steps: detail?.quickUseCreditSteps || [],
+      blocks: definition?.blocks || [],
+      values,
+      reuseEnabled: detail?.quickUseStepReuseEnabled !== false,
+    }),
+    [definition, detail?.quickUseCreditSteps, detail?.quickUseStepReuseEnabled, values],
   );
+  const estimatedCredits = creditEstimate.total;
 
   useEffect(() => {
     if (!definition) {
@@ -215,13 +223,20 @@ export const TemplateExperienceModal = ({
                 Automatic execution will be enabled in the executor integration step.
               </p>
             )}
+            {creditEstimate.reusedStepIds.length > 0 && (
+              <p className="text-center text-xs text-slate-500">
+                {creditEstimate.generatedStepIds.length === 0
+                  ? 'Nothing changed yet — this template delivers its own shots for free.'
+                  : `${creditEstimate.reusedStepIds.length} unchanged ${creditEstimate.reusedStepIds.length === 1 ? 'shot is' : 'shots are'} reused for free.`}
+              </p>
+            )}
             <Button
               variant="gradient"
               className="w-full"
               disabled={(!generationAvailable && !isAdminDemoArmed) || !definition?.blocks.length || isExecuting}
               onClick={handleGenerate}
             >
-              ~{estimatedCredits} credits · Generate
+              {estimatedCredits === 0 ? 'Free · Generate' : `~${estimatedCredits} credits · Generate`}
             </Button>
           </div>
       )
@@ -328,6 +343,12 @@ export const TemplateExperienceModal = ({
             {detail.steps.map((step) => <span key={step.id} className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" />{step.featureName}</span>)}
             <span className="inline-flex items-center gap-1"><Check className="h-3.5 w-3.5" />Done</span>
           </div>
+          {execution.finalVideoError && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-left text-xs leading-5 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+              This template joins its shots into one video, but that step did not finish:
+              {' '}{execution.finalVideoError} Your individual shots are below and were not lost.
+            </div>
+          )}
           <div className="mt-6"><ExecutionResultMedia result={execution.result} poster={execution.finalVideo?.thumbnailUrl || undefined} /></div>
           <StepResultsStrip
             stepResults={execution.stepResults || []}

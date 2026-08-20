@@ -678,14 +678,16 @@ const FinalVideoSettings = ({
         <>
           <div className="mt-3">
             <ToggleSetting
-              label="Deliver one joined video"
+              label="Merge selected shots into one video"
               checked={enabled}
               onChange={onToggleEnabled}
             />
           </div>
           <p className="mt-2 text-[11px] leading-4 text-slate-400">
-            Selected shots are joined back-to-back in workflow order. Every step result stays
-            available on its own.
+            The user receives one continuous video instead of separate clips. Tick the shots below;
+            they are joined in workflow order. The first ticked shot sets the frame — a shot in a
+            different aspect ratio gets black bars rather than being stretched. Every step result
+            is still available on its own.
           </p>
           <div className="mt-3 space-y-2">
             {videoSteps.map((step) => {

@@ -11,6 +11,11 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
  *
  * Per-step results are never replaced. Admin review and future remixing still
  * see each step; the merged file is an additional artefact.
+ *
+ * Aspect ratio: the first included shot defines the frame. Any later shot with
+ * a different frame is letterboxed into it with black bars — never stretched.
+ * The merge provider has no fitting option of its own, so the padding is done
+ * per clip before the clips are joined.
  */
 
 export const config = { maxDuration: 300 };
@@ -19,27 +24,33 @@ const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const falKey = process.env.FAL_KEY;
 
+const FAL_RUN_BASE_URL = 'https://fal.run';
 const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 const FAL_MERGE_ENDPOINT = 'fal-ai/ffmpeg-api/merge-videos';
+const FAL_SCALE_ENDPOINT = 'fal-ai/workflow-utilities/scale-video';
+const FAL_METADATA_ENDPOINT = 'fal-ai/ffmpeg-api/metadata';
 const FAL_EXTRACT_FRAME_URL = 'https://fal.run/fal-ai/ffmpeg-api/extract-frame';
 const FINAL_VIDEO_BUCKET = 'workflow-final-videos';
 
-/** Mirrors QUICK_USE_FINAL_VIDEO_MIN_CLIPS / MAX_CLIPS in src/workflows. */
+/** Mirrors QUICK_USE_FINAL_VIDEO_MIN_CLIPS / MAX_CLIPS in workflows/. */
 const MIN_CLIPS = 2;
 const MAX_CLIPS = 8;
+
+/** The merge provider rejects a target frame outside this range. */
+const MIN_FRAME_SIDE = 512;
+const MAX_FRAME_SIDE = 2048;
 
 /** Above this we keep the provider URL instead of buffering the file. */
 const MAX_REHOST_BYTES = 300 * 1024 * 1024;
 
-const MERGE_POLL_INTERVAL_MS = 3_000;
-const MERGE_TIMEOUT_MS = 240_000;
+const POLL_INTERVAL_MS = 3_000;
+const JOB_TIMEOUT_MS = 120_000;
 
 type RunRow = Record<string, unknown>;
 
-interface WorkflowStepSummary {
-  id: string;
-  order: number;
-  assetType: string;
+interface FrameSize {
+  width: number;
+  height: number;
 }
 
 interface ClipSource {
@@ -63,6 +74,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readPositiveInt(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : null;
 }
 
 function readBody(body: unknown): { runId: string } {
@@ -94,6 +111,12 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Workflow / definition reading
 // ---------------------------------------------------------------------------
 
+interface WorkflowStepSummary {
+  id: string;
+  order: number;
+  assetType: string;
+}
+
 function readWorkflowSteps(workflow: unknown): WorkflowStepSummary[] {
   if (!isRecord(workflow) || !Array.isArray(workflow.steps)) return [];
   return workflow.steps
@@ -111,8 +134,8 @@ function readWorkflowSteps(workflow: unknown): WorkflowStepSummary[] {
 
 /**
  * Server-side twin of selectFinalVideoStepIds() in
- * src/workflows/quickUseFinalVideo.ts. Kept inline so this serverless function
- * has no build-time dependency on the browser bundle; the rules must stay
+ * workflows/quickUseFinalVideo.ts. Kept inline so this serverless function has
+ * no build-time dependency on the browser bundle; the rules must stay
  * identical to the ones the Quick Use Builder validates against.
  */
 function selectFinalVideoStepIds(
@@ -135,10 +158,6 @@ function selectFinalVideoStepIds(
 // Schema tolerance helpers
 // ---------------------------------------------------------------------------
 
-/**
- * template_run_steps carries either run_id or template_run_id depending on the
- * baseline the project was created from. Try the common name, fall back once.
- */
 async function loadRunSteps(
   supabase: SupabaseClient,
   runId: string,
@@ -181,9 +200,9 @@ async function resolveClipUrls(
       .in('id', generationIds);
     if (error) throw error;
     for (const generation of data || []) {
-      const url = readString((generation as Record<string, unknown>).video_url)
-        || readString((generation as Record<string, unknown>).image_url);
-      const id = readString((generation as Record<string, unknown>).id);
+      const record = generation as Record<string, unknown>;
+      const url = readString(record.video_url) || readString(record.image_url);
+      const id = readString(record.id);
       if (id && url) generationUrls.set(id, url);
     }
   }
@@ -228,7 +247,7 @@ async function ensureFetchableUrl(
 }
 
 // ---------------------------------------------------------------------------
-// Fal merge
+// Fal plumbing
 // ---------------------------------------------------------------------------
 
 function normalizeFalQueueStatus(payload: Record<string, unknown>): string {
@@ -242,7 +261,74 @@ function normalizeFalQueueStatus(payload: Record<string, unknown>): string {
   return normalized;
 }
 
-function mergedVideoUrl(payload: Record<string, unknown>): string | null {
+async function falRun(
+  endpoint: string,
+  payload: Record<string, unknown>,
+  timeoutMs = 45_000,
+): Promise<Record<string, unknown>> {
+  if (!falKey) throw new Error('FAL_KEY is missing.');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${FAL_RUN_BASE_URL}/${endpoint}`, {
+      method: 'POST',
+      headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const result = await readJson(response);
+    if (!response.ok) {
+      throw new Error(`${endpoint} failed (${response.status}): ${String(result.detail || result.message || response.statusText)}`);
+    }
+    return result;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function falQueue(
+  endpoint: string,
+  payload: Record<string, unknown>,
+  label: string,
+): Promise<Record<string, unknown>> {
+  if (!falKey) throw new Error('FAL_KEY is missing.');
+  const submission = await fetch(`${FAL_QUEUE_BASE_URL}/${endpoint}`, {
+    method: 'POST',
+    headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const submitted = await readJson(submission);
+  if (!submission.ok) {
+    throw new Error(`${label} could not start (${submission.status}): ${String(submitted.detail || submitted.message || submission.statusText)}`);
+  }
+  const requestId = readString(submitted.request_id);
+  if (!requestId) throw new Error(`${label} returned no request id.`);
+  const statusUrl = readString(submitted.status_url)
+    || `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}/status`;
+  const responseUrl = readString(submitted.response_url)
+    || `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}`;
+
+  const deadline = Date.now() + JOB_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await delay(POLL_INTERVAL_MS);
+    const statusResponse = await fetch(statusUrl, { headers: { Authorization: `Key ${falKey}` } });
+    const statusPayload = await readJson(statusResponse);
+    if (!statusResponse.ok) throw new Error(`${label} status failed (${statusResponse.status}).`);
+    const status = normalizeFalQueueStatus(statusPayload);
+    if (status === 'COMPLETED') {
+      const resultResponse = await fetch(responseUrl, { headers: { Authorization: `Key ${falKey}` } });
+      const resultPayload = await readJson(resultResponse);
+      if (!resultResponse.ok) throw new Error(`${label} result failed (${resultResponse.status}).`);
+      return resultPayload;
+    }
+    if (['FAILED', 'ERROR', 'CANCELLED'].includes(status)) {
+      throw new Error(`${label} ${status.toLowerCase()}.`);
+    }
+  }
+  throw new Error(`${label} timed out.`);
+}
+
+function firstVideoUrl(payload: Record<string, unknown>): string | null {
   const containers = [payload, payload.data, payload.output, payload.result];
   for (const container of containers) {
     if (!isRecord(container)) continue;
@@ -257,7 +343,7 @@ function mergedVideoUrl(payload: Record<string, unknown>): string | null {
   return null;
 }
 
-function mergedDuration(payload: Record<string, unknown>): number | null {
+function readDuration(payload: Record<string, unknown>): number | null {
   const containers = [payload, payload.data, payload.output, payload.result];
   for (const container of containers) {
     if (!isRecord(container)) continue;
@@ -269,61 +355,127 @@ function mergedDuration(payload: Record<string, unknown>): number | null {
   return null;
 }
 
-async function mergeVideos(videoUrls: string[]): Promise<{ url: string; duration: number | null }> {
-  if (!falKey) throw new Error('FAL_KEY is missing.');
+// ---------------------------------------------------------------------------
+// Frame sizing
+// ---------------------------------------------------------------------------
 
-  const submission = await fetch(`${FAL_QUEUE_BASE_URL}/${FAL_MERGE_ENDPOINT}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Key ${falKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      video_urls: videoUrls,
-      // Take the first clip's frame as the canvas. Every clip is normalised to
-      // it, so a 9:16 opener is never letterboxed into a 16:9 canvas.
-      resolution_aspect_ratio_video_index: 0,
-    }),
-  });
-  const submitted = await readJson(submission);
-  if (!submission.ok) {
-    throw new Error(`Video merge could not start (${submission.status}): ${String(submitted.detail || submitted.message || submission.statusText)}`);
-  }
-  const requestId = readString(submitted.request_id);
-  if (!requestId) throw new Error('The merge provider returned no request id.');
-  const statusUrl = readString(submitted.status_url)
-    || `${FAL_QUEUE_BASE_URL}/${FAL_MERGE_ENDPOINT}/requests/${requestId}/status`;
-  const responseUrl = readString(submitted.response_url)
-    || `${FAL_QUEUE_BASE_URL}/${FAL_MERGE_ENDPOINT}/requests/${requestId}`;
-
-  const deadline = Date.now() + MERGE_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    await delay(MERGE_POLL_INTERVAL_MS);
-    const statusResponse = await fetch(statusUrl, {
-      headers: { Authorization: `Key ${falKey}` },
-    });
-    const statusPayload = await readJson(statusResponse);
-    if (!statusResponse.ok) {
-      throw new Error(`Video merge status failed (${statusResponse.status}).`);
-    }
-    const status = normalizeFalQueueStatus(statusPayload);
-    if (status === 'COMPLETED') {
-      const resultResponse = await fetch(responseUrl, {
-        headers: { Authorization: `Key ${falKey}` },
-      });
-      const resultPayload = await readJson(resultResponse);
-      if (!resultResponse.ok) {
-        throw new Error(`Video merge result failed (${resultResponse.status}).`);
-      }
-      const url = mergedVideoUrl(resultPayload);
-      if (!url) throw new Error('The merge provider returned no video.');
-      return { url, duration: mergedDuration(resultPayload) };
-    }
-    if (['FAILED', 'ERROR', 'CANCELLED'].includes(status)) {
-      throw new Error(`Video merge ${status.toLowerCase()}.`);
+/** The metadata payload nests width/height differently across shapes. */
+function readFrameSize(payload: Record<string, unknown>): FrameSize | null {
+  const roots: unknown[] = [payload, payload.data, payload.media, payload.output];
+  for (const root of roots) {
+    if (!isRecord(root)) continue;
+    const candidates: unknown[] = [root, root.media, root.video, root.resolution];
+    for (const candidate of candidates) {
+      if (!isRecord(candidate)) continue;
+      const nested = isRecord(candidate.resolution) ? candidate.resolution : candidate;
+      const width = readPositiveInt(nested.width);
+      const height = readPositiveInt(nested.height);
+      if (width && height) return { width, height };
     }
   }
-  throw new Error('Video merge timed out.');
+  return null;
+}
+
+async function probeFrameSize(url: string): Promise<FrameSize | null> {
+  try {
+    return readFrameSize(await falRun(FAL_METADATA_ENDPOINT, { media_url: url }, 30_000));
+  } catch (error) {
+    console.warn('[Finalize workflow video] Could not read clip metadata:', error);
+    return null;
+  }
+}
+
+const makeEven = (value: number) => (value % 2 === 0 ? value : value + 1);
+
+/**
+ * Clamps the first shot's frame into the range the merge provider accepts,
+ * keeping its aspect ratio. Most real clips (720x1280, 1080x1920, 1280x720)
+ * pass through untouched.
+ */
+function normalizeTargetSize(size: FrameSize): FrameSize {
+  let { width, height } = size;
+  const longest = Math.max(width, height);
+  if (longest > MAX_FRAME_SIDE) {
+    const scale = MAX_FRAME_SIDE / longest;
+    width = Math.round(width * scale);
+    height = Math.round(height * scale);
+  }
+  const shortest = Math.min(width, height);
+  if (shortest < MIN_FRAME_SIDE) {
+    const scale = MIN_FRAME_SIDE / shortest;
+    width = Math.min(MAX_FRAME_SIDE, Math.round(width * scale));
+    height = Math.min(MAX_FRAME_SIDE, Math.round(height * scale));
+  }
+  return { width: makeEven(width), height: makeEven(height) };
+}
+
+const sameFrame = (a: FrameSize | null, b: FrameSize): boolean =>
+  Boolean(a) && a!.width === b.width && a!.height === b.height;
+
+/**
+ * Letterboxes one clip into the target frame. `mode: 'pad'` scales to fit and
+ * fills the remainder with black, which is exactly what a shot in a different
+ * aspect ratio needs; the default provider behaviour would stretch it.
+ */
+async function padClip(url: string, target: FrameSize): Promise<string> {
+  const payload = await falQueue(FAL_SCALE_ENDPOINT, {
+    video_url: url,
+    width: target.width,
+    height: target.height,
+    mode: 'pad',
+    pad_color: 'black',
+  }, 'Clip padding');
+  const padded = firstVideoUrl(payload);
+  if (!padded) throw new Error('Clip padding returned no video.');
+  return padded;
+}
+
+async function mergeClips(
+  videoUrls: string[],
+  target: FrameSize | null,
+): Promise<{ url: string; duration: number | null }> {
+  const payload = await falQueue(FAL_MERGE_ENDPOINT, target
+    ? { video_urls: videoUrls, resolution: { width: target.width, height: target.height } }
+    // Without a known frame we fall back to the provider's own choice, taking
+    // the first clip's aspect ratio. Clips may be stretched in that case, but
+    // the run still gets a deliverable.
+    : { video_urls: videoUrls, resolution_aspect_ratio_video_index: 0 },
+    'Video merge');
+  const url = firstVideoUrl(payload);
+  if (!url) throw new Error('The merge provider returned no video.');
+  return { url, duration: readDuration(payload) };
+}
+
+/**
+ * Brings every clip into one frame, then joins them.
+ *
+ * The first included shot owns the frame. Any clip that does not already match
+ * it is padded with black bars rather than stretched, so a 3:4 shot following
+ * a 9:16 opener keeps its proportions.
+ */
+async function assembleClips(
+  videoUrls: string[],
+): Promise<{ url: string; duration: number | null; frame: FrameSize | null; paddedCount: number }> {
+  const sizes = await Promise.all(videoUrls.map(probeFrameSize));
+  const firstSize = sizes[0];
+
+  if (!firstSize) {
+    const merged = await mergeClips(videoUrls, null);
+    return { ...merged, frame: null, paddedCount: 0 };
+  }
+
+  const target = normalizeTargetSize(firstSize);
+  let paddedCount = 0;
+  const prepared = await Promise.all(videoUrls.map(async (url, index) => {
+    if (sameFrame(sizes[index], target)) return url;
+    // An unreadable clip is padded too: guessing that it already matches would
+    // be the one case that silently produces a stretched shot.
+    paddedCount += 1;
+    return padClip(url, target);
+  }));
+
+  const merged = await mergeClips(prepared, target);
+  return { ...merged, frame: target, paddedCount };
 }
 
 async function extractPoster(videoUrl: string): Promise<string | null> {
@@ -333,10 +485,7 @@ async function extractPoster(videoUrl: string): Promise<string | null> {
   try {
     const response = await fetch(FAL_EXTRACT_FRAME_URL, {
       method: 'POST',
-      headers: {
-        Authorization: `Key ${falKey}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ video_url: videoUrl, frame_type: 'first' }),
       signal: controller.signal,
     });
@@ -425,6 +574,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (existing) {
       return res.status(200).json({
         success: true,
+        assembled: true,
         cached: true,
         finalVideoUrl: existing,
         thumbnailUrl: readString(run.final_thumbnail_url),
@@ -454,6 +604,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(200).json({
         success: true,
         assembled: false,
+        reason: 'not_configured',
         finalVideoUrl: null,
         stepIds: [],
       });
@@ -464,15 +615,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       clips.map((clip) => ensureFetchableUrl(supabase, clip.url)),
     );
 
-    const merged = await mergeVideos(fetchableUrls);
+    const assembled = await assembleClips(fetchableUrls);
     const ownerId = user.id;
     const hostedVideoUrl = await rehost(
       supabase,
-      merged.url,
+      assembled.url,
       `${ownerId}/${runId}/final.mp4`,
       'video/mp4',
     );
-    const finalVideoUrl = hostedVideoUrl || merged.url;
+    const finalVideoUrl = hostedVideoUrl || assembled.url;
 
     const posterSource = await extractPoster(finalVideoUrl);
     const finalThumbnailUrl = posterSource
@@ -486,7 +637,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         final_video_url: finalVideoUrl,
         final_thumbnail_url: finalThumbnailUrl,
         final_video_step_ids: stepIds,
-        final_video_duration_seconds: merged.duration,
+        final_video_duration_seconds: assembled.duration,
         assembled_at: new Date().toISOString(),
       })
       .eq('id', runId);
@@ -498,7 +649,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       cached: false,
       finalVideoUrl,
       thumbnailUrl: finalThumbnailUrl,
-      durationSeconds: merged.duration,
+      durationSeconds: assembled.duration,
+      frame: assembled.frame,
+      paddedClipCount: assembled.paddedCount,
       stepIds,
       clips: clips.map((clip) => ({
         stepId: clip.stepId,

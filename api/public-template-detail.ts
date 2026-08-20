@@ -355,12 +355,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               ? Boolean(input.fromStepId)
               : input.source === 'template_asset' && Boolean(input.templateAssetId),
           })),
+          // Both fields exist so the browser can price a run the way it will
+          // actually be charged: a step is only quoted when it will really run.
+          dependsOnStepIds: (step.inputs || [])
+            .filter((input) => input.source === 'previous_step' && input.fromStepId)
+            .map((input) => input.fromStepId!),
+          hasTemplateResult: stepResults.has(step.id),
         })),
         quickUseDefinition: quickUseDefinition
           ? toQuickUsePresentationDefinition(quickUseDefinition, quickUseCandidates)
           : null,
         quickUseUnavailableReason,
         quickUseExampleUrls,
+        quickUseStepReuseEnabled: quickUseDefinition
+          ? (quickUseDefinition as QuickUseDefinition).stepReuse?.enabled !== false
+          : false,
       },
     });
   } catch (error) {
