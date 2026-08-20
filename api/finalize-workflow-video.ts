@@ -16,6 +16,14 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
  * a different frame is letterboxed into it with black bars — never stretched.
  * The merge provider has no fitting option of its own, so the padding is done
  * per clip before the clips are joined.
+ *
+ * Duration: assembly is a chain of provider round trips, so a single request
+ * that waits for all of them would be a bet on the platform's function timeout.
+ * Instead this endpoint is a resumable state machine. Each invocation works for
+ * INVOCATION_BUDGET_MS, checkpoints to template_runs.assembly_state, and
+ * answers `status: 'pending'`. The browser calls again and the next invocation
+ * continues from the checkpoint. No single call runs long enough to be killed,
+ * on any plan, and no provider work is ever repeated or paid for twice.
  */
 
 export const config = { maxDuration: 300 };
@@ -40,11 +48,21 @@ const MAX_CLIPS = 8;
 const MIN_FRAME_SIDE = 512;
 const MAX_FRAME_SIDE = 2048;
 
+/**
+ * How long one invocation is allowed to work before checkpointing. Chosen to
+ * sit under the smallest function timeout this could ever be deployed behind,
+ * not under the current one — the whole point is that the platform limit stops
+ * being something the feature depends on.
+ */
+const INVOCATION_BUDGET_MS = 45_000;
+
+/** Storing downloads and re-uploads the merged file; do not start it on fumes. */
+const STORING_RESERVE_MS = 20_000;
+
+const POLL_INTERVAL_MS = 2_000;
+
 /** Above this we keep the provider URL instead of buffering the file. */
 const MAX_REHOST_BYTES = 300 * 1024 * 1024;
-
-const POLL_INTERVAL_MS = 3_000;
-const JOB_TIMEOUT_MS = 120_000;
 
 type RunRow = Record<string, unknown>;
 
@@ -58,6 +76,29 @@ interface ClipSource {
   order: number;
   url: string;
   executionMode: string;
+}
+
+/** A submitted provider job. The URLs come from the provider, never rebuilt. */
+interface QueuedJob {
+  statusUrl: string;
+  responseUrl: string;
+}
+
+type AssemblyPhase = 'padding' | 'merging' | 'storing';
+
+interface AssemblyState {
+  version: 1;
+  phase: AssemblyPhase;
+  /** null when clip metadata was unreadable and the provider must choose. */
+  target: FrameSize | null;
+  /** Resolved clip URL per position, or null while its pad job is running. */
+  padded: (string | null)[];
+  /** Pad job per position, or null when that clip needed no padding. */
+  padJobs: (QueuedJob | null)[];
+  mergeJob: QueuedJob | null;
+  mergedUrl: string | null;
+  mergedDuration: number | null;
+  paddedCount: number;
 }
 
 function sendError(res: VercelResponse, status: number, error: string) {
@@ -229,7 +270,8 @@ async function resolveClipUrls(
 /**
  * A reused step points at a template asset that may live in a private bucket.
  * Fal must be able to download it, so private storage URLs are re-signed with
- * a window that comfortably outlives the merge.
+ * a window that comfortably outlives the whole assembly, including the pauses
+ * between invocations.
  */
 async function ensureFetchableUrl(
   supabase: SupabaseClient,
@@ -241,7 +283,7 @@ async function ensureFetchableUrl(
   const [, bucket, path] = match;
   const { data, error } = await supabase.storage
     .from(bucket)
-    .createSignedUrl(decodeURIComponent(path), 60 * 60);
+    .createSignedUrl(decodeURIComponent(path), 6 * 60 * 60);
   if (error || !data?.signedUrl) return url;
   return data.signedUrl;
 }
@@ -264,7 +306,7 @@ function normalizeFalQueueStatus(payload: Record<string, unknown>): string {
 async function falRun(
   endpoint: string,
   payload: Record<string, unknown>,
-  timeoutMs = 45_000,
+  timeoutMs = 30_000,
 ): Promise<Record<string, unknown>> {
   if (!falKey) throw new Error('FAL_KEY is missing.');
   const controller = new AbortController();
@@ -286,46 +328,54 @@ async function falRun(
   }
 }
 
-async function falQueue(
+/**
+ * Submits a queued job and returns the provider's own status/response URLs.
+ *
+ * Those URLs are stored verbatim in the checkpoint rather than rebuilt from the
+ * endpoint path: fal namespaces queue requests by base app id, so a
+ * reconstructed URL for a sub-path endpoint like ffmpeg-api/merge-videos would
+ * not resolve.
+ */
+async function falSubmit(
   endpoint: string,
   payload: Record<string, unknown>,
   label: string,
-): Promise<Record<string, unknown>> {
+): Promise<QueuedJob> {
   if (!falKey) throw new Error('FAL_KEY is missing.');
-  const submission = await fetch(`${FAL_QUEUE_BASE_URL}/${endpoint}`, {
+  const response = await fetch(`${FAL_QUEUE_BASE_URL}/${endpoint}`, {
     method: 'POST',
     headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const submitted = await readJson(submission);
-  if (!submission.ok) {
-    throw new Error(`${label} could not start (${submission.status}): ${String(submitted.detail || submitted.message || submission.statusText)}`);
+  const submitted = await readJson(response);
+  if (!response.ok) {
+    throw new Error(`${label} could not start (${response.status}): ${String(submitted.detail || submitted.message || response.statusText)}`);
   }
   const requestId = readString(submitted.request_id);
   if (!requestId) throw new Error(`${label} returned no request id.`);
-  const statusUrl = readString(submitted.status_url)
-    || `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}/status`;
-  const responseUrl = readString(submitted.response_url)
-    || `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}`;
+  return {
+    statusUrl: readString(submitted.status_url)
+      || `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}/status`,
+    responseUrl: readString(submitted.response_url)
+      || `${FAL_QUEUE_BASE_URL}/${endpoint}/requests/${requestId}`,
+  };
+}
 
-  const deadline = Date.now() + JOB_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    await delay(POLL_INTERVAL_MS);
-    const statusResponse = await fetch(statusUrl, { headers: { Authorization: `Key ${falKey}` } });
-    const statusPayload = await readJson(statusResponse);
-    if (!statusResponse.ok) throw new Error(`${label} status failed (${statusResponse.status}).`);
-    const status = normalizeFalQueueStatus(statusPayload);
-    if (status === 'COMPLETED') {
-      const resultResponse = await fetch(responseUrl, { headers: { Authorization: `Key ${falKey}` } });
-      const resultPayload = await readJson(resultResponse);
-      if (!resultResponse.ok) throw new Error(`${label} result failed (${resultResponse.status}).`);
-      return resultPayload;
-    }
-    if (['FAILED', 'ERROR', 'CANCELLED'].includes(status)) {
-      throw new Error(`${label} ${status.toLowerCase()}.`);
-    }
+/** Resolves to the finished payload, or null while the job is still running. */
+async function falPoll(job: QueuedJob, label: string): Promise<Record<string, unknown> | null> {
+  if (!falKey) throw new Error('FAL_KEY is missing.');
+  const statusResponse = await fetch(job.statusUrl, { headers: { Authorization: `Key ${falKey}` } });
+  const statusPayload = await readJson(statusResponse);
+  if (!statusResponse.ok) throw new Error(`${label} status failed (${statusResponse.status}).`);
+  const status = normalizeFalQueueStatus(statusPayload);
+  if (['FAILED', 'ERROR', 'CANCELLED'].includes(status)) {
+    throw new Error(`${label} ${status.toLowerCase()}.`);
   }
-  throw new Error(`${label} timed out.`);
+  if (status !== 'COMPLETED') return null;
+  const resultResponse = await fetch(job.responseUrl, { headers: { Authorization: `Key ${falKey}` } });
+  const resultPayload = await readJson(resultResponse);
+  if (!resultResponse.ok) throw new Error(`${label} result failed (${resultResponse.status}).`);
+  return resultPayload;
 }
 
 function firstVideoUrl(payload: Record<string, unknown>): string | null {
@@ -378,7 +428,7 @@ function readFrameSize(payload: Record<string, unknown>): FrameSize | null {
 
 async function probeFrameSize(url: string): Promise<FrameSize | null> {
   try {
-    return readFrameSize(await falRun(FAL_METADATA_ENDPOINT, { media_url: url }, 30_000));
+    return readFrameSize(await falRun(FAL_METADATA_ENDPOINT, { media_url: url }));
   } catch (error) {
     console.warn('[Finalize workflow video] Could not read clip metadata:', error);
     return null;
@@ -412,76 +462,72 @@ function normalizeTargetSize(size: FrameSize): FrameSize {
 const sameFrame = (a: FrameSize | null, b: FrameSize): boolean =>
   Boolean(a) && a!.width === b.width && a!.height === b.height;
 
-/**
- * Letterboxes one clip into the target frame. `mode: 'pad'` scales to fit and
- * fills the remainder with black, which is exactly what a shot in a different
- * aspect ratio needs; the default provider behaviour would stretch it.
- */
-async function padClip(url: string, target: FrameSize): Promise<string> {
-  const payload = await falQueue(FAL_SCALE_ENDPOINT, {
-    video_url: url,
-    width: target.width,
-    height: target.height,
-    mode: 'pad',
-    pad_color: 'black',
-  }, 'Clip padding');
-  const padded = firstVideoUrl(payload);
-  if (!padded) throw new Error('Clip padding returned no video.');
-  return padded;
+// ---------------------------------------------------------------------------
+// Checkpointing
+// ---------------------------------------------------------------------------
+
+function readAssemblyState(value: unknown, clipCount: number): AssemblyState | null {
+  if (!isRecord(value) || value.version !== 1) return null;
+  const padded = value.padded;
+  const padJobs = value.padJobs;
+  if (!Array.isArray(padded) || !Array.isArray(padJobs)) return null;
+  // A checkpoint that does not describe this run's clip list is not resumable.
+  if (padded.length !== clipCount || padJobs.length !== clipCount) return null;
+  const phase = value.phase;
+  if (phase !== 'padding' && phase !== 'merging' && phase !== 'storing') return null;
+
+  const readJob = (job: unknown): QueuedJob | null => {
+    if (!isRecord(job)) return null;
+    const statusUrl = readString(job.statusUrl);
+    const responseUrl = readString(job.responseUrl);
+    return statusUrl && responseUrl ? { statusUrl, responseUrl } : null;
+  };
+
+  const target = isRecord(value.target)
+    ? (() => {
+        const width = readPositiveInt(value.target.width);
+        const height = readPositiveInt(value.target.height);
+        return width && height ? { width, height } : null;
+      })()
+    : null;
+
+  return {
+    version: 1,
+    phase,
+    target,
+    padded: padded.map((entry) => readString(entry)),
+    padJobs: padJobs.map(readJob),
+    mergeJob: readJob(value.mergeJob),
+    mergedUrl: readString(value.mergedUrl),
+    mergedDuration: typeof value.mergedDuration === 'number' ? value.mergedDuration : null,
+    paddedCount: typeof value.paddedCount === 'number' ? value.paddedCount : 0,
+  };
 }
 
-async function mergeClips(
-  videoUrls: string[],
-  target: FrameSize | null,
-): Promise<{ url: string; duration: number | null }> {
-  const payload = await falQueue(FAL_MERGE_ENDPOINT, target
-    ? { video_urls: videoUrls, resolution: { width: target.width, height: target.height } }
-    // Without a known frame we fall back to the provider's own choice, taking
-    // the first clip's aspect ratio. Clips may be stretched in that case, but
-    // the run still gets a deliverable.
-    : { video_urls: videoUrls, resolution_aspect_ratio_video_index: 0 },
-    'Video merge');
-  const url = firstVideoUrl(payload);
-  if (!url) throw new Error('The merge provider returned no video.');
-  return { url, duration: readDuration(payload) };
-}
-
-/**
- * Brings every clip into one frame, then joins them.
- *
- * The first included shot owns the frame. Any clip that does not already match
- * it is padded with black bars rather than stretched, so a 3:4 shot following
- * a 9:16 opener keeps its proportions.
- */
-async function assembleClips(
-  videoUrls: string[],
-): Promise<{ url: string; duration: number | null; frame: FrameSize | null; paddedCount: number }> {
-  const sizes = await Promise.all(videoUrls.map(probeFrameSize));
-  const firstSize = sizes[0];
-
-  if (!firstSize) {
-    const merged = await mergeClips(videoUrls, null);
-    return { ...merged, frame: null, paddedCount: 0 };
+async function saveAssemblyState(
+  supabase: SupabaseClient,
+  runId: string,
+  state: AssemblyState | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from('template_runs')
+    .update({ assembly_state: state })
+    .eq('id', runId);
+  if (error) {
+    // A lost checkpoint costs a repeated provider call on the next attempt; it
+    // is not worth failing an otherwise healthy assembly over.
+    console.warn('[Finalize workflow video] Could not save the assembly checkpoint:', error.message);
   }
-
-  const target = normalizeTargetSize(firstSize);
-  let paddedCount = 0;
-  const prepared = await Promise.all(videoUrls.map(async (url, index) => {
-    if (sameFrame(sizes[index], target)) return url;
-    // An unreadable clip is padded too: guessing that it already matches would
-    // be the one case that silently produces a stretched shot.
-    paddedCount += 1;
-    return padClip(url, target);
-  }));
-
-  const merged = await mergeClips(prepared, target);
-  return { ...merged, frame: target, paddedCount };
 }
+
+// ---------------------------------------------------------------------------
+// Poster + re-hosting
+// ---------------------------------------------------------------------------
 
 async function extractPoster(videoUrl: string): Promise<string | null> {
   if (!falKey) return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 45_000);
+  const timer = setTimeout(() => controller.abort(), 20_000);
   try {
     const response = await fetch(FAL_EXTRACT_FRAME_URL, {
       method: 'POST',
@@ -500,10 +546,6 @@ async function extractPoster(videoUrl: string): Promise<string | null> {
     clearTimeout(timer);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Re-hosting
-// ---------------------------------------------------------------------------
 
 async function rehost(
   supabase: SupabaseClient,
@@ -544,6 +586,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return sendError(res, 500, 'Supabase server credentials are missing.');
   }
 
+  const startedAt = Date.now();
+  const budgetRemaining = () => INVOCATION_BUDGET_MS - (Date.now() - startedAt);
+
   const authHeader = headerValue(req.headers.authorization);
   if (!authHeader?.startsWith('Bearer ')) {
     return sendError(res, 401, 'Authentication required.');
@@ -551,8 +596,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { runId } = readBody(req.body);
   if (!runId) return sendError(res, 400, 'runId is required.');
 
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+  let checkpointToClear = false;
+
   try {
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const { data: { user }, error: authError } = await supabase.auth.getUser(authHeader.slice(7));
     if (authError || !user) return sendError(res, 401, 'Invalid or expired session.');
 
@@ -574,6 +621,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (existing) {
       return res.status(200).json({
         success: true,
+        status: 'ready',
         assembled: true,
         cached: true,
         finalVideoUrl: existing,
@@ -603,6 +651,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // Not an error: this template simply delivers its last step result.
       return res.status(200).json({
         success: true,
+        status: 'ready',
         assembled: false,
         reason: 'not_configured',
         finalVideoUrl: null,
@@ -611,56 +660,175 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const clips = await resolveClipUrls(supabase, runId, stepIds);
-    const fetchableUrls = await Promise.all(
+    const clipUrls = await Promise.all(
       clips.map((clip) => ensureFetchableUrl(supabase, clip.url)),
     );
+    checkpointToClear = true;
 
-    const assembled = await assembleClips(fetchableUrls);
-    const ownerId = user.id;
-    const hostedVideoUrl = await rehost(
-      supabase,
-      assembled.url,
-      `${ownerId}/${runId}/final.mp4`,
-      'video/mp4',
-    );
-    const finalVideoUrl = hostedVideoUrl || assembled.url;
+    let state = readAssemblyState(run.assembly_state, clipUrls.length);
+    const pendingResponse = async (phase: AssemblyPhase) => {
+      await saveAssemblyState(supabase, runId, state);
+      return res.status(200).json({
+        success: true,
+        status: 'pending',
+        phase,
+        assembled: false,
+        finalVideoUrl: null,
+        stepIds,
+      });
+    };
 
-    const posterSource = await extractPoster(finalVideoUrl);
-    const finalThumbnailUrl = posterSource
-      ? (await rehost(supabase, posterSource, `${ownerId}/${runId}/final-poster.jpg`, 'image/jpeg')) || posterSource
-      : null;
+    if (!state) {
+      // First invocation for this run: decide the frame, then work out which
+      // clips actually need padding. Probing is a handful of fast calls.
+      const sizes = await Promise.all(clipUrls.map(probeFrameSize));
+      const target = sizes[0] ? normalizeTargetSize(sizes[0]) : null;
+      state = {
+        version: 1,
+        phase: 'padding',
+        target,
+        // A clip whose metadata could not be read is padded rather than assumed
+        // to match: guessing is the one path that silently stretches a shot.
+        padded: clipUrls.map((url, index) => (
+          !target || sameFrame(sizes[index], target) ? url : null
+        )),
+        padJobs: clipUrls.map(() => null),
+        mergeJob: null,
+        mergedUrl: null,
+        mergedDuration: null,
+        paddedCount: 0,
+      };
+      await saveAssemblyState(supabase, runId, state);
+    }
 
-    const { error: updateError } = await supabase
-      .from('template_runs')
-      .update({
-        final_media_type: 'video',
-        final_video_url: finalVideoUrl,
-        final_thumbnail_url: finalThumbnailUrl,
-        final_video_step_ids: stepIds,
-        final_video_duration_seconds: assembled.duration,
-        assembled_at: new Date().toISOString(),
-      })
-      .eq('id', runId);
-    if (updateError) throw updateError;
+    // ---- the resumable machine -------------------------------------------
+    for (;;) {
+      if (state.phase === 'padding') {
+        for (let index = 0; index < clipUrls.length; index += 1) {
+          if (state.padded[index] || state.padJobs[index]) continue;
+          state.padJobs[index] = await falSubmit(FAL_SCALE_ENDPOINT, {
+            video_url: clipUrls[index],
+            width: state.target!.width,
+            height: state.target!.height,
+            mode: 'pad',
+            pad_color: 'black',
+          }, 'Clip padding');
+          state.paddedCount += 1;
+          await saveAssemblyState(supabase, runId, state);
+        }
 
-    return res.status(200).json({
-      success: true,
-      assembled: true,
-      cached: false,
-      finalVideoUrl,
-      thumbnailUrl: finalThumbnailUrl,
-      durationSeconds: assembled.duration,
-      frame: assembled.frame,
-      paddedClipCount: assembled.paddedCount,
-      stepIds,
-      clips: clips.map((clip) => ({
-        stepId: clip.stepId,
-        order: clip.order,
-        executionMode: clip.executionMode,
-      })),
-    });
+        let stillRunning = false;
+        for (let index = 0; index < clipUrls.length; index += 1) {
+          const job = state.padJobs[index];
+          if (state.padded[index] || !job) continue;
+          const result = await falPoll(job, 'Clip padding');
+          if (!result) {
+            stillRunning = true;
+            continue;
+          }
+          const url = firstVideoUrl(result);
+          if (!url) throw new Error('Clip padding returned no video.');
+          state.padded[index] = url;
+        }
+
+        if (!stillRunning) {
+          state.phase = 'merging';
+          await saveAssemblyState(supabase, runId, state);
+          continue;
+        }
+        if (budgetRemaining() < POLL_INTERVAL_MS * 2) return pendingResponse('padding');
+        await delay(POLL_INTERVAL_MS);
+        continue;
+      }
+
+      if (state.phase === 'merging') {
+        if (!state.mergeJob) {
+          const videoUrls = state.padded.filter((url): url is string => Boolean(url));
+          if (videoUrls.length !== clipUrls.length) {
+            throw new Error('A padded clip went missing before the merge.');
+          }
+          state.mergeJob = await falSubmit(FAL_MERGE_ENDPOINT, state.target
+            ? { video_urls: videoUrls, resolution: { width: state.target.width, height: state.target.height } }
+            // Without a known frame the provider picks, taking the first clip's
+            // aspect ratio. Clips may be stretched in that case, but the run
+            // still gets a deliverable.
+            : { video_urls: videoUrls, resolution_aspect_ratio_video_index: 0 },
+            'Video merge');
+          await saveAssemblyState(supabase, runId, state);
+        }
+
+        const result = await falPoll(state.mergeJob, 'Video merge');
+        if (result) {
+          const url = firstVideoUrl(result);
+          if (!url) throw new Error('The merge provider returned no video.');
+          state.mergedUrl = url;
+          state.mergedDuration = readDuration(result);
+          state.phase = 'storing';
+          await saveAssemblyState(supabase, runId, state);
+          continue;
+        }
+        if (budgetRemaining() < POLL_INTERVAL_MS * 2) return pendingResponse('merging');
+        await delay(POLL_INTERVAL_MS);
+        continue;
+      }
+
+      // storing
+      if (!state.mergedUrl) throw new Error('The merged video went missing before it could be stored.');
+      // Downloading and re-uploading the file is the one step that cannot be
+      // resumed mid-way, so it only starts with room to finish.
+      if (budgetRemaining() < STORING_RESERVE_MS) return pendingResponse('storing');
+
+      const hostedVideoUrl = await rehost(
+        supabase,
+        state.mergedUrl,
+        `${user.id}/${runId}/final.mp4`,
+        'video/mp4',
+      );
+      const finalVideoUrl = hostedVideoUrl || state.mergedUrl;
+
+      const posterSource = await extractPoster(finalVideoUrl);
+      const finalThumbnailUrl = posterSource
+        ? (await rehost(supabase, posterSource, `${user.id}/${runId}/final-poster.jpg`, 'image/jpeg')) || posterSource
+        : null;
+
+      const { error: updateError } = await supabase
+        .from('template_runs')
+        .update({
+          final_media_type: 'video',
+          final_video_url: finalVideoUrl,
+          final_thumbnail_url: finalThumbnailUrl,
+          final_video_step_ids: stepIds,
+          final_video_duration_seconds: state.mergedDuration,
+          assembled_at: new Date().toISOString(),
+          assembly_state: null,
+        })
+        .eq('id', runId);
+      if (updateError) throw updateError;
+      checkpointToClear = false;
+
+      return res.status(200).json({
+        success: true,
+        status: 'ready',
+        assembled: true,
+        cached: false,
+        finalVideoUrl,
+        thumbnailUrl: finalThumbnailUrl,
+        durationSeconds: state.mergedDuration,
+        frame: state.target,
+        paddedClipCount: state.paddedCount,
+        stepIds,
+        clips: clips.map((clip) => ({
+          stepId: clip.stepId,
+          order: clip.order,
+          executionMode: clip.executionMode,
+        })),
+      });
+    }
   } catch (error) {
     console.error('[Finalize workflow video] Failed:', error);
+    // Drop the checkpoint on a hard failure. Resuming onto a job that already
+    // errored would fail identically on every retry, forever.
+    if (checkpointToClear) await saveAssemblyState(supabase, runId, null);
     return sendError(
       res,
       500,

@@ -30,7 +30,10 @@ import {
   setTemplateRunMode,
   startTemplateRun,
 } from './templateRunApi';
-import { finalizeWorkflowVideo } from './workflowFinalizer';
+import {
+  finalizeWorkflowVideo,
+  type WorkflowFinalVideoPhase,
+} from './workflowFinalizer';
 import type { TemplateGenerationContext } from './templateRunGeneration';
 
 export type QuickUseBrowserValue = JsonPrimitive | File;
@@ -277,6 +280,16 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((
 });
 
 /**
+ * Assembly runs in server-side slices, so the screen can name the slice instead
+ * of showing one unmoving spinner for the whole chain.
+ */
+const ASSEMBLY_PHASE_LABELS: Record<WorkflowFinalVideoPhase, string> = {
+  padding: 'Matching your shot sizes',
+  merging: 'Joining your shots',
+  storing: 'Saving your video',
+};
+
+/**
  * Asks the server to join the run's clips, and does not give up if the reply
  * is lost.
  *
@@ -288,10 +301,14 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((
 async function resolveFinalVideo(
   runId: string,
   signal?: AbortSignal,
+  onPhase?: (phase: WorkflowFinalVideoPhase) => void,
 ): Promise<{ video?: QuickUseFinalVideoOutcome; error?: string }> {
   let lastError: string | undefined;
   try {
-    const assembled = await awaitWithCancellation(finalizeWorkflowVideo(runId, { signal }), signal);
+    const assembled = await awaitWithCancellation(
+      finalizeWorkflowVideo(runId, { signal, onPhase }),
+      signal,
+    );
     if (assembled.finalVideoUrl) {
       return {
         video: {
@@ -634,7 +651,13 @@ export async function executeQuickUseTemplate(
         currentStep: plan.steps.length,
         stepTitle: 'Joining your shots',
       });
-      const outcome = await resolveFinalVideo(run.id, options.signal);
+      const outcome = await resolveFinalVideo(run.id, options.signal, (phase) => {
+        report({
+          status: 'assembling',
+          currentStep: plan.steps.length,
+          stepTitle: ASSEMBLY_PHASE_LABELS[phase],
+        });
+      });
       finalVideo = outcome.video;
       finalVideoError = outcome.error;
     }
