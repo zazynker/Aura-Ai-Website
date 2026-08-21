@@ -34,7 +34,17 @@ const groupGenerations = (gens: Generation[]): (Generation | Generation[])[] => 
     return result;
 };
 
-const isVideoGeneration = (gen: Generation): boolean => gen.mediaType === 'video' || Boolean(gen.videoUrl);
+const isVideoGeneration = (gen: Generation): boolean =>
+  gen.mediaType === 'video' || Boolean(gen.videoUrl);
+
+
+// 判断一个模板任务是否已经生成最终视频。
+// 存储在 generation_parameters 中，而不是 capability。
+// 因为它不是 workflow registry 可以执行的能力，
+// 而是多个生成结果组合出来的最终产物。
+
+const isFinalVideoGeneration = (gen: Generation): boolean =>
+  (gen.generationParameters as { finalVideo?: unknown } | undefined)?.finalVideo === true;
 
 const getGenerationDisplayName = (gen: Generation): string => {
   if (isVideoGeneration(gen)) {
@@ -653,7 +663,10 @@ useEffect(() => {
                            <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
                              {renderGenerationMedia(group[0], 'w-full h-full object-cover')}
                              <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
-                               <Layers className="w-3 h-3" /> {group.length}
+                             <Layers className="w-3 h-3" /> 
+{isFinalVideoGeneration(group[0]) 
+  ? `Final · ${group.length}` 
+  : group.length}
                              </div>
                              <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/80 to-transparent opacity-0 group-hover:opacity-100 transition-opacity">
                                <p className="text-[10px] text-white truncate">{group[0].prompt}</p>
@@ -762,11 +775,14 @@ useEffect(() => {
                           <div className="absolute inset-0 rounded-xl overflow-hidden border-2 border-transparent group-hover:border-purple-500/50 transition-all z-10">
                             {renderGenerationMedia(group[0], 'w-full h-full object-cover')}
                             <div className="absolute bottom-1.5 right-1.5 bg-black/60 backdrop-blur-sm px-1.5 py-0.5 rounded text-[10px] text-white font-medium border border-white/10 flex items-center gap-1">
-                              <Layers className="w-3 h-3" /> {group.length}
+                            <Layers className="w-3 h-3" /> 
+{isFinalVideoGeneration(group[0]) 
+  ? `Final · ${group.length}` 
+  : group.length}
                             </div>
                             <div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-3 backdrop-blur-[2px]">
-                              <Button size="sm" variant="gradient" onClick={(e) => { e.stopPropagation(); navigateToEdit(group[0]); }}>
-                                <Edit className="w-3 h-3 mr-2" /> Edit in Studio
+                            <Button size="sm" variant="gradient" onClick={(e) => { e.stopPropagation(); if (isVideoGeneration(group[0])) { setSelectedGroup(group); setSelectedImage(group[0]); } else { navigateToEdit(group[0]); } }}>
+                                {isVideoGeneration(group[0]) ? <><PlayCircle className="w-3 h-3 mr-2" /> Open Video</> : <><Edit className="w-3 h-3 mr-2" /> Edit in Studio</>}
                               </Button>
                             </div>
                           </div>

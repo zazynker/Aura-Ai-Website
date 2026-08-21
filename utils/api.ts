@@ -143,7 +143,8 @@ interface DbGeneration {
   capability?: string;
   input_assets?: import('../types').GenerationInputAssetSnapshot[] | null;
   generation_parameters?: import('../workflows/types').JsonObject | null;
-  request_id?: string | null;
+request_id?: string | null;
+template_run_id?: string | null;
 }
 
 // 数据库格式 -> 前端格式
@@ -166,7 +167,13 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   inputAssets: db.input_assets || undefined,
   generationParameters: db.generation_parameters || undefined,
   requestId: db.request_id || undefined,
-  groupId: db.media_type !== 'video' ? db.request_id || undefined : undefined,
+  // 一个模板运行中的步骤结果和最终合并视频共享同一个 run id
+// 因此整个任务会折叠成一个 Dashboard 卡片。
+// 其他情况继续使用 request_id 分组。
+// 不属于 run 的视频保持不分组。
+
+groupId: db.template_run_id
+|| (db.media_type !== 'video' ? db.request_id || undefined : undefined),
 });
 
 /**
@@ -367,6 +374,7 @@ export async function saveGenerationToDb(
       input_assets: generation.inputAssets || [],
       generation_parameters: generation.generationParameters || {},
       request_id: generation.requestId || null,
+template_run_id: generation.templateRunId || null,
     };
     if (generation.thumbnailUrl) dbData.thumbnail_url = generation.thumbnailUrl;
 
@@ -436,6 +444,7 @@ export async function saveGenerationsToDb(
       input_assets: gen.inputAssets || [],
       generation_parameters: gen.generationParameters || {},
       request_id: gen.requestId || null,
+      template_run_id: gen.templateRunId || null,
       ...(gen.thumbnailUrl ? { thumbnail_url: gen.thumbnailUrl } : {}),
     }));
 

@@ -577,6 +577,80 @@ async function rehost(
 }
 
 // ---------------------------------------------------------------------------
+// History
+// ---------------------------------------------------------------------------
+
+/**
+ * Files the joined video in the user's own history.
+ *
+ * Without this the deliverable existed only on the run row: reachable from the
+ * dock until it was dismissed, then gone, while the individual shots stayed in
+ * the dashboard forever. The finished piece is the one thing a user is certain
+ * to come back for.
+ *
+ * It shares template_run_id with the run's step results, which is what makes
+ * the dashboard fold the whole run into one card with the joined video on top.
+ *
+ * Written here rather than in the browser so the row exists even if the tab is
+ * closed the moment assembly finishes. Best-effort: a run that has its video is
+ * a successful run, and a history row that failed to write must not turn that
+ * into an error the user sees.
+ */
+async function recordFinalVideoInHistory(
+  supabase: SupabaseClient,
+  params: {
+    userId: string;
+    runId: string;
+    templateId: string;
+    videoUrl: string;
+    thumbnailUrl: string | null;
+    durationSeconds: number | null;
+    stepIds: string[];
+  },
+): Promise<void> {
+  try {
+    const { data: template } = await supabase
+      .from('templates')
+      .select('name,display_name')
+      .eq('id', params.templateId)
+      .maybeSingle();
+    const templateName = template
+      ? readString((template as Record<string, unknown>).display_name)
+        || readString((template as Record<string, unknown>).name)
+      : null;
+
+    const { error } = await supabase.from('generations').insert({
+      user_id: params.userId,
+      template_id: params.templateId,
+      template_name: templateName,
+      // image_url is the table's required media column; for a video row the
+      // poster is the useful still, with the video itself as the fallback.
+      image_url: params.thumbnailUrl || params.videoUrl,
+      thumbnail_url: params.thumbnailUrl,
+      prompt: `Final video from ${params.stepIds.length} shots`,
+      // The shots were already charged. Joining them costs the user nothing.
+      credits_used: 0,
+      media_type: 'video',
+      video_url: params.videoUrl,
+      video_duration: params.durationSeconds,
+      // Not a capability: this row is an assembly of other rows' output, and
+      // the capability column is a closed list the workflow registry mirrors.
+      capability: null,
+      input_assets: [],
+      generation_parameters: { finalVideo: true, stepIds: params.stepIds },
+      request_id: `final-video:${params.runId}`,
+      template_run_id: params.runId,
+    });
+    // 23505 = the one-final-video-per-run index did its job on a concurrent call.
+    if (error && error.code !== '23505') {
+      console.warn('[Finalize workflow video] Could not file the final video in history:', error.message);
+    }
+  } catch (error) {
+    console.warn('[Finalize workflow video] Could not file the final video in history:', error);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Handler
 // ---------------------------------------------------------------------------
 
@@ -805,6 +879,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .eq('id', runId);
       if (updateError) throw updateError;
       checkpointToClear = false;
+
+      await recordFinalVideoInHistory(supabase, {
+        userId: user.id,
+        runId,
+        templateId,
+        videoUrl: finalVideoUrl,
+        thumbnailUrl: finalThumbnailUrl,
+        durationSeconds: state.mergedDuration,
+        stepIds,
+      });
 
       return res.status(200).json({
         success: true,

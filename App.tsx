@@ -7,6 +7,7 @@ import { ToastContainer } from './components/ui/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
 import { WorkflowDock } from './components/workflow/WorkflowDock';
+import { QuickUseRunDock } from './components/quickUse/QuickUseRunDock';
 import { clearWorkflow, restoreActiveWorkflow } from './components/workflow/workflowManager';
 import { RewardCelebrationModal } from './components/RewardCelebrationModal';
 import { WelcomeLoginPopup } from './components/WelcomeLoginPopup';
@@ -176,6 +177,7 @@ const AppContent = () => {
       {!isAuthPage && <Navbar />}
       <ToastContainer />
       <WorkflowDock />
+      <QuickUseRunDock />
       <RewardCelebrationModal
         celebration={rewardCelebration}
         onClose={() => setRewardCelebration(null)}
