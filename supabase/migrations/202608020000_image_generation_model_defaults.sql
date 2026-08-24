@@ -33,6 +33,11 @@ with rewritten_versions as (
     ) as workflow
   from public.template_versions as version
   where jsonb_typeof(version.workflow -> 'steps') = 'array'
+    -- A database that already has the later versioning hardening correctly
+    -- rejects content changes to published/archived versions. Runtime readers
+    -- already use GPT Image 2 when this legacy field is absent, so only
+    -- mutable versions need the explicit backfill.
+    and version.version_status not in ('published', 'archived')
 )
 update public.template_versions as version
 set workflow = rewritten.workflow

@@ -117,6 +117,13 @@ create index if not exists template_run_steps_execution_mode_idx
 -- auth.uid() exactly like the other run RPCs, and the step must be pending or
 -- active so a completed step can never be silently downgraded to a reuse.
 
+-- Some deployments received the later JSON-returning implementation manually
+-- before migration history was reconciled. PostgreSQL cannot change a return
+-- type with CREATE OR REPLACE, so remove this exact signature transactionally
+-- before creating the baseline implementation below. The next migration
+-- replaces it with the final rollup implementation.
+drop function if exists public.reuse_template_run_step(uuid, text, text);
+
 do $build_reuse_rpc$
 declare
   v_run_col   text;

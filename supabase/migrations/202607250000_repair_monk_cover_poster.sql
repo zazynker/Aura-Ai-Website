@@ -47,17 +47,10 @@ begin
   where id = target_version_id
     and template_id = target_template_id;
 
-  update public.template_assets
-  set storage_bucket = valid_poster.storage_bucket,
-      storage_path = valid_poster.storage_path,
-      public_url = valid_poster.public_url,
-      mime_type = valid_poster.mime_type,
-      byte_size = valid_poster.byte_size,
-      width = valid_poster.width,
-      height = valid_poster.height
-  where template_id = target_template_id
-    and version_id = target_version_id
-    and asset_key = 'cover-thumbnail';
+  -- Do not rewrite the published asset row. On databases where the newer
+  -- published-version immutability guard already exists, that update is
+  -- correctly rejected. The marketplace and detail surfaces read these two
+  -- durable cover pointers, so repointing them is both sufficient and safe.
 end
 $repair_cover$;
 
