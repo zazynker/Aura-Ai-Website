@@ -23,6 +23,7 @@ import {
   loadQuickUseGuestDraft,
   saveQuickUseGuestDraft,
 } from '../utils/quickUseGuestDraft';
+import { trackAuthFunnelEvent } from '../utils/authFunnelAnalytics';
 
 const TemplateExperienceModal = React.lazy(() => import('../components/template/TemplateExperienceModal').then((module) => ({
   default: module.TemplateExperienceModal,
@@ -621,11 +622,11 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   };
 
   useEffect(() => {
-    if (!user || sessionStorage.getItem('restoreQuickUseAfterAuth') !== 'true') return;
-    sessionStorage.removeItem('restoreQuickUseAfterAuth');
+    if (!user) return;
     let cancelled = false;
     void loadQuickUseGuestDraft().then((draft) => {
       if (cancelled || !draft) return;
+      trackAuthFunnelEvent('quick_use_restored', { entryContext: 'quick-use' });
       openTemplateExperience(draft.template, 'use', draft.values);
     });
     return () => { cancelled = true; };
@@ -661,7 +662,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
     if (!user) {
       if (!selectedTemplateForModal) return;
       await saveQuickUseGuestDraft(selectedTemplateForModal, values);
-      sessionStorage.setItem('restoreQuickUseAfterAuth', 'true');
+      trackAuthFunnelEvent('quick_use_auth_requested', { entryContext: 'quick-use' });
       sessionStorage.setItem('postAuthDestination', '/');
       sessionStorage.setItem('authEntryContext', 'quick-use');
       navigate('/login', {

@@ -225,6 +225,43 @@ export async function adminGetPopupImpressionCount(
   }
 }
 
+export interface AuthFunnelStats {
+  days: number;
+  steps: Array<{ eventName: string; sessions: number }>;
+  errors: Array<{ errorCode: string; sessions: number }>;
+}
+
+export async function adminGetAuthFunnel(days: number = 30): Promise<{
+  data: AuthFunnelStats | null;
+  error: string | null;
+}> {
+  try {
+    const { data, error } = await supabase.rpc('admin_get_auth_funnel', { p_days: days });
+    if (error) return { data: null, error: error.message };
+    if (!data?.success) return { data: null, error: data?.error || 'Unknown error' };
+    return {
+      data: {
+        days: Number(data.days || days),
+        steps: Array.isArray(data.steps)
+          ? data.steps.map((step: any) => ({
+              eventName: String(step.event_name || ''),
+              sessions: Number(step.sessions || 0),
+            }))
+          : [],
+        errors: Array.isArray(data.errors)
+          ? data.errors.map((item: any) => ({
+              errorCode: String(item.error_code || 'unknown'),
+              sessions: Number(item.sessions || 0),
+            }))
+          : [],
+      },
+      error: null,
+    };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Failed to load auth funnel' };
+  }
+}
+
 /**
  * 获取模板使用统计（管理员专用）- 排除特殊模板，包含缩略图
  */

@@ -15,6 +15,7 @@ import {
   adminGetUsers, 
   adminGetStats, 
   adminGetPopupImpressionCount,
+  adminGetAuthFunnel,
   adminGetTemplateStats,
   adminGetUnusedTemplates,
   adminUpdateCredits,
@@ -27,6 +28,7 @@ import {
   AdminGeneration,
   AdminReviewTemplate,
   AdminReviewedTemplate,
+  type AuthFunnelStats,
 } from '../utils/adminApi';
 import { TEMPLATE_DETAIL_AUTH_GATE_KEY } from '../utils/popupAnalytics';
 import { announceCreatorRewardAvailable } from '../utils/notificationsApi';
@@ -74,6 +76,7 @@ export const Admin = () => {
     impressionCount: number;
     lastShownAt: string | null;
   } | null>(null);
+  const [authFunnel, setAuthFunnel] = useState<AuthFunnelStats | null>(null);
 
   // Users state
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -140,9 +143,10 @@ export const Admin = () => {
   // Load stats
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
-    const [statsResult, popupResult] = await Promise.all([
+    const [statsResult, popupResult, funnelResult] = await Promise.all([
       adminGetStats(),
       adminGetPopupImpressionCount(TEMPLATE_DETAIL_AUTH_GATE_KEY),
+      adminGetAuthFunnel(30),
     ]);
     if (statsResult.error) {
       addToast('error', `Failed to load stats: ${statsResult.error}`);
@@ -153,6 +157,11 @@ export const Admin = () => {
       addToast('error', `Failed to load popup analytics: ${popupResult.error}`);
     } else if (popupResult.data) {
       setPopupImpressions(popupResult.data);
+    }
+    if (funnelResult.error) {
+      addToast('error', `Failed to load registration funnel: ${funnelResult.error}`);
+    } else if (funnelResult.data) {
+      setAuthFunnel(funnelResult.data);
     }
     setStatsLoading(false);
   }, [addToast]);
@@ -576,6 +585,51 @@ export const Admin = () => {
                 />
               </div>
             ) : null}
+
+            {authFunnel && (
+              <div className="glass-panel rounded-2xl border border-slate-200 p-5 dark:border-white/10">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h2 className="font-bold text-slate-900 dark:text-white">Registration Funnel</h2>
+                    <p className="mt-1 text-xs text-slate-500">Unique browser sessions · Last {authFunnel.days} days</p>
+                  </div>
+                  <span className="rounded-full bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-700 dark:bg-purple-500/10 dark:text-purple-300">
+                    Refresh with Overview
+                  </span>
+                </div>
+                <div className="mt-5 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                  {[
+                    ['signup_viewed', 'Signup viewed'],
+                    ['signup_google_clicked', 'Google clicked'],
+                    ['signup_email_submitted', 'Email submitted'],
+                    ['signup_email_sent', 'Email sent'],
+                    ['signup_completed', 'Signup completed'],
+                    ['quick_use_restored', 'Quick Use restored'],
+                  ].map(([eventName, label]) => {
+                    const sessions = authFunnel.steps.find((step) => step.eventName === eventName)?.sessions || 0;
+                    const signupViews = authFunnel.steps.find((step) => step.eventName === 'signup_viewed')?.sessions || 0;
+                    const conversion = signupViews > 0 ? Math.round((sessions / signupViews) * 100) : 0;
+                    return (
+                      <div key={eventName} className="rounded-xl border border-slate-200 bg-white p-3 dark:border-white/10 dark:bg-white/5">
+                        <div className="text-2xl font-bold text-slate-900 dark:text-white">{sessions}</div>
+                        <div className="mt-1 text-xs font-medium text-slate-600 dark:text-slate-300">{label}</div>
+                        <div className="mt-1 text-[11px] text-slate-400">{conversion}% of signup views</div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {authFunnel.errors.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-white/5">
+                    <span className="text-xs font-semibold text-slate-500">Top blockers:</span>
+                    {authFunnel.errors.map((item) => (
+                      <span key={item.errorCode} className="rounded-full bg-red-50 px-2.5 py-1 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">
+                        {item.errorCode} · {item.sessions}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 

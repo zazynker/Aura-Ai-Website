@@ -16,6 +16,7 @@ import {
   CREATOR_REWARD_AVAILABLE_EVENT,
 } from './utils/notificationsApi';
 import type { CreatorRewardCelebration } from './types';
+import { consumePendingAuthAttempt, trackAuthFunnelEvent } from './utils/authFunnelAnalytics';
 
 const pendingCelebrationClaims = new Map<string, Promise<CreatorRewardCelebration | null>>();
 
@@ -67,6 +68,24 @@ const AppContent = () => {
   const navigate = useNavigate();
   const { user, authLoading } = useStore();
   const [rewardCelebration, setRewardCelebration] = React.useState<CreatorRewardCelebration | null>(null);
+  const authSuccessTrackedRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (!user || authSuccessTrackedRef.current === user.id) return;
+    authSuccessTrackedRef.current = user.id;
+    const pendingAuth = consumePendingAuthAttempt();
+    if (!pendingAuth) return;
+    trackAuthFunnelEvent('auth_success', {
+      authMethod: pendingAuth.authMethod,
+      entryContext: pendingAuth.entryContext,
+    });
+    if (pendingAuth.intent === 'signup') {
+      trackAuthFunnelEvent('signup_completed', {
+        authMethod: pendingAuth.authMethod,
+        entryContext: pendingAuth.entryContext,
+      });
+    }
+  }, [user]);
 
   React.useEffect(() => {
     if (authLoading || !user) {

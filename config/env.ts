@@ -41,6 +41,9 @@ const requiredEnvVars = [
       isDev: import.meta.env.DEV,
       isProd: import.meta.env.PROD,
     },
+    captcha: {
+      turnstileSiteKey: import.meta.env.VITE_TURNSTILE_SITE_KEY || '',
+    },
   } as const;
   
   // Type guard to check if Supabase is configured

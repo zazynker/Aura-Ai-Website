@@ -1,23 +1,12 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useStore } from '../context/StoreContext';
 import { Button } from '../components/ui/Button';
 import { Sparkles, ArrowRight, Mail } from 'lucide-react';
 import { supabase } from '../utils/supabase';
-
-const ALLOWED_EMAIL_DOMAINS = [
-  'gmail.com',
-  'outlook.com',
-  'hotmail.com',
-  'yahoo.com',
-  'icloud.com',
-  'me.com',
-  'mac.com',
-  'live.com',
-  'msn.com',
-  'protonmail.com',
-  'proton.me',
-];
+import { TurnstileCaptcha } from '../components/TurnstileCaptcha';
+import { env } from '../config/env';
+import { markAuthAttemptPending, trackAuthFunnelEvent } from '../utils/authFunnelAnalytics';
 
 function normalizeEmail(email: string): string {
   const [localPart, domain] = email.toLowerCase().split('@');
@@ -32,10 +21,10 @@ function normalizeEmail(email: string): string {
   return `${cleaned}@${domain}`;
 }
 
-function isAllowedEmail(email: string): boolean {
-  const domain = email.split('@')[1]?.toLowerCase();
-  return ALLOWED_EMAIL_DOMAINS.includes(domain);
-}
+const SIGNUP_COOLDOWN_KEY = 'lazora_signup_email_cooldown_until';
+const SIGNUP_COOLDOWN_SECONDS = 60;
+
+const getAuthRedirectUrl = (): string => `${window.location.origin}${window.location.pathname}`;
 
 export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   const navigate = useNavigate();
@@ -49,16 +38,51 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
   const { browsing, saveBrowsingState, addToast } = useStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [signupSuccess, setSignupSuccess] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+  const [captchaResetKey, setCaptchaResetKey] = useState(0);
+  const captchaRequired = Boolean(env.captcha.turnstileSiteKey);
+  const entryContext = authRouteState.authContext
+    || sessionStorage.getItem('authEntryContext')
+    || 'direct';
+
+  const handleCaptchaToken = useCallback((token: string | null) => {
+    setCaptchaToken(token);
+  }, []);
+
+  useEffect(() => {
+    trackAuthFunnelEvent(isSignup ? 'signup_viewed' : 'login_viewed', { entryContext });
+  }, [entryContext, isSignup]);
+
+  useEffect(() => {
+    const updateCooldown = () => {
+      const until = Number(localStorage.getItem(SIGNUP_COOLDOWN_KEY) || 0);
+      setCooldownSeconds(Math.max(0, Math.ceil((until - Date.now()) / 1000)));
+    };
+    updateCooldown();
+    const interval = window.setInterval(updateCooldown, 1_000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const startSignupCooldown = () => {
+    const until = Date.now() + SIGNUP_COOLDOWN_SECONDS * 1_000;
+    localStorage.setItem(SIGNUP_COOLDOWN_KEY, String(until));
+    setCooldownSeconds(SIGNUP_COOLDOWN_SECONDS);
+  };
 
   const handleGoogleLogin = async () => {
     setGoogleLoading(true);
     setError('');
+    trackAuthFunnelEvent(isSignup ? 'signup_google_clicked' : 'login_google_clicked', {
+      authMethod: 'google',
+      entryContext,
+    });
+    markAuthAttemptPending('google', entryContext, isSignup ? 'signup' : 'login');
     if (authRouteState.from?.startsWith('/') && !authRouteState.from.startsWith('//')) {
       sessionStorage.setItem('postAuthDestination', authRouteState.from);
     }
@@ -67,7 +91,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: window.location.origin + window.location.pathname.replace(/\/(login|signup)$/, '')
+          redirectTo: getAuthRedirectUrl(),
         }
       });
       
@@ -120,37 +144,98 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
     e.preventDefault();
     setError('');
 
-    if (!email.includes('@')) return setError('Invalid email address');
-    if (isSignup && !isAllowedEmail(email)) return setError('Please use a major email provider (Gmail, Outlook, Yahoo, iCloud, etc.)');
-    if (password.length < 6) return setError('Password must be at least 6 characters');
-    if (isSignup && !name) return setError('Name is required');
-    if (isSignup && password !== confirmPassword) return setError('Passwords do not match');
+    if (!email.includes('@')) {
+      if (isSignup) trackAuthFunnelEvent('signup_validation_failed', { authMethod: 'email', entryContext, errorCode: 'invalid_email' });
+      return setError('Invalid email address');
+    }
+    if (password.length < 6) {
+      if (isSignup) trackAuthFunnelEvent('signup_validation_failed', { authMethod: 'email', entryContext, errorCode: 'short_password' });
+      return setError('Password must be at least 6 characters');
+    }
+    if (captchaRequired && !captchaToken) {
+      if (isSignup) trackAuthFunnelEvent('signup_validation_failed', { authMethod: 'email', entryContext, errorCode: 'captcha_required' });
+      return setError('Please complete the security check.');
+    }
 
     setLoading(true);
 
     try {
       if (isSignup) {
+        trackAuthFunnelEvent('signup_email_submitted', { authMethod: 'email', entryContext });
+        markAuthAttemptPending('email', entryContext, 'signup');
         const { error } = await supabase.auth.signUp({
           email: normalizeEmail(email),
           password,
           options: {
-            data: { name }
+            emailRedirectTo: getAuthRedirectUrl(),
+            captchaToken: captchaToken || undefined,
           }
         });
         if (error) throw error;
+        trackAuthFunnelEvent('signup_email_sent', { authMethod: 'email', entryContext });
+        startSignupCooldown();
+        setCaptchaToken(null);
+        setCaptchaResetKey((key) => key + 1);
         setSignupSuccess(true);
       } else {
+        trackAuthFunnelEvent('login_email_submitted', { authMethod: 'email', entryContext });
+        markAuthAttemptPending('email', entryContext, 'login');
         const { error } = await supabase.auth.signInWithPassword({
           email: normalizeEmail(email),
-          password
+          password,
+          options: { captchaToken: captchaToken || undefined },
         });
         if (error) throw error;
+        trackAuthFunnelEvent('login_success', { authMethod: 'email', entryContext });
         handleRedirect();
       }
     } catch (err: any) {
+      trackAuthFunnelEvent(isSignup ? 'signup_failed' : 'login_failed', {
+        authMethod: 'email',
+        entryContext,
+        errorCode: typeof err?.code === 'string' ? err.code : 'auth_error',
+      });
       setError(err.message || 'Authentication failed');
+      setCaptchaToken(null);
+      setCaptchaResetKey((key) => key + 1);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const resendConfirmation = async () => {
+    if (resendLoading || cooldownSeconds > 0) return;
+    if (captchaRequired && !captchaToken) {
+      setError('Please complete the security check.');
+      return;
+    }
+    setResendLoading(true);
+    setError('');
+    trackAuthFunnelEvent('confirmation_resend_requested', { authMethod: 'email', entryContext });
+    try {
+      const { error: resendError } = await supabase.auth.resend({
+        type: 'signup',
+        email: normalizeEmail(email),
+        options: {
+          emailRedirectTo: getAuthRedirectUrl(),
+          captchaToken: captchaToken || undefined,
+        },
+      });
+      if (resendError) throw resendError;
+      trackAuthFunnelEvent('confirmation_resent', { authMethod: 'email', entryContext });
+      startSignupCooldown();
+      addToast('success', 'Confirmation email sent again.');
+    } catch (resendError: any) {
+      trackAuthFunnelEvent('confirmation_resend_failed', {
+        authMethod: 'email',
+        entryContext,
+        errorCode: typeof resendError?.code === 'string' ? resendError.code : 'resend_error',
+      });
+      setError(resendError.message || 'Could not resend the confirmation email.');
+    } finally {
+      setCaptchaToken(null);
+      setCaptchaResetKey((key) => key + 1);
+      setResendLoading(false);
     }
   };
 
@@ -172,12 +257,32 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
           <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">
             Click the link in the email to activate your account. If you don't see it, check your spam folder.
           </p>
-          <button
-            onClick={() => { window.location.hash = '/login'; window.location.reload(); }}
-            className="text-purple-600 dark:text-purple-400 hover:text-purple-500 dark:hover:text-purple-300 font-medium text-sm"
-          >
-            Back to Log in
-          </button>
+          <TurnstileCaptcha onTokenChange={handleCaptchaToken} resetKey={captchaResetKey} />
+          {error && <p className="mt-3 text-xs text-red-500 dark:text-red-400">{error}</p>}
+          <div className="mt-5 grid gap-2">
+            <Button
+              variant="gradient"
+              className="w-full"
+              isLoading={resendLoading}
+              disabled={cooldownSeconds > 0}
+              onClick={() => void resendConfirmation()}
+            >
+              {cooldownSeconds > 0 ? `Resend in ${cooldownSeconds}s` : 'Resend confirmation email'}
+            </Button>
+            <Button
+              variant="secondary"
+              className="w-full"
+              onClick={() => { setSignupSuccess(false); setError(''); }}
+            >
+              Change email address
+            </Button>
+            <button
+              onClick={() => navigate('/login')}
+              className="mt-2 text-sm font-medium text-purple-600 hover:text-purple-500 dark:text-purple-400 dark:hover:text-purple-300"
+            >
+              Back to Log in
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -249,23 +354,11 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
-                {isSignup && (
-                    <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Full Name</label>
-                        <input 
-                            type="text" 
-                            value={name} 
-                            onChange={e => setName(e.target.value)} 
-                            className="w-full bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-white/10 rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all"
-                            placeholder="John Doe"
-                        />
-                    </div>
-                )}
-                
                 <div className="space-y-1">
                     <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Email</label>
                     <input 
                         type="email" 
+                        autoComplete="email"
                         value={email} 
                         onChange={e => setEmail(e.target.value)} 
                         className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && !email.includes('@') ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
@@ -288,6 +381,7 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
                     </div>
                     <input 
                         type="password" 
+                        autoComplete={isSignup ? 'new-password' : 'current-password'}
                         value={password} 
                         onChange={e => setPassword(e.target.value)} 
                         className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && password.length < 6 ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
@@ -295,22 +389,15 @@ export const Login = ({ isSignup = false }: { isSignup?: boolean }) => {
                     />
                 </div>
 
-                {isSignup && (
-                    <div className="space-y-1">
-                        <label className="text-xs font-medium text-slate-700 dark:text-slate-300 ml-1">Confirm Password</label>
-                        <input 
-                            type="password" 
-                            value={confirmPassword} 
-                            onChange={e => setConfirmPassword(e.target.value)} 
-                            className={`w-full bg-white dark:bg-slate-900/50 border rounded-xl px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 focus:ring-2 focus:ring-purple-500/50 focus:border-transparent outline-none transition-all ${error && password !== confirmPassword ? 'border-red-500' : 'border-slate-200 dark:border-white/10'}`}
-                            placeholder="••••••••"
-                        />
-                    </div>
-                )}
-
                 {error && <p className="text-red-500 dark:text-red-400 text-xs text-center">{error}</p>}
 
-                <Button variant="gradient" className="w-full py-3" isLoading={loading}>
+                <TurnstileCaptcha onTokenChange={handleCaptchaToken} resetKey={captchaResetKey} />
+
+                <Button
+                  variant="gradient"
+                  className="w-full py-3"
+                  isLoading={loading}
+                >
                     {isSignup ? 'Sign up — Get 120 Credits' : 'Log In'} <ArrowRight className="w-4 h-4 ml-2" />
                 </Button>
             </form>
