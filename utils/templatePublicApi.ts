@@ -109,6 +109,24 @@ async function enrichQuickUseAvailability(
 ): Promise<PublicTemplateRow[]> {
   if (rows.length === 0) return rows;
   const ids = rows.map((row) => row.id);
+
+  // This RPC deliberately exposes only the ids of published Templates. It is
+  // available to signed-out visitors, unlike the authoring tables below.
+  // Without it, an anonymous RLS denial was interpreted as "no Quick Use" and
+  // every Template badge incorrectly became Workflow.
+  const { data: publicQuickUseIds, error: publicQuickUseError } = await supabase.rpc(
+    'list_published_quick_use_template_ids',
+    { p_template_ids: ids },
+  );
+  if (!publicQuickUseError) {
+    const quickUseIds = new Set(
+      ((publicQuickUseIds || []) as Array<{ template_id?: unknown }>)
+        .map((row) => typeof row.template_id === 'string' ? row.template_id : '')
+        .filter(Boolean),
+    );
+    return rows.map((row) => ({ ...row, has_quick_use: quickUseIds.has(row.id) }));
+  }
+
   const { data: pointers, error: pointerError } = await supabase
     .from('templates')
     .select('id,current_version_id')
@@ -116,13 +134,15 @@ async function enrichQuickUseAvailability(
     .eq('status', 'published');
   if (pointerError) {
     console.warn('Could not resolve Quick Use availability.', pointerError.message);
-    return rows.map((row) => ({ ...row, has_quick_use: false }));
+    // Preserve the value supplied by list_published_templates. False is not a
+    // safe fallback here: for guests it changes the product type in the UI.
+    return rows;
   }
   const versionIds = (pointers || [])
     .map((pointer) => pointer.current_version_id as string | null)
     .filter((versionId): versionId is string => Boolean(versionId));
   if (versionIds.length === 0) {
-    return rows.map((row) => ({ ...row, has_quick_use: false }));
+    return rows;
   }
   const { data: versions, error: versionError } = await supabase
     .from('template_versions')
@@ -131,7 +151,7 @@ async function enrichQuickUseAvailability(
     .eq('version_status', 'published');
   if (versionError) {
     console.warn('Could not load Quick Use availability.', versionError.message);
-    return rows.map((row) => ({ ...row, has_quick_use: false }));
+    return rows;
   }
   const quickUseVersionIds = new Set(
     (versions || [])

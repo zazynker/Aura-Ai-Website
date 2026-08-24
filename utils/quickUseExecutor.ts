@@ -27,7 +27,6 @@ import {
   fetchTemplateRunFinalVideo,
   fetchTemplateStepResultAssets,
   reuseTemplateRunStep,
-  setTemplateRunMode,
   startTemplateRun,
 } from './templateRunApi';
 import {
@@ -478,13 +477,11 @@ export async function executeQuickUseTemplate(
   options: ExecuteQuickUseOptions,
 ): Promise<QuickUseExecutionProgress> {
   throwIfCancelled(options.signal);
-  const run = await startTemplateRun(options.templateId, createRunIdempotencyKey(options.templateId));
-  // A Template run is not a Workflow run. Tagging it keeps the Workflow Dock
-  // from adopting it as a resumable step-by-step session. Best-effort: an
-  // untagged run must still be able to generate.
-  await setTemplateRunMode(run.id, 'quick_use').catch((modeError) => {
-    console.warn('Could not tag this run as Quick Use:', modeError);
-  });
+  const run = await startTemplateRun(
+    options.templateId,
+    createRunIdempotencyKey(options.templateId),
+    'quick_use',
+  );
   let currentStep = 0;
   const stepOutcomes: QuickUseStepOutcome[] = [];
   const report = (progress: Omit<QuickUseExecutionProgress, 'runId' | 'totalSteps'>) => {

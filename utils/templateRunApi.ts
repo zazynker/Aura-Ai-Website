@@ -96,13 +96,32 @@ export const createRunIdempotencyKey = (templateId: string): string => {
   return `template:${templateId}:${randomPart}`;
 };
 
-export async function startTemplateRun(templateId: string, idempotencyKey: string): Promise<StartedTemplateRun> {
+export async function startTemplateRun(
+  templateId: string,
+  idempotencyKey: string,
+  runMode: TemplateRunMode = 'workflow',
+): Promise<StartedTemplateRun> {
+  // Starting and tagging must be one database operation. When Quick Use first
+  // created a default Workflow run and tagged it in a second request, the
+  // global restore listener could adopt it in between those requests and flash
+  // the Workflow Dock over a Template.
+  const atomic = await supabase.rpc('start_template_run_in_mode', {
+    p_template_id: templateId,
+    p_idempotency_key: idempotencyKey,
+    p_run_mode: runMode,
+  });
+  if (!atomic.error) return normalizeRun(atomic.data);
+
+  // Deployment-order fallback for a frontend released just before the new
+  // migration. Quick Use still applies the legacy tag immediately below.
   const { data, error } = await supabase.rpc('start_template_run', {
     p_template_id: templateId,
     p_idempotency_key: idempotencyKey,
   });
   if (error) throw new Error(`Could not start this workflow: ${error.message}`);
-  return normalizeRun(data);
+  const run = normalizeRun(data);
+  if (runMode !== 'workflow') await setTemplateRunMode(run.id, runMode);
+  return run;
 }
 
 /**
@@ -124,17 +143,16 @@ export async function setTemplateRunMode(
 }
 
 /**
- * Falls back to 'workflow' when the column does not exist yet, which keeps the
- * dock behaving exactly as it did before this feature shipped.
+ * Returns null when the mode cannot be verified. Callers must not guess that
+ * an unknown run is a Workflow, because doing so can attach the Workflow Dock
+ * to a one-shot Template run.
  */
-export async function fetchTemplateRunMode(runId: string): Promise<TemplateRunMode> {
-  const { data, error } = await supabase
-    .from('template_runs')
-    .select('run_mode')
-    .eq('id', runId)
-    .maybeSingle();
-  if (error || !data) return 'workflow';
-  return (data as { run_mode?: unknown }).run_mode === 'quick_use' ? 'quick_use' : 'workflow';
+export async function fetchTemplateRunMode(runId: string): Promise<TemplateRunMode | null> {
+  const { data, error } = await supabase.rpc('get_template_run_mode', { p_run_id: runId });
+  if (error) return null;
+  if (data === 'quick_use') return 'quick_use';
+  if (data === 'workflow') return 'workflow';
+  return null;
 }
 
 export async function fetchTemplateRun(runId: string): Promise<StartedTemplateRun> {

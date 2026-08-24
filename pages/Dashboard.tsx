@@ -1028,11 +1028,7 @@ useEffect(() => {
                       <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">{new Date(template.updatedAt).toLocaleDateString()} • {template.stepsCount} steps</p>
                       
                       {template.status === 'Published' && (
-                        <div className="flex items-center gap-4 text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-lg mb-4">
-                          <div className="flex items-center gap-1.5">
-                            <Layers className="w-3.5 h-3.5 text-purple-500" />
-                            Used {template.uses} times
-                          </div>
+                        <div className="flex items-center text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900/50 p-2 rounded-lg mb-4">
                           <div className="flex items-center gap-1.5">
                             <Zap className="w-3.5 h-3.5 text-amber-500" />
                             {template.creditsEarned} credits earned

@@ -286,9 +286,19 @@ export const restoreActiveWorkflow = async (): Promise<WorkflowSession | null> =
   // A Template (Quick Use) run is not a Workflow. It runs to completion on its
   // own and has no step-by-step dock; adopting it here used to show a 1-2-3
   // stepper over the Templates page and let the user cancel a finished run.
-  if (await fetchTemplateRunMode(run.id) === 'quick_use') {
+  const runMode = await fetchTemplateRunMode(run.id);
+  if (runMode === 'quick_use') {
     if (existingSession?.runId === run.id) clearStoredWorkflow();
     return null;
+  }
+
+  // Never promote an unknown run into the Workflow Dock. A denied/old
+  // run_mode lookup used to default to Workflow, which is exactly how Quick
+  // Use Templates became briefly visible in this dock. A locally-started
+  // Workflow is already authoritative and can remain visible while a rolling
+  // database migration finishes.
+  if (runMode === null) {
+    return existingSession?.runId === run.id ? existingSession : null;
   }
 
   const materials = await fetchReusableTemplateAssets(run.templateId, run.templateVersionId);

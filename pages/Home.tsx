@@ -297,8 +297,6 @@ const TemplateCardItem: React.FC<{
           >
             <div className="hidden md:flex flex-col min-w-0 pr-2">
               <h3 className="text-white font-bold text-sm line-clamp-1">{t.name}</h3>
-              <p className="text-white/70 text-xs line-clamp-1">{t.authorName}</p>
-              <span className="text-white/60 text-[10px] mt-0.5">{t.usesCount} uses</span>
             </div>
 
             <div className="flex shrink-0 gap-2 transition md:opacity-0 md:group-hover:opacity-100">
@@ -312,8 +310,6 @@ const TemplateCardItem: React.FC<{
         {t.isWorkflow && !t.isQuickUseTemplate && (
           <div className="hidden md:flex absolute bottom-0 left-0 right-0 p-4 pt-12 bg-gradient-to-t from-slate-900/90 via-slate-900/60 to-transparent flex-col z-20 translate-y-2 group-hover:translate-y-0 transition-all duration-300">
             <h3 className="text-white font-bold text-sm line-clamp-1">{t.name}</h3>
-            <p className="text-white/70 text-xs line-clamp-1">{t.authorName}</p>
-            <span className="text-white/60 text-[10px] mt-0.5">{t.usesCount} uses</span>
           </div>
         )}
       </div>
@@ -412,10 +408,6 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       height: row.height || 1344,
       isWorkflow,
       isQuickUseTemplate: Boolean(row.has_quick_use),
-      authorName: row.creator_id === user?.id
-        ? user.name
-        : row.author_name || (row.creator_id ? 'Lazora creator' : 'Lazora'),
-      usesCount: Number(row.use_count || 0),
       publishedAt: row.published_at || undefined,
     };
   };
@@ -511,7 +503,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   // Filter Logic
   const normalizedSearch = search.trim().toLowerCase();
   const filteredTemplates = templates.filter(t => {
-    const matchesSearch = t.name.toLowerCase().includes(normalizedSearch) || t.tags.some(tag => tag.toLowerCase().includes(normalizedSearch)) || (t.authorName && t.authorName.toLowerCase().includes(normalizedSearch));
+    const matchesSearch = t.name.toLowerCase().includes(normalizedSearch) || t.tags.some(tag => tag.toLowerCase().includes(normalizedSearch));
     const matchesCategory = activeCategory === 'All' || t.category.includes(activeCategory);
     const matchesScene = activeScene === 'All' || t.scene === activeScene;
     const matchesModel = activeModel === 'All' || t.model === activeModel;

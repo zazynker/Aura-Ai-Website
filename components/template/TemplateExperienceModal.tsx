@@ -22,9 +22,11 @@ export type QuickUseInputValue = JsonPrimitive | File | null;
 export type QuickUseInputValues = Record<string, QuickUseInputValue>;
 type AdminDemoAssetType = 'image' | 'image_group' | 'video';
 
-// Module-level, so the admin demo selection survives the modal unmounting.
-// Intentionally in-memory only: cleared on page reload.
-let cachedAdminDemo: { assetType: AdminDemoAssetType; files: File[] } = { assetType: 'image', files: [] };
+// Module-level File references let an admin close and reopen the same Template
+// without losing the simulated result. The cache is scoped by Template: a demo
+// video chosen for one Template must never arm another Template's simulation.
+// It is intentionally in-memory only and clears on a full page reload.
+const cachedAdminDemos = new Map<string, { assetType: AdminDemoAssetType; files: File[] }>();
 type AdminDemoStage = 'upload' | 'running' | 'result' | 'cancelled';
 
 const downloadGeneratedResult = async (
@@ -98,8 +100,8 @@ export const TemplateExperienceModal = ({
   const [values, setValues] = useState<QuickUseInputValues>({});
   const [validationError, setValidationError] = useState<string | null>(null);
   const [adminDemoOpen, setAdminDemoOpen] = useState(false);
-  const [adminDemoAssetType, setAdminDemoAssetType] = useState<AdminDemoAssetType>(cachedAdminDemo.assetType);
-  const [adminDemoFiles, setAdminDemoFiles] = useState<File[]>(cachedAdminDemo.files);
+  const [adminDemoAssetType, setAdminDemoAssetType] = useState<AdminDemoAssetType>('image');
+  const [adminDemoFiles, setAdminDemoFiles] = useState<File[]>([]);
   const [adminDemoStage, setAdminDemoStage] = useState<AdminDemoStage>('upload');
   const [adminDemoStep, setAdminDemoStep] = useState(1);
   const [adminDemoMinimized, setAdminDemoMinimized] = useState(false);
@@ -145,8 +147,11 @@ export const TemplateExperienceModal = ({
   }, [adminDemoUrls]);
 
   useEffect(() => {
-    cachedAdminDemo = { assetType: adminDemoAssetType, files: adminDemoFiles };
-  }, [adminDemoAssetType, adminDemoFiles]);
+    if (!detail?.id) return;
+    const cached = cachedAdminDemos.get(detail.id);
+    setAdminDemoAssetType(cached?.assetType || 'image');
+    setAdminDemoFiles(cached?.files || []);
+  }, [detail?.id]);
 
   useEffect(() => () => {
     adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
@@ -162,7 +167,17 @@ export const TemplateExperienceModal = ({
   };
 
   const startAdminDemo = () => {
-    if (!detail || adminDemoFiles.length === 0) return;
+    if (!detail) return;
+    const cached = cachedAdminDemos.get(detail.id);
+    const demoAssetType = adminDemoFiles.length > 0
+      ? adminDemoAssetType
+      : cached?.assetType || adminDemoAssetType;
+    const demoFiles = adminDemoFiles.length > 0 ? adminDemoFiles : cached?.files || [];
+    if (demoFiles.length === 0) return;
+    // Rehydrate synchronously before the timers begin. This is a final guard
+    // against the real executor being reached during a close/reopen race.
+    setAdminDemoAssetType(demoAssetType);
+    setAdminDemoFiles(demoFiles);
     adminDemoTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     adminDemoTimersRef.current = [];
     setAdminDemoOpen(true);
@@ -200,7 +215,8 @@ export const TemplateExperienceModal = ({
       return;
     }
     setValidationError(null);
-    if (isAdmin && adminDemoFiles.length > 0) {
+    const hasCachedAdminDemo = Boolean(detail?.id && cachedAdminDemos.get(detail.id)?.files.length);
+    if (isAdmin && (adminDemoFiles.length > 0 || hasCachedAdminDemo)) {
       startAdminDemo();
       return;
     }
@@ -213,7 +229,8 @@ export const TemplateExperienceModal = ({
     || execution?.status === 'running'
     || isAssembling;
   const isBusy = isExecuting || (adminDemoOpen && adminDemoStage === 'running');
-  const isAdminDemoArmed = isAdmin && adminDemoFiles.length > 0;
+  const cachedAdminDemo = detail?.id ? cachedAdminDemos.get(detail.id) : undefined;
+  const isAdminDemoArmed = isAdmin && (adminDemoFiles.length > 0 || Boolean(cachedAdminDemo?.files.length));
 
   const footer = detail && mode === 'use' && !adminDemoOpen && !loading && !error && !isExecuting && !execution
     ? (
@@ -302,12 +319,19 @@ export const TemplateExperienceModal = ({
           stage={adminDemoStage}
           step={adminDemoStep}
           urls={adminDemoUrls}
-          onAssetTypeChange={(assetType) => { setAdminDemoAssetType(assetType); setAdminDemoFiles([]); }}
+          onAssetTypeChange={(assetType) => {
+            setAdminDemoAssetType(assetType);
+            setAdminDemoFiles([]);
+            cachedAdminDemos.set(detail.id, { assetType, files: [] });
+          }}
           onClose={() => {
             if (adminDemoStage === 'upload') setAdminDemoOpen(false);
             else resetAdminDemo(true);
           }}
-          onFilesChange={setAdminDemoFiles}
+          onFilesChange={(files) => {
+            setAdminDemoFiles(files);
+            cachedAdminDemos.set(detail.id, { assetType: adminDemoAssetType, files });
+          }}
           onResultClose={() => {
             resetAdminDemo(true);
             onClose();
@@ -319,8 +343,7 @@ export const TemplateExperienceModal = ({
           <div className="px-1 pt-5">
             <h2 className="text-2xl font-bold text-slate-950 dark:text-white">{detail.name}</h2>
             {detail.description && <p className="mt-2 text-sm leading-6 text-slate-500">{detail.description}</p>}
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
-              <div className="text-xs font-medium text-slate-500">{detail.usageCount} uses</div>
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-4">
               <Button variant="gradient" onClick={onUse} disabled={!definition?.blocks.length}>Use this template</Button>
             </div>
           </div>
