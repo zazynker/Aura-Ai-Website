@@ -64,6 +64,8 @@ interface TemplateExperienceModalProps {
   onCancel?: () => void;
   onReset?: () => void;
   isAdmin?: boolean;
+  initialValues?: QuickUseInputValues | null;
+  showCreditEstimate?: boolean;
 }
 
 export function validateQuickUseInputValues(
@@ -86,6 +88,7 @@ export const TemplateExperienceModal = ({
   error,
   execution,
   generationAvailable,
+  initialValues = null,
   isOpen,
   isAdmin = false,
   loading,
@@ -96,6 +99,7 @@ export const TemplateExperienceModal = ({
   onMinimize,
   onReset,
   onUse,
+  showCreditEstimate = true,
 }: TemplateExperienceModalProps) => {
   const [values, setValues] = useState<QuickUseInputValues>({});
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -135,12 +139,18 @@ export const TemplateExperienceModal = ({
       setValues({});
       return;
     }
-    setValues(Object.fromEntries(definition.blocks.map((block) => [
-      block.candidateId,
-      block.defaultValue ?? (block.control === 'toggle' ? false : null),
-    ])));
+    setValues(Object.fromEntries(definition.blocks.map((block) => {
+      const hasRestoredValue = initialValues
+        && Object.prototype.hasOwnProperty.call(initialValues, block.candidateId);
+      return [
+        block.candidateId,
+        hasRestoredValue
+          ? initialValues[block.candidateId]
+          : block.defaultValue ?? (block.control === 'toggle' ? false : null),
+      ];
+    })));
     setValidationError(null);
-  }, [definition]);
+  }, [definition, initialValues]);
 
   useEffect(() => () => {
     adminDemoUrls.forEach((url) => URL.revokeObjectURL(url));
@@ -253,7 +263,11 @@ export const TemplateExperienceModal = ({
               disabled={(!generationAvailable && !isAdminDemoArmed) || !definition?.blocks.length || isExecuting}
               onClick={handleGenerate}
             >
-              {estimatedCredits === 0 ? 'Free · Generate' : `~${estimatedCredits} credits · Generate`}
+              {!showCreditEstimate
+                ? 'Generate'
+                : estimatedCredits === 0
+                  ? 'Free · Generate'
+                  : `~${estimatedCredits} credits · Generate`}
             </Button>
           </div>
       )

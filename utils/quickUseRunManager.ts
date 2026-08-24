@@ -26,6 +26,7 @@ export interface ActiveQuickUseRun {
   totalSteps: number;
   progress: QuickUseExecutionProgress;
   startedAt: number;
+  showWelcomeGiftOnCompletion?: boolean;
   /** Set when the run was recovered after a reload and cannot be resumed. */
   interrupted?: boolean;
 }
@@ -39,6 +40,7 @@ export interface StartQuickUseRunOptions {
   userPlan: Plan;
   totalSteps: number;
   values: QuickUseBrowserValues;
+  showWelcomeGiftOnCompletion?: boolean;
 }
 
 const CHANGED_EVENT = 'quick-use-run-changed';
@@ -82,6 +84,7 @@ const persistPointer = () => {
       totalSteps: activeRun.totalSteps,
       startedAt: activeRun.startedAt,
       status: activeRun.progress.status,
+      showWelcomeGiftOnCompletion: activeRun.showWelcomeGiftOnCompletion,
     }));
   } catch {
     // Private-mode storage failures must never break a running generation.
@@ -145,6 +148,7 @@ export async function startQuickUseRun(
     coverUrl: options.coverUrl,
     totalSteps: options.totalSteps,
     startedAt: Date.now(),
+    showWelcomeGiftOnCompletion: options.showWelcomeGiftOnCompletion,
     progress: {
       runId: 'starting',
       status: 'preparing',
@@ -208,6 +212,7 @@ export async function recoverQuickUseRun(): Promise<void> {
     totalSteps?: unknown;
     startedAt?: unknown;
     status?: unknown;
+    showWelcomeGiftOnCompletion?: unknown;
   };
   try {
     const raw = sessionStorage.getItem(STORAGE_KEY);
@@ -236,6 +241,7 @@ export async function recoverQuickUseRun(): Promise<void> {
     coverUrl: typeof pointer.coverUrl === 'string' ? pointer.coverUrl : undefined,
     totalSteps: typeof pointer.totalSteps === 'number' ? pointer.totalSteps : 1,
     startedAt: typeof pointer.startedAt === 'number' ? pointer.startedAt : Date.now(),
+    showWelcomeGiftOnCompletion: pointer.showWelcomeGiftOnCompletion === true,
   };
 
   try {

@@ -10,14 +10,12 @@ import { WorkflowDock } from './components/workflow/WorkflowDock';
 import { QuickUseRunDock } from './components/quickUse/QuickUseRunDock';
 import { clearWorkflow, restoreActiveWorkflow } from './components/workflow/workflowManager';
 import { RewardCelebrationModal } from './components/RewardCelebrationModal';
-import { WelcomeLoginPopup } from './components/WelcomeLoginPopup';
 import { useStore } from './context/StoreContext';
 import {
   claimCreatorRewardCelebration,
   CREATOR_REWARD_AVAILABLE_EVENT,
 } from './utils/notificationsApi';
 import type { CreatorRewardCelebration } from './types';
-import { trackPopupImpression } from './utils/popupAnalytics';
 
 const pendingCelebrationClaims = new Map<string, Promise<CreatorRewardCelebration | null>>();
 
@@ -69,7 +67,6 @@ const AppContent = () => {
   const navigate = useNavigate();
   const { user, authLoading } = useStore();
   const [rewardCelebration, setRewardCelebration] = React.useState<CreatorRewardCelebration | null>(null);
-  const [welcomeLoginOpen, setWelcomeLoginOpen] = React.useState(false);
 
   React.useEffect(() => {
     if (authLoading || !user) {
@@ -160,17 +157,14 @@ const AppContent = () => {
   const isTemplateDetailPage = /^\/templates\/[^/]+$/.test(location.pathname);
   const hideFooter = isAuthPage || isEditorPage || isAdminPage || isSubscriptionPage || isVideoPage || isBuilderPage || isQuickUseBuilderPage || isTemplateDetailPage;
 
-  React.useEffect(() => {
-    if (authLoading || user || location.pathname !== '/') {
-      setWelcomeLoginOpen(false);
-    }
-  }, [authLoading, user?.id, location.pathname]);
-
   const handleGuestTemplateClick = React.useCallback(() => {
-    if (authLoading || user || welcomeLoginOpen) return;
-    setWelcomeLoginOpen(true);
-    void trackPopupImpression();
-  }, [authLoading, user, welcomeLoginOpen]);
+    if (authLoading || user) return;
+    sessionStorage.setItem('postAuthDestination', '/');
+    sessionStorage.setItem('authEntryContext', 'template');
+    navigate('/login', {
+      state: { from: '/', authContext: 'template' },
+    });
+  }, [authLoading, navigate, user]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans selection:bg-purple-500/30 transition-colors duration-300">
@@ -181,10 +175,6 @@ const AppContent = () => {
       <RewardCelebrationModal
         celebration={rewardCelebration}
         onClose={() => setRewardCelebration(null)}
-      />
-      <WelcomeLoginPopup
-        isOpen={welcomeLoginOpen}
-        onClose={() => setWelcomeLoginOpen(false)}
       />
       <Analytics
         beforeSend={(event) => {

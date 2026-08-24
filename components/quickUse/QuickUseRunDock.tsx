@@ -9,6 +9,7 @@ import {
   recoverQuickUseRun,
   useQuickUseRun,
 } from '../../utils/quickUseRunManager';
+import { WelcomeGiftModal } from '../WelcomeGiftModal';
 
 /**
  * The app-wide window onto a Quick Use run.
@@ -67,6 +68,7 @@ export const QuickUseRunDock: React.FC = () => {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState<RealTemplateDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
+  const [showWelcomeGift, setShowWelcomeGift] = useState(false);
   const settledRunIdRef = useRef<string | null>(null);
   const recoveredRef = useRef(false);
   const loadedRouteKeyRef = useRef<string | null>(null);
@@ -92,6 +94,13 @@ export const QuickUseRunDock: React.FC = () => {
 
     if (status === 'completed') {
       addToast('success', 'Your Template result is ready.');
+      if (
+        run.showWelcomeGiftOnCompletion
+        && user?.welcomeGiftEligible
+        && !user.welcomeGiftRedeemed
+      ) {
+        setShowWelcomeGift(true);
+      }
       void refreshGenerations();
       void import('../../utils/api')
         .then(({ fetchUserCredits }) => fetchUserCredits())
@@ -102,7 +111,11 @@ export const QuickUseRunDock: React.FC = () => {
     } else if (status === 'failed' && run.progress.error) {
       addToast('error', run.progress.error);
     }
-  }, [addToast, refreshGenerations, run, runId, status, updateUser]);
+  }, [addToast, refreshGenerations, run, runId, status, updateUser, user?.welcomeGiftEligible, user?.welcomeGiftRedeemed]);
+
+  useEffect(() => {
+    if (!user) setShowWelcomeGift(false);
+  }, [user]);
 
   // The modal needs the published template to render anything at all. The dock
   // never had it — which is why it grew its own panels instead. Fetching it
@@ -153,7 +166,14 @@ export const QuickUseRunDock: React.FC = () => {
     if (routeKey) navigate(`/templates/${routeKey}`);
   }, [navigate, routeKey]);
 
-  if (!run || presented) return null;
+  const welcomeGiftModal = (
+    <WelcomeGiftModal
+      isOpen={showWelcomeGift}
+      onClose={() => setShowWelcomeGift(false)}
+    />
+  );
+
+  if (!run || presented) return welcomeGiftModal;
 
   const { progress } = run;
   const busy = isBusy(progress.status);
@@ -169,29 +189,33 @@ export const QuickUseRunDock: React.FC = () => {
 
   if (expanded) {
     return (
-      <React.Suspense fallback={null}>
-        <TemplateExperienceModal
-          isOpen
-          mode="use"
-          detail={detail}
-          loading={!detail && !detailError}
-          error={detailError}
-          generationAvailable
-          isAdmin={Boolean(user?.isAdmin)}
-          execution={progress}
-          onClose={handleClose}
-          onUse={collapse}
-          onMinimize={collapse}
-          onCancel={cancelQuickUseRun}
-          onGenerate={restartFromTemplate}
-          onReset={restartFromTemplate}
-        />
-      </React.Suspense>
+      <>
+        <React.Suspense fallback={null}>
+          <TemplateExperienceModal
+            isOpen
+            mode="use"
+            detail={detail}
+            loading={!detail && !detailError}
+            error={detailError}
+            generationAvailable
+            isAdmin={Boolean(user?.isAdmin)}
+            execution={progress}
+            onClose={handleClose}
+            onUse={collapse}
+            onMinimize={collapse}
+            onCancel={cancelQuickUseRun}
+            onGenerate={restartFromTemplate}
+            onReset={restartFromTemplate}
+          />
+        </React.Suspense>
+        {welcomeGiftModal}
+      </>
     );
   }
 
   return (
-    <div className="fixed bottom-6 right-6 z-[70] w-[min(23rem,calc(100vw-2rem))] animate-in slide-in-from-bottom-5 fade-in duration-300">
+    <>
+      <div className="fixed bottom-6 right-6 z-[70] w-[min(23rem,calc(100vw-2rem))] animate-in slide-in-from-bottom-5 fade-in duration-300">
       <div className="flex items-center gap-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-white/10 dark:bg-slate-900">
         <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-100 dark:bg-slate-800">
           {poster
@@ -223,6 +247,8 @@ export const QuickUseRunDock: React.FC = () => {
             : <Maximize2 className="h-4 w-4" />}
         </button>
       </div>
-    </div>
+      </div>
+      {welcomeGiftModal}
+    </>
   );
 };

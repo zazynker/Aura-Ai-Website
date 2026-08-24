@@ -17,7 +17,12 @@ import {
   startQuickUseRun,
   useQuickUseRun,
 } from '../utils/quickUseRunManager';
-import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
+import { getUserGenerationCount } from '../utils/api';
+import {
+  clearQuickUseGuestDraft,
+  loadQuickUseGuestDraft,
+  saveQuickUseGuestDraft,
+} from '../utils/quickUseGuestDraft';
 
 const TemplateExperienceModal = React.lazy(() => import('../components/template/TemplateExperienceModal').then((module) => ({
   default: module.TemplateExperienceModal,
@@ -334,11 +339,11 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const [activeCategory, setActiveCategory] = useState(browsing.category);
   const [selectedTemplateForModal, setSelectedTemplateForModal] = useState<Template | null>(null);
   const [modalType, setModalType] = useState<'share' | 'collect' | 'upgrade' | 'auth' | null>(null);
-  const [showWelcomeGift, setShowWelcomeGift] = useState(false);
   const [experienceMode, setExperienceMode] = useState<'view' | 'use' | null>(null);
   const [experienceDetail, setExperienceDetail] = useState<RealTemplateDetail | null>(null);
   const [experienceLoading, setExperienceLoading] = useState(false);
   const [experienceError, setExperienceError] = useState<string | null>(null);
+  const [restoredQuickUseValues, setRestoredQuickUseValues] = useState<QuickUseInputValues | null>(null);
 
   // The run itself lives outside this component. Home renders it while its
   // modal is open; the app-wide dock renders it everywhere else, so leaving
@@ -572,7 +577,11 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
     return user?.plan === 'Pro' || user?.plan === 'Enterprise';
   };
 
-  const openTemplateExperience = (template: Template, mode: 'view' | 'use') => {
+  const openTemplateExperience = (
+    template: Template,
+    mode: 'view' | 'use',
+    initialValues: QuickUseInputValues | null = null,
+  ) => {
     if (isQuickUseRunBusy()) {
       addToast('info', 'Your current Template generation is still running.');
       return;
@@ -587,6 +596,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       return;
     }
     setSelectedTemplateForModal(template);
+    setRestoredQuickUseValues(initialValues);
     setExperienceMode(mode);
     setExperienceDetail(null);
     setExperienceError(null);
@@ -610,6 +620,17 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       });
   };
 
+  useEffect(() => {
+    if (!user || sessionStorage.getItem('restoreQuickUseAfterAuth') !== 'true') return;
+    sessionStorage.removeItem('restoreQuickUseAfterAuth');
+    let cancelled = false;
+    void loadQuickUseGuestDraft().then((draft) => {
+      if (cancelled || !draft) return;
+      openTemplateExperience(draft.template, 'use', draft.values);
+    });
+    return () => { cancelled = true; };
+  }, [user?.id]);
+
   // Closing no longer has to argue with a running generation: the dock picks it
   // up, so the user can close this and keep browsing without losing anything.
   const closeTemplateExperience = () => {
@@ -618,6 +639,8 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
     setExperienceDetail(null);
     setExperienceError(null);
     setExperienceLoading(false);
+    setRestoredQuickUseValues(null);
+    if (user) void clearQuickUseGuestDraft();
   };
 
   const switchExperienceToUse = () => {
@@ -631,16 +654,19 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   };
 
   const handleQuickUseInsufficientCredits = () => {
-    if (user?.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
-      setShowWelcomeGift(true);
-      return;
-    }
     navigate('/pricing');
   };
 
   const handleQuickUseGenerate = async (values: QuickUseInputValues, estimatedCredits: number) => {
     if (!user) {
-      setModalType('auth');
+      if (!selectedTemplateForModal) return;
+      await saveQuickUseGuestDraft(selectedTemplateForModal, values);
+      sessionStorage.setItem('restoreQuickUseAfterAuth', 'true');
+      sessionStorage.setItem('postAuthDestination', '/');
+      sessionStorage.setItem('authEntryContext', 'quick-use');
+      navigate('/login', {
+        state: { from: '/', authContext: 'quick-use' },
+      });
       return;
     }
     if (!selectedTemplateForModal || !experienceDetail) return;
@@ -650,7 +676,12 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
     }
     setExperienceError(null);
     try {
-      await startQuickUseRun({
+      let showWelcomeGiftOnCompletion = false;
+      if (user.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
+        const generationCount = await getUserGenerationCount();
+        showWelcomeGiftOnCompletion = !generationCount.error && generationCount.count === 0;
+      }
+      const runPromise = startQuickUseRun({
         templateId: selectedTemplateForModal.id,
         templateRouteKey: selectedTemplateForModal.slug || selectedTemplateForModal.id,
         templateName: selectedTemplateForModal.name,
@@ -659,7 +690,11 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
         userPlan: user.plan,
         totalSteps: experienceDetail.steps.length,
         values: values as Parameters<typeof startQuickUseRun>[0]['values'],
+        showWelcomeGiftOnCompletion,
       });
+      setRestoredQuickUseValues(null);
+      void clearQuickUseGuestDraft();
+      await runPromise;
       // Toasts, credits and history are handled by the dock, which outlives
       // this page and is still mounted whenever a run finishes.
     } catch (executionError) {
@@ -1022,6 +1057,8 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
             error={experienceError}
             generationAvailable
             isAdmin={Boolean(user?.isAdmin)}
+            initialValues={restoredQuickUseValues}
+            showCreditEstimate={Boolean(user)}
             execution={executionProgress}
             onClose={closeTemplateExperience}
             onUse={switchExperienceToUse}
@@ -1039,7 +1076,6 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
         title="Sign up to use Lazora"
         description="Browsing and previewing templates is free. Create an account when you are ready to save or generate."
       />
-      <WelcomeGiftModal isOpen={showWelcomeGift} onClose={() => setShowWelcomeGift(false)} />
     </div>
   );
 };
