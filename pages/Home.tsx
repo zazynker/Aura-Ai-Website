@@ -209,15 +209,11 @@ const TemplateCardItem: React.FC<{
     onView();
   };
 
-  // Touch-only: quick-use template cards reveal their actions on tap instead of
-  // showing them permanently over the cover art.
-  const [actionsRevealed, setActionsRevealed] = useState(false);
-
   return (
     <div
       onClick={(e) => {
         if (t.isWorkflow && t.isQuickUseTemplate) {
-          setActionsRevealed((revealed) => !revealed);
+          handleUseWorkflow(e);
           return;
         }
         if (t.isWorkflow) handleViewDetails(e);
@@ -295,11 +291,11 @@ const TemplateCardItem: React.FC<{
           </>
         )}
 
-        {/* Quick-use templates: actions are revealed by tapping the cover on touch
-            devices, and appear on hover from md upwards. */}
+        {/* Quick-use templates: tapping the cover opens Quick Use directly.
+            The View / Use buttons stay reachable on touch and appear on hover from md upwards. */}
         {t.isWorkflow && t.isQuickUseTemplate && (
           <div
-            className={`absolute bottom-0 left-0 right-0 p-4 pt-12 bg-gradient-to-t from-slate-900/90 via-slate-900/60 to-transparent flex flex-row items-end justify-center md:justify-between z-20 transition-all duration-300 md:opacity-100 md:pointer-events-auto md:translate-y-2 md:group-hover:translate-y-0 ${actionsRevealed ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+            className="absolute bottom-0 left-0 right-0 p-4 pt-12 bg-gradient-to-t from-slate-900/90 via-slate-900/60 to-transparent flex flex-row items-end justify-center md:justify-between z-20 transition-all duration-300 opacity-100 pointer-events-auto md:translate-y-2 md:group-hover:translate-y-0"
           >
             <div className="hidden md:flex flex-col min-w-0 pr-2">
               <h3 className="text-white font-bold text-sm line-clamp-1">{t.name}</h3>
