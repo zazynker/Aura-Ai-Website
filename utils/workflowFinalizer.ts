@@ -6,7 +6,7 @@ export interface WorkflowFinalVideoClip {
   executionMode: 'generated' | 'reused_template_result';
 }
 
-export type WorkflowFinalVideoPhase = 'padding' | 'merging' | 'storing';
+export type WorkflowFinalVideoPhase = 'padding' | 'merging' | 'mixing' | 'storing';
 
 export interface WorkflowFinalVideoResult {
   /** false when the locked version does not ask for a merged deliverable. */
@@ -179,7 +179,7 @@ export async function finalizeWorkflowVideo(
       };
     }
 
-    const phase = payload.phase === 'padding' || payload.phase === 'merging' || payload.phase === 'storing'
+    const phase = payload.phase === 'padding' || payload.phase === 'merging' || payload.phase === 'mixing' || payload.phase === 'storing'
       ? payload.phase
       : null;
     if (phase && phase !== lastPhase) {

@@ -60,7 +60,7 @@ export const WORKFLOW_DEFINITION_JSON_SCHEMA = {
             required: ['key', 'assetType'],
             properties: {
               key: { type: 'string', minLength: 1, maxLength: 64 },
-              assetType: { enum: ['image', 'video'] },
+              assetType: { enum: ['image', 'video', 'audio'] },
               allowUserSelection: { type: 'boolean' },
             },
           },
@@ -69,4 +69,3 @@ export const WORKFLOW_DEFINITION_JSON_SCHEMA = {
     },
   },
 } as const;
-

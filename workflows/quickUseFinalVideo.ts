@@ -2,6 +2,7 @@ import type {
   QuickUseDefinition,
   QuickUseFinalVideoDefinition,
 } from './quickUseTypes';
+import type { WorkflowAssetType } from './types';
 
 /**
  * Minimum number of clips that makes a merge meaningful. A single included
@@ -23,7 +24,7 @@ export interface FinalVideoStepLike {
   id: string;
   order: number;
   title?: string;
-  output: { assetType: 'image' | 'video' };
+  output: { assetType: WorkflowAssetType };
 }
 
 export interface FinalVideoWorkflowLike {

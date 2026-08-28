@@ -58,6 +58,9 @@ const estimateStepCredits = (step: TemplateQuickUseCreditStep, values: QuickUseI
   if (step.capability === 'video.image_to_video') return estimateVideoCredits({ mode: 'image_to_video', duration: asNumber(parameters.duration, 3), resolution: asString(parameters.resolution, '720p') === '1080p' ? '1080p' : '720p', generateAudio: asBoolean(parameters.generateAudio, true) });
   if (step.capability === 'video.motion_control') return estimateVideoCredits({ mode: 'motion_control', duration: asNumber(parameters.duration, 5), resolution: asString(parameters.resolution, '720p') === '1080p' ? '1080p' : '720p' });
   if (step.capability === 'video.lip_sync_image' || step.capability === 'video.lip_sync_video') return estimateVideoCredits({ mode: 'lip_sync', duration: asNumber(parameters.duration, 5), lipSyncInput: step.capability === 'video.lip_sync_image' ? 'image' : 'video' });
+  if (step.capability === 'audio.text_to_speech') {
+    return Math.max(1, Math.ceil((asString(parameters.text).length / 1000) * 0.1 * 195));
+  }
   return 0;
 };
 

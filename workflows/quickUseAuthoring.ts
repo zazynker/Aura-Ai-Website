@@ -3,6 +3,7 @@ import {
   renderQuickUsePromptTemplateDefaults,
 } from './quickUseCandidates';
 import { createDefaultFinalVideoDefinition } from './quickUseFinalVideo';
+import { createDefaultTimelineDefinition } from './quickUseTimeline';
 import {
   QUICK_USE_SCHEMA_VERSION,
   type QuickUseDefinition,
@@ -47,6 +48,7 @@ export function createEmptyQuickUseDefinition(
     promptTemplates: [],
     blocks: [],
     finalVideo: createDefaultFinalVideoDefinition(),
+    timeline: createDefaultTimelineDefinition(),
     stepReuse: { enabled: true },
   };
   if (subtitle?.trim()) definition.subtitle = subtitle.trim();
@@ -61,10 +63,11 @@ export function createEmptyQuickUseDefinition(
 export function withQuickUseDefaults(
   definition: QuickUseDefinition,
 ): QuickUseDefinition {
-  if (definition.finalVideo && definition.stepReuse) return definition;
+  if (definition.finalVideo && definition.timeline && definition.stepReuse) return definition;
   return {
     ...definition,
     finalVideo: definition.finalVideo || createDefaultFinalVideoDefinition(),
+    timeline: definition.timeline || createDefaultTimelineDefinition(),
     stepReuse: definition.stepReuse || { enabled: true },
   };
 }

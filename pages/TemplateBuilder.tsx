@@ -23,6 +23,7 @@ import {
   type PersistedMaterialMap,
   type PersistedResultMap,
   type PersistedResultPosterMap,
+  type PersistedTimelineAssetMap,
   type TemplateDraftIdentity,
 } from '../utils/templateDraftApi';
 import {
@@ -51,6 +52,10 @@ import type {
   QuickUsePromptInputKind,
   QuickUseSettingCandidate,
 } from '../workflows/quickUseTypes';
+import {
+  createDefaultTimelineDefinition,
+  createTimelineAssetKey,
+} from '../workflows/quickUseTimeline';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import { AuthGateModal } from '../components/AuthGateModal';
 import {
@@ -131,6 +136,8 @@ const VIDEO_FEATURES: FeatureType[] = [
 const isVideoFeature = (feature: FeatureType): boolean =>
   VIDEO_FEATURES.includes(feature);
 
+const isAudioFeature = (feature: FeatureType): boolean => feature === 'Text to Speech';
+
 const looksLikeVideoUrl = (url?: string | null): boolean =>
   Boolean(url && /\.(mp4|webm|mov|m4v)(?:[?#]|$)/i.test(url));
 
@@ -198,6 +205,16 @@ const createDefaultImageParams = (): NonNullable<WorkflowStep['imageParams']> =>
   imageWeight: 1,
   styleWeight: 100,
   omniWeight: 100,
+});
+
+const createDefaultAudioParams = (): NonNullable<WorkflowStep['audioParams']> => ({
+  voiceId: 'Wise_Woman',
+  speed: 1,
+  volume: 1,
+  pitch: 0,
+  emotion: 'neutral',
+  languageBoost: 'auto',
+  format: 'mp3',
 });
 
 const getGenerationImageRatio = (value: unknown): string =>
@@ -364,6 +381,9 @@ export const TemplateBuilder = () => {
   const [draftLoadState, setDraftLoadState] = useState<'idle' | 'loading' | 'loaded' | 'failed'>('idle');
   const [isAdminTemplateMode, setIsAdminTemplateMode] = useState(false);
   const [quickUseDefinition, setQuickUseDefinition] = useState<QuickUseDefinition | null>(null);
+  const [timelineAssetFiles, setTimelineAssetFiles] = useState<Record<string, File>>({});
+  const [persistedTimelineAssets, setPersistedTimelineAssets] = useState<PersistedTimelineAssetMap>({});
+  const [timelineAssetUrls, setTimelineAssetUrls] = useState<Record<string, string>>({});
   const [promptVariableSelection, setPromptVariableSelection] = useState<PromptVariableSelection | null>(null);
   const [dialogueAuthoringDraft, setDialogueAuthoringDraft] = useState<DialogueAuthoringDraft | null>(null);
   
@@ -414,6 +434,9 @@ export const TemplateBuilder = () => {
         setPersistedMaterials(draft.materials);
         setMaterialFiles({});
         setQuickUseDefinition(draft.quickUseDefinition);
+        setPersistedTimelineAssets(draft.timelineAssets);
+        setTimelineAssetUrls(draft.timelineAssetUrls);
+        setTimelineAssetFiles({});
         setIsAdminTemplateMode(Boolean(user.isAdmin && draft.quickUseDefinition));
         setPromptVariableSelection(null);
         setDialogueAuthoringDraft(null);
@@ -438,6 +461,9 @@ export const TemplateBuilder = () => {
     () => quickUseDefinition || createEmptyQuickUseDefinition(templateTitle, templateDescription),
     [quickUseDefinition, templateTitle, templateDescription],
   );
+  const timelineDefinition = adminDefinition.timeline || createDefaultTimelineDefinition();
+  const timelineVideoSteps = steps.filter((step) => isVideoFeature(step.feature));
+  const timelineAudioSteps = steps.filter((step) => isAudioFeature(step.feature));
   const quickUseCandidates = useMemo(
     () => deriveQuickUseCandidates(workflowConversion.workflow, adminDefinition),
     [workflowConversion.workflow, adminDefinition],
@@ -539,8 +565,9 @@ export const TemplateBuilder = () => {
   };
   const cloneActiveWorkflowInputBindings = (): BuilderInputSelection[] | undefined =>
     activeWorkflowStep?.inputs.map((input) => ({ ...input }));
+  const activePromptParameterKey = activeStep.feature === 'Text to Speech' ? 'text' : 'prompt';
   const activePromptTemplate = adminDefinition.promptTemplates.find(
-    (template) => template.stepId === activeStepId && template.parameterKey === 'prompt',
+    (template) => template.stepId === activeStepId && template.parameterKey === activePromptParameterKey,
   );
   const promptHasConfiguredVariables = Boolean(activePromptTemplate?.variables.length);
   const detectedDialogueRange = findDialoguePromptRange(activeStep.prompt);
@@ -636,15 +663,20 @@ export const TemplateBuilder = () => {
     : activeStep.resultType === 'video' || (
         !activeStep.resultType && isVideoFeature(activeStep.feature)
       );
+  const activeStepResultIsAudio = activeResultGeneration
+    ? activeResultGeneration.mediaType === 'audio'
+    : activeStep.resultType === 'audio' || (
+        !activeStep.resultType && isAudioFeature(activeStep.feature)
+      );
   const selectableGenerations = generations.filter(
     (generation) =>
       isPersistedGenerationId(generation.id) &&
-      Boolean(generation.imageUrl || generation.videoUrl),
+      Boolean(generation.imageUrl || generation.videoUrl || generation.audioUrl),
   );
 
   useEffect(() => {
     if (isFinalResultManual) return;
-    const latestStep = steps[steps.length - 1];
+    const latestStep = [...steps].reverse().find((step) => step.resultType !== 'audio' && !isAudioFeature(step.feature));
     const latestResult = latestStep?.resultUrl || null;
     setFinalResult(latestResult);
     setFinalResultType(
@@ -1013,7 +1045,7 @@ export const TemplateBuilder = () => {
         const updated = updateQuickUsePromptVariable(
           ensureAdminDefinition(quickUseDefinition),
           activeStep.id,
-          'prompt',
+          activePromptParameterKey,
           variableKey,
           {
             label: 'Character dialogue',
@@ -1023,7 +1055,7 @@ export const TemplateBuilder = () => {
             defaultValue: compiledDefault,
           },
         );
-        const candidateId = createQuickUseCandidateId({ kind: 'prompt_variable', stepId: activeStep.id, parameterKey: 'prompt', variableKey });
+        const candidateId = createQuickUseCandidateId({ kind: 'prompt_variable', stepId: activeStep.id, parameterKey: activePromptParameterKey, variableKey });
         setQuickUseDefinition({
           ...updated.definition,
           blocks: updated.definition.blocks.map((block) => block.candidateId === candidateId
@@ -1042,7 +1074,7 @@ export const TemplateBuilder = () => {
         const key = suggestPromptVariableKey('character dialogue', activeStep.id, selectionStart, existingKeys);
         const nextDefinition = addQuickUsePromptVariable(ensureAdminDefinition(quickUseDefinition), {
           stepId: activeStep.id,
-          parameterKey: 'prompt',
+          parameterKey: activePromptParameterKey,
           workflowPrompt: nextPrompt,
           selectionStart,
           selectionEnd: selectionStart + compiledDefault.length,
@@ -1073,7 +1105,7 @@ export const TemplateBuilder = () => {
         ensureAdminDefinition(quickUseDefinition),
         {
           stepId: activeStep.id,
-          parameterKey: 'prompt',
+          parameterKey: activePromptParameterKey,
           workflowPrompt: activeStep.prompt,
           selectionStart: promptVariableSelection.start,
           selectionEnd: promptVariableSelection.end,
@@ -1096,10 +1128,10 @@ export const TemplateBuilder = () => {
   };
 
   const handleRemovePromptVariable = (variableKey: string) => {
-    const candidateId = createQuickUseCandidateId({ kind: 'prompt_variable', stepId: activeStep.id, parameterKey: 'prompt', variableKey });
+    const candidateId = createQuickUseCandidateId({ kind: 'prompt_variable', stepId: activeStep.id, parameterKey: activePromptParameterKey, variableKey });
     setQuickUseDefinition((current) => {
       if (!current) return current;
-      const next = removeQuickUsePromptVariable(current, activeStep.id, 'prompt', variableKey);
+      const next = removeQuickUsePromptVariable(current, activeStep.id, activePromptParameterKey, variableKey);
       return {
         ...next,
         blocks: next.blocks
@@ -1135,6 +1167,84 @@ export const TemplateBuilder = () => {
         ...updates,
       },
     });
+  };
+
+  const updateAudioSettings = (
+    updates: Partial<NonNullable<WorkflowStep['audioParams']>>,
+  ) => {
+    updateActiveStep({
+      audioParams: {
+        ...createDefaultAudioParams(),
+        ...activeStep.audioParams,
+        ...updates,
+      },
+    });
+  };
+
+  const updateTimeline = (
+    updater: (timeline: NonNullable<QuickUseDefinition['timeline']>) => NonNullable<QuickUseDefinition['timeline']>,
+  ) => {
+    setQuickUseDefinition((current) => {
+      const definition = ensureAdminDefinition(current);
+      return { ...definition, timeline: updater(definition.timeline || createDefaultTimelineDefinition()) };
+    });
+    setSaveState('idle');
+  };
+
+  const addTimelineClip = (assetType: 'video' | 'audio') => {
+    const id = `${assetType}-${Date.now()}`;
+    const matchingStep = steps.find((step) => assetType === 'video' ? isVideoFeature(step.feature) : isAudioFeature(step.feature));
+    const source = matchingStep
+      ? { kind: 'step_result' as const, stepId: matchingStep.id }
+      : { kind: 'template_asset' as const, assetKey: createTimelineAssetKey(id) };
+    updateTimeline((timeline) => assetType === 'video'
+      ? { ...timeline, videoClips: [...timeline.videoClips, { id, source }] }
+      : { ...timeline, audioClips: [...timeline.audioClips, { id, source, startMs: 0 }] });
+  };
+
+  const setTimelineSource = (assetType: 'video' | 'audio', clipId: string, value: string) => {
+    const source = value === 'template_asset'
+      ? { kind: 'template_asset' as const, assetKey: createTimelineAssetKey(clipId) }
+      : { kind: 'step_result' as const, stepId: value.replace(/^step:/, '') };
+    updateTimeline((timeline) => assetType === 'video'
+      ? { ...timeline, videoClips: timeline.videoClips.map((clip) => clip.id === clipId ? { ...clip, source } : clip) }
+      : { ...timeline, audioClips: timeline.audioClips.map((clip) => clip.id === clipId ? { ...clip, source } : clip) });
+  };
+
+  const removeTimelineClip = (assetType: 'video' | 'audio', clipId: string) => {
+    updateTimeline((timeline) => assetType === 'video'
+      ? { ...timeline, videoClips: timeline.videoClips.filter((clip) => clip.id !== clipId) }
+      : { ...timeline, audioClips: timeline.audioClips.filter((clip) => clip.id !== clipId) });
+  };
+
+  const moveTimelineVideoClip = (clipId: string, offset: -1 | 1) => {
+    updateTimeline((timeline) => {
+      const index = timeline.videoClips.findIndex((clip) => clip.id === clipId);
+      const target = index + offset;
+      if (index < 0 || target < 0 || target >= timeline.videoClips.length) return timeline;
+      const videoClips = [...timeline.videoClips];
+      [videoClips[index], videoClips[target]] = [videoClips[target], videoClips[index]];
+      return { ...timeline, videoClips };
+    });
+  };
+
+  const uploadTimelineAsset = (
+    assetType: 'video' | 'audio',
+    clipId: string,
+    file: File,
+  ) => {
+    try {
+      validateTemplateMaterialFile(file, assetType, `Timeline ${assetType}`);
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'This timeline file is not supported.');
+      return;
+    }
+    const assetKey = createTimelineAssetKey(clipId);
+    const previousUrl = timelineAssetUrls[assetKey];
+    if (previousUrl?.startsWith('blob:')) URL.revokeObjectURL(previousUrl);
+    setTimelineAssetFiles((current) => ({ ...current, [assetKey]: file }));
+    setTimelineAssetUrls((current) => ({ ...current, [assetKey]: URL.createObjectURL(file) }));
+    setTimelineSource(assetType, clipId, 'template_asset');
   };
 
   const selectImageGenerationModel = (model: 'gpt-image-2' | 'mj-v8.1') => {
@@ -1385,13 +1495,17 @@ export const TemplateBuilder = () => {
   };
 
   const applyStepResultFile = (file: File) => {
-    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
-      addToast('error', 'Please choose an image or video file.');
+    if (!file.type.startsWith('image/') && !file.type.startsWith('video/') && !file.type.startsWith('audio/')) {
+      addToast('error', 'Please choose an image, video, or audio file.');
       return;
     }
-    const resultType = file.type.startsWith('video/') ? 'video' as const : 'image' as const;
+    const resultType = file.type.startsWith('video/')
+      ? 'video' as const
+      : file.type.startsWith('audio/')
+        ? 'audio' as const
+        : 'image' as const;
     try {
-      validateTemplateMaterialFile(file, resultType, 'Result image/video');
+      validateTemplateMaterialFile(file, resultType, 'Step result');
     } catch (error) {
       addToast('error', error instanceof Error ? error.message : 'This result file is not supported.');
       return;
@@ -1419,7 +1533,7 @@ export const TemplateBuilder = () => {
       resultGenerationId: undefined,
     });
 
-    if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id) {
+    if (!isFinalResultManual && resultType !== 'audio' && activeStep.id === steps[steps.length - 1]?.id) {
       setFinalResult(resultUrl);
       setFinalResultType(resultType);
     }
@@ -1502,9 +1616,9 @@ export const TemplateBuilder = () => {
   };
 
   const handleHistorySelect = (generation: WorkflowGeneration) => {
-    const resultUrl = generation.videoUrl || generation.imageUrl;
+    const resultUrl = generation.audioUrl || generation.videoUrl || generation.imageUrl;
     if (!resultUrl) {
-      addToast('error', 'This Dashboard result has no usable image or video.');
+      addToast('error', 'This Dashboard result has no usable image, video, or audio.');
       return;
     }
     const feature = inferFeatureFromGeneration(generation);
@@ -1562,7 +1676,7 @@ export const TemplateBuilder = () => {
         : [];
     const restoredMaterials =
       snapshotMaterials.length > 0 ? snapshotMaterials : legacyMaterials;
-    const parameterPrompt = generation.generationParameters?.prompt;
+    const parameterPrompt = generation.generationParameters?.prompt ?? generation.generationParameters?.text;
     const parameterDuration = generation.generationParameters?.duration;
     const parameterResolution = generation.generationParameters?.resolution;
     const parameterGenerateAudio = generation.generationParameters?.generateAudio;
@@ -1570,7 +1684,9 @@ export const TemplateBuilder = () => {
     const imageModel = getGenerationImageModel(generation.generationParameters);
 
     const nextFeature: FeatureType = feature ?? (
-      generation.videoUrl || generation.mediaType === 'video'
+      generation.audioUrl || generation.mediaType === 'audio'
+        ? 'Text to Speech'
+        : generation.videoUrl || generation.mediaType === 'video'
         ? 'Image to Video'
         : 'Image Generation'
     );
@@ -1612,10 +1728,24 @@ export const TemplateBuilder = () => {
           omniWeight: getGenerationNumber(generation.generationParameters?.omniWeight, 100),
         }
       : undefined;
+    const nextAudioParams = nextFeature === 'Text to Speech'
+      ? {
+          ...createDefaultAudioParams(),
+          voiceId: String(generation.generationParameters?.voiceId || 'Wise_Woman'),
+          speed: getGenerationNumber(generation.generationParameters?.speed, 1),
+          volume: getGenerationNumber(generation.generationParameters?.volume, 1),
+          pitch: getGenerationNumber(generation.generationParameters?.pitch, 0),
+          emotion: (generation.generationParameters?.emotion || 'neutral') as NonNullable<WorkflowStep['audioParams']>['emotion'],
+          languageBoost: String(generation.generationParameters?.languageBoost || 'auto'),
+          format: generation.generationParameters?.format === 'flac' ? 'flac' as const : 'mp3' as const,
+        }
+      : undefined;
     const nextStep: WorkflowStep = {
       ...activeStep,
       resultUrl,
-      resultType: generation.videoUrl && resultUrl === generation.videoUrl ? 'video' : 'image',
+      resultType: generation.audioUrl && resultUrl === generation.audioUrl
+        ? 'audio'
+        : generation.videoUrl && resultUrl === generation.videoUrl ? 'video' : 'image',
       resultThumbnailUrl: generation.videoUrl && resultUrl === generation.videoUrl
         ? generation.thumbnailUrl || (
             generation.imageUrl && generation.imageUrl !== generation.videoUrl
@@ -1633,6 +1763,7 @@ export const TemplateBuilder = () => {
       inputBindings: undefined,
       videoParams: nextVideoParams,
       imageParams: nextImageParams,
+      audioParams: nextAudioParams,
     };
 
     // A Dashboard result is one immutable generation snapshot. Remove every
@@ -1673,7 +1804,7 @@ export const TemplateBuilder = () => {
       });
     }
 
-    if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id) {
+    if (!isFinalResultManual && nextStep.resultType !== 'audio' && activeStep.id === steps[steps.length - 1]?.id) {
       setFinalResult(resultUrl);
       setFinalResultType(
         generation.videoUrl && resultUrl === generation.videoUrl
@@ -1809,6 +1940,8 @@ export const TemplateBuilder = () => {
         materialFiles,
         persistedMaterials,
         quickUseDefinition,
+        timelineAssetFiles,
+        persistedTimelineAssets,
       });
       setDraftIdentity(saved.identity);
       setPersistedCover(saved.cover);
@@ -1818,6 +1951,8 @@ export const TemplateBuilder = () => {
       setPersistedResultPosters(saved.resultPosters);
       setPersistedMaterials(saved.materials);
       setQuickUseDefinition(saved.quickUseDefinition);
+      setPersistedTimelineAssets(saved.timelineAssets);
+      setTimelineAssetFiles({});
       setSteps((currentSteps) =>
         currentSteps.map((step) => ({
           ...step,
@@ -2260,17 +2395,17 @@ export const TemplateBuilder = () => {
                 <span>
                   Result from This Step
                   <span className="ml-2 text-xs font-normal text-slate-500 dark:text-slate-400">
-                    (Choose from Dashboard or upload a local image/video)
+                    (Choose from Dashboard or upload a local image/video/audio)
                   </span>
                 </span>
               </h3>
               <input
                 ref={resultFileInputRef}
                 type="file"
-                accept="image/*,video/*"
+                accept="image/*,video/*,audio/*"
                 onChange={handleStepResultUpload}
                 className="hidden"
-                aria-label="Upload a result image or video from this device"
+                aria-label="Upload a result image, video, or audio from this device"
               />
               <div
                 onDragEnter={handleResultDragEnter}
@@ -2292,6 +2427,10 @@ export const TemplateBuilder = () => {
                       playsInline
                       onClick={(event) => event.stopPropagation()}
                     />
+                  ) : activeStepResultIsAudio ? (
+                    <div className="flex h-full w-full items-center justify-center rounded-xl bg-purple-50 px-5 dark:bg-purple-950/30">
+                      <audio src={activeStep.resultUrl} className="w-full" controls onClick={(event) => event.stopPropagation()} />
+                    </div>
                   ) : (
                     <img src={activeStep.resultUrl} alt="Result" className="w-full h-full object-cover rounded-xl" />
                   )
@@ -2300,12 +2439,12 @@ export const TemplateBuilder = () => {
                     <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-400 group-hover:scale-110 transition-transform">
                       <Upload className="w-6 h-6" />
                     </div>
-                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Add a result image or video</p>
+                    <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Add a result image, video, or audio</p>
                     <p className="px-4 text-center text-xs text-slate-400">
                       Drag and drop a file here, use a saved generation, or choose one from this device.
                     </p>
                     <p className="px-4 text-center text-[11px] text-slate-400">
-                      Images or videos up to {TEMPLATE_UPLOAD_LIMITS.materialBytes / (1024 * 1024)} MB.
+                      Media files up to {TEMPLATE_UPLOAD_LIMITS.materialBytes / (1024 * 1024)} MB.
                     </p>
                     <div className="flex flex-wrap items-center justify-center gap-2 px-4">
                       <button
@@ -2384,12 +2523,15 @@ export const TemplateBuilder = () => {
                   'Motion Control',
                   'Image Lip Sync',
                   'Video Lip Sync',
+                  'Text to Speech',
                 ] as FeatureType[]).map((feature) => (
                   <button
                     key={feature}
                     onClick={() => updateActiveStep({
                       feature,
-                      materials: ensureRequiredMaterialCards(activeStep.id, feature, activeStep.materials),
+                      materials: feature === 'Text to Speech'
+                        ? []
+                        : ensureRequiredMaterialCards(activeStep.id, feature, activeStep.materials),
                       inputBindings: undefined,
                       videoParams: feature === 'Image to Video'
                         ? activeStep.feature === 'Image to Video' && activeStep.videoParams
@@ -2400,6 +2542,11 @@ export const TemplateBuilder = () => {
                         ? activeStep.feature === 'Image Generation' && activeStep.imageParams
                           ? activeStep.imageParams
                           : createDefaultImageParams()
+                        : undefined,
+                      audioParams: feature === 'Text to Speech'
+                        ? activeStep.feature === 'Text to Speech' && activeStep.audioParams
+                          ? activeStep.audioParams
+                          : createDefaultAudioParams()
                         : undefined,
                     })}
                     className={`p-4 rounded-xl border text-left transition-all ${
@@ -2984,6 +3131,80 @@ export const TemplateBuilder = () => {
                   </div>
                 )}
 
+                {activeStep.feature === 'Text to Speech' && (
+                  <div className="space-y-5 rounded-xl border border-purple-200 bg-purple-50/50 p-5 dark:border-purple-500/20 dark:bg-purple-500/5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-slate-900 dark:text-white">MiniMax Speech 2.5 HD</div>
+                        <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">The Prompt above is the spoken text. Maximum 5,000 characters.</div>
+                      </div>
+                      <span className="rounded-full bg-purple-100 px-2.5 py-1 text-[10px] font-semibold text-purple-700 dark:bg-purple-500/15 dark:text-purple-200">fal.ai</span>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                        Voice ID
+                        <input
+                          value={activeStep.audioParams?.voiceId || 'Wise_Woman'}
+                          onChange={(event) => updateAudioSettings({ voiceId: event.target.value })}
+                          className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        />
+                      </label>
+                      <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                        Emotion
+                        <select
+                          value={activeStep.audioParams?.emotion || 'neutral'}
+                          onChange={(event) => updateAudioSettings({ emotion: event.target.value as NonNullable<WorkflowStep['audioParams']>['emotion'] })}
+                          className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        >
+                          {['neutral', 'happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised'].map((emotion) => <option key={emotion} value={emotion}>{emotion}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                        Language
+                        <select
+                          value={activeStep.audioParams?.languageBoost || 'auto'}
+                          onChange={(event) => updateAudioSettings({ languageBoost: event.target.value })}
+                          className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        >
+                          {['auto', 'Chinese', 'English', 'Japanese', 'Korean', 'French', 'German', 'Spanish', 'Portuguese', 'Russian', 'Italian'].map((language) => <option key={language} value={language}>{language}</option>)}
+                        </select>
+                      </label>
+                      <label className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                        Output format
+                        <select
+                          value={activeStep.audioParams?.format || 'mp3'}
+                          onChange={(event) => updateAudioSettings({ format: event.target.value === 'flac' ? 'flac' : 'mp3' })}
+                          className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
+                        >
+                          <option value="mp3">MP3</option>
+                          <option value="flac">FLAC</option>
+                        </select>
+                      </label>
+                    </div>
+                    {([
+                      { key: 'speed', label: 'Speed', min: 0.5, max: 2, step: 0.05, fallback: 1 },
+                      { key: 'volume', label: 'Volume', min: 0, max: 10, step: 0.1, fallback: 1 },
+                      { key: 'pitch', label: 'Pitch', min: -12, max: 12, step: 1, fallback: 0 },
+                    ] as const).map((setting) => {
+                      const value = activeStep.audioParams?.[setting.key] ?? setting.fallback;
+                      return (
+                        <label key={setting.key} className="block text-xs font-medium text-slate-600 dark:text-slate-300">
+                          <span className="mb-2 flex justify-between"><span>{setting.label}</span><span className="text-purple-600 dark:text-purple-300">{value}</span></span>
+                          <input
+                            type="range"
+                            min={setting.min}
+                            max={setting.max}
+                            step={setting.step}
+                            value={value}
+                            onChange={(event) => updateAudioSettings({ [setting.key]: Number(event.target.value) })}
+                            className="w-full accent-purple-600"
+                          />
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+
                 {activeStep.feature === 'Image Generation' && (
                   <div className="space-y-5 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/30">
                     <div>
@@ -3242,6 +3463,128 @@ export const TemplateBuilder = () => {
                     )}
                   </div>
                 )}
+
+                {isAdminTemplateMode && (
+                  <div className="space-y-5 rounded-xl border border-cyan-200 bg-cyan-50/60 p-5 dark:border-cyan-500/20 dark:bg-cyan-500/5">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="text-sm font-semibold text-cyan-950 dark:text-cyan-100">Final timeline · video + multi-track audio</div>
+                        <div className="mt-1 max-w-2xl text-xs leading-5 text-cyan-800/80 dark:text-cyan-200/80">
+                          Video clips play in the order below. Their original sound stays on; every audio row is mixed on top from its start time. Switching a row between a fixed file and a step result does not move it.
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-2 text-xs font-semibold text-cyan-900 dark:text-cyan-100">
+                        <input
+                          type="checkbox"
+                          checked={timelineDefinition.enabled}
+                          onChange={(event) => {
+                            const enabled = event.target.checked;
+                            setQuickUseDefinition((current) => {
+                              const definition = ensureAdminDefinition(current);
+                              return {
+                                ...definition,
+                                timeline: { ...(definition.timeline || createDefaultTimelineDefinition()), enabled },
+                                finalVideo: enabled && definition.finalVideo
+                                  ? { ...definition.finalVideo, enabled: false }
+                                  : definition.finalVideo,
+                              };
+                            });
+                            setSaveState('idle');
+                          }}
+                          className="h-4 w-4 accent-cyan-600"
+                        />
+                        Enable timeline
+                      </label>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Video sequence</div>
+                        <Button variant="outline" size="sm" onClick={() => addTimelineClip('video')}><Plus className="mr-1 h-3.5 w-3.5" />Video clip</Button>
+                      </div>
+                      {timelineDefinition.videoClips.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-cyan-200 px-3 py-4 text-center text-xs text-slate-500 dark:border-cyan-500/20">Add at least one video clip before enabling the timeline.</div>
+                      ) : timelineDefinition.videoClips.map((clip, index) => {
+                        const assetKey = clip.source.kind === 'template_asset' ? clip.source.assetKey : createTimelineAssetKey(clip.id);
+                        const fixedUrl = timelineAssetUrls[assetKey];
+                        return (
+                          <div key={clip.id} className="grid gap-3 rounded-lg border border-cyan-100 bg-white p-3 dark:border-cyan-500/15 dark:bg-slate-900/70 sm:grid-cols-[3rem_1fr_auto] sm:items-center">
+                            <div className="text-center text-sm font-bold text-cyan-700">{index + 1}</div>
+                            <div className="space-y-2">
+                              <select
+                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}` : 'template_asset'}
+                                onChange={(event) => setTimelineSource('video', clip.id, event.target.value)}
+                                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                              >
+                                <option value="template_asset">Fixed template video</option>
+                                {timelineVideoSteps.map((step) => <option key={step.id} value={`step:${step.id}`}>Step result · {step.feature}</option>)}
+                              </select>
+                              {clip.source.kind === 'template_asset' && (
+                                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-cyan-200 p-2 text-xs text-cyan-700 dark:border-cyan-500/25 dark:text-cyan-200">
+                                  {fixedUrl ? <video src={fixedUrl} className="h-10 w-16 rounded object-cover" muted /> : <Upload className="h-4 w-4" />}
+                                  <span>{fixedUrl ? 'Replace fixed video' : 'Upload fixed video'}</span>
+                                  <input type="file" accept="video/*" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadTimelineAsset('video', clip.id, file); event.target.value = ''; }} />
+                                </label>
+                              )}
+                            </div>
+                            <div className="flex items-center justify-end gap-1">
+                              <button type="button" onClick={() => moveTimelineVideoClip(clip.id, -1)} disabled={index === 0} className="rounded px-2 py-1 text-xs disabled:opacity-30">↑</button>
+                              <button type="button" onClick={() => moveTimelineVideoClip(clip.id, 1)} disabled={index === timelineDefinition.videoClips.length - 1} className="rounded px-2 py-1 text-xs disabled:opacity-30">↓</button>
+                              <button type="button" onClick={() => removeTimelineClip('video', clip.id)} className="rounded p-1.5 text-slate-400 hover:text-red-500"><Trash2 className="h-4 w-4" /></button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="space-y-3 border-t border-cyan-200 pt-4 dark:border-cyan-500/20">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Audio overlays</div>
+                        <Button variant="outline" size="sm" onClick={() => addTimelineClip('audio')}><Plus className="mr-1 h-3.5 w-3.5" />Audio track</Button>
+                      </div>
+                      {timelineDefinition.audioClips.length === 0 ? (
+                        <div className="rounded-lg border border-dashed border-cyan-200 px-3 py-4 text-center text-xs text-slate-500 dark:border-cyan-500/20">Optional: add narration, music, or another generated audio step.</div>
+                      ) : timelineDefinition.audioClips.map((clip) => {
+                        const assetKey = clip.source.kind === 'template_asset' ? clip.source.assetKey : createTimelineAssetKey(clip.id);
+                        const fixedUrl = timelineAssetUrls[assetKey];
+                        return (
+                          <div key={clip.id} className="grid gap-3 rounded-lg border border-cyan-100 bg-white p-3 dark:border-cyan-500/15 dark:bg-slate-900/70 sm:grid-cols-[1fr_9rem_auto] sm:items-start">
+                            <div className="space-y-2">
+                              <select
+                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}` : 'template_asset'}
+                                onChange={(event) => setTimelineSource('audio', clip.id, event.target.value)}
+                                className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                              >
+                                <option value="template_asset">Fixed template audio</option>
+                                {timelineAudioSteps.map((step) => <option key={step.id} value={`step:${step.id}`}>Step result · {step.feature}</option>)}
+                              </select>
+                              {clip.source.kind === 'template_asset' && (
+                                <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-cyan-200 p-2 text-xs text-cyan-700 dark:border-cyan-500/25 dark:text-cyan-200">
+                                  <Music className="h-4 w-4" />
+                                  <span>{fixedUrl ? 'Replace fixed audio' : 'Upload fixed audio'}</span>
+                                  {fixedUrl && <audio src={fixedUrl} className="h-8 max-w-48" controls onClick={(event) => event.preventDefault()} />}
+                                  <input type="file" accept="audio/*" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadTimelineAsset('audio', clip.id, file); event.target.value = ''; }} />
+                                </label>
+                              )}
+                            </div>
+                            <label className="text-[11px] font-medium text-slate-500">
+                              Start time (seconds)
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={clip.startMs / 1000}
+                                onChange={(event) => updateTimeline((timeline) => ({ ...timeline, audioClips: timeline.audioClips.map((item) => item.id === clip.id ? { ...item, startMs: Math.max(0, Math.round((Number(event.target.value) || 0) * 1000)) } : item) }))}
+                                className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+                              />
+                            </label>
+                            <button type="button" onClick={() => removeTimelineClip('audio', clip.id)} className="rounded p-1.5 text-slate-400 hover:text-red-500"><Trash2 className="h-4 w-4" /></button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -3336,7 +3679,7 @@ export const TemplateBuilder = () => {
           <div className="p-8 text-center text-slate-500 dark:text-slate-400">
             <History className="w-12 h-12 mx-auto mb-4 opacity-50" />
             <p>No Dashboard results yet.</p>
-            <p className="text-sm mt-2">Generate an image or video first, then return here.</p>
+            <p className="text-sm mt-2">Generate an image, video, or audio file first, then return here.</p>
             <div className="mt-5 flex justify-center gap-3">
               <Button variant="outline" size="sm" onClick={() => void refreshGenerations()}>
                 Refresh
@@ -3355,6 +3698,7 @@ export const TemplateBuilder = () => {
             {selectableGenerations.map((generation) => {
               const workflowGeneration = generation as WorkflowGeneration;
               const isVideo = Boolean(workflowGeneration.videoUrl);
+              const isAudio = workflowGeneration.mediaType === 'audio' || Boolean(workflowGeneration.audioUrl);
               return (
                 <button
                   key={workflowGeneration.id}
@@ -3370,6 +3714,11 @@ export const TemplateBuilder = () => {
                         className="h-full w-full object-cover"
                         muted
                       />
+                    ) : isAudio ? (
+                      <div className="flex h-full w-full flex-col items-center justify-center gap-3 bg-purple-50 p-4 text-purple-700 dark:bg-purple-950/30 dark:text-purple-200">
+                        <span className="text-sm font-semibold">Audio</span>
+                        <audio src={workflowGeneration.audioUrl || workflowGeneration.imageUrl} className="w-full" controls onClick={(event) => event.stopPropagation()} />
+                      </div>
                     ) : (
                       <img
                         src={workflowGeneration.imageUrl}

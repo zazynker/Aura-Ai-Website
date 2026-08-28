@@ -482,7 +482,7 @@ export interface AdminReviewStep {
   materials: AdminReviewMaterial[];
   reusable: boolean;
   resultUrl?: string;
-  resultType?: 'image' | 'video';
+  resultType?: 'image' | 'video' | 'audio';
 }
 
 export interface AdminReviewTemplate {
@@ -579,7 +579,8 @@ async function mapPendingReview(
     const materialAssets = assets.filter((asset) => asset.asset_key?.startsWith(`step-${index + 1}-material-`));
     const prompt = typeof step.instruction === 'string'
       ? step.instruction
-      : typeof parameters.prompt === 'string' ? parameters.prompt : '';
+      : typeof parameters.prompt === 'string' ? parameters.prompt
+        : typeof parameters.text === 'string' ? parameters.text : '';
     const resultUrl = await signedAssetUrl(resultAsset);
     const materials = await Promise.all(
       materialAssets.map(async (asset, materialIndex): Promise<AdminReviewMaterial> => ({
@@ -602,6 +603,9 @@ async function mapPendingReview(
       || output.assetType === 'video'
       || capability.startsWith('video.')
       || Boolean(resultUrl && /\.(mp4|webm|mov)(?:$|[?#])/i.test(resultUrl));
+    const isAudioResult = resultAsset?.asset_type === 'audio'
+      || output.assetType === 'audio'
+      || capability.startsWith('audio.');
     return {
       id: typeof step.id === 'string' ? step.id : `step-${index + 1}`,
       name: typeof step.title === 'string' ? step.title : `Step ${index + 1}`,
@@ -611,14 +615,14 @@ async function mapPendingReview(
       materials,
       reusable: materials.length === 0 || materials.every((asset) => asset.reusable),
       resultUrl,
-      resultType: isVideoResult ? 'video' : 'image',
+      resultType: isVideoResult ? 'video' : isAudioResult ? 'audio' : 'image',
     };
   }));
   const savedFinalResultAsset = assets.find((asset) => asset.asset_key === 'final-result');
   const savedFinalResultPosterAsset = assets.find(
     (asset) => asset.asset_key === 'final-result-thumbnail',
   );
-  const lastStepResult = [...steps].reverse().find((step) => step.resultUrl);
+  const lastStepResult = [...steps].reverse().find((step) => step.resultUrl && step.resultType !== 'audio');
   const [savedFinalResultUrl, savedFinalResultPosterUrl] = await Promise.all([
     signedAssetUrl(savedFinalResultAsset),
     signedAssetUrl(savedFinalResultPosterAsset),
@@ -626,7 +630,8 @@ async function mapPendingReview(
   const finalResultUrl = savedFinalResultUrl || lastStepResult?.resultUrl;
   const finalResultType = savedFinalResultAsset
     ? savedFinalResultAsset.asset_type === 'video' ? 'video' as const : 'image' as const
-    : lastStepResult?.resultType;
+    : lastStepResult?.resultType === 'video' ? 'video' as const
+      : lastStepResult?.resultType ? 'image' as const : undefined;
   const email = row.creator_email || 'Creator';
   return {
     id: row.id,

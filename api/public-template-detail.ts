@@ -23,6 +23,7 @@ const FEATURE_NAMES: Record<string, string> = {
   'video.motion_control': 'Motion Control',
   'video.lip_sync_image': 'Image Lip Sync',
   'video.lip_sync_video': 'Video Lip Sync',
+  'audio.text_to_speech': 'Text to Speech',
 };
 
 type AssetRow = {
@@ -243,7 +244,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!asset || !url) return undefined;
       const type = capability.startsWith('video.') || asset.asset_type === 'video'
         ? 'video'
-        : 'image';
+        : capability.startsWith('audio.') || asset.asset_type === 'audio'
+          ? 'audio'
+          : 'image';
       const dedicatedThumbnail = thumbnailAsset
         ? urls.get(thumbnailAsset.id)
         : asset.generation_id
@@ -322,7 +325,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         locked: !isFirst,
         materials: isFirst ? firstMaterials.filter(Boolean) : [],
         prompt: isFirst
-          ? (typeof step.parameters?.prompt === 'string' ? step.parameters.prompt : step.instruction || '')
+          ? (typeof step.parameters?.prompt === 'string'
+              ? step.parameters.prompt
+              : typeof step.parameters?.text === 'string'
+                ? step.parameters.text
+                : step.instruction || '')
           : '',
         settings: isFirst ? safeSettings(step.parameters, step.capability) : {},
         results: isFirst && firstStepResult ? [firstStepResult] : [],

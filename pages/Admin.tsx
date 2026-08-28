@@ -1736,7 +1736,11 @@ export const Admin = () => {
                       <div className="flex flex-col md:flex-row gap-4">
                         <div className="w-full md:w-[190px] md:flex-none space-y-2">
                           <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Result from This Step</span>
-                          {step.resultUrl ? (
+                          {step.resultUrl && step.resultType === 'audio' ? (
+                            <div className="flex aspect-video w-full items-center justify-center rounded-lg border border-slate-200 bg-purple-50 p-3 dark:border-white/10 dark:bg-purple-950/20">
+                              <audio src={step.resultUrl} className="w-full" controls />
+                            </div>
+                          ) : step.resultUrl ? (
                             <button
                               type="button"
                               className="relative block w-full aspect-video overflow-hidden rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-white/10 group"

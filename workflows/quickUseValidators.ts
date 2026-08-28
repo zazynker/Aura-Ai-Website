@@ -8,6 +8,11 @@ import {
   QUICK_USE_FINAL_VIDEO_MIN_CLIPS,
 } from './quickUseFinalVideo.js';
 import {
+  QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS,
+  QUICK_USE_TIMELINE_MAX_START_MS,
+  QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS,
+} from './quickUseTimeline.js';
+import {
   QUICK_USE_SCHEMA_VERSION,
   type QuickUseBlockDefinition,
   type QuickUseCandidate,
@@ -53,6 +58,7 @@ export function validateQuickUseDefinition(
 
   validateBlocks(definition.blocks, derivation.candidates, issues);
   validateFinalVideo(workflow, definition, issues);
+  validateTimeline(workflow, definition, issues);
   return { valid: issues.length === 0, issues };
 }
 
@@ -140,6 +146,7 @@ function validateDefinitionShape(
   if (value.finalVideo !== undefined) {
     validateFinalVideoShape(value.finalVideo, issues);
   }
+  if (value.timeline !== undefined) validateTimelineShape(value.timeline, issues);
   if (value.stepReuse !== undefined) {
     if (!isRecord(value.stepReuse) || typeof value.stepReuse.enabled !== 'boolean') {
       issues.push({
@@ -149,6 +156,93 @@ function validateDefinitionShape(
       });
     }
   }
+}
+
+function validateTimelineShape(value: unknown, issues: QuickUseValidationIssue[]): void {
+  const path = '$.timeline';
+  if (!isRecord(value)) {
+    issues.push({ path, code: 'invalid_type', message: 'Timeline configuration must be an object.' });
+    return;
+  }
+  if (typeof value.enabled !== 'boolean') {
+    issues.push({ path: `${path}.enabled`, code: 'invalid_type', message: 'Timeline enabled flag must be boolean.' });
+  }
+  if (value.preserveVideoAudio !== true) {
+    issues.push({ path: `${path}.preserveVideoAudio`, code: 'invalid_value', message: 'Timeline must preserve the source video audio.' });
+  }
+  if (!Array.isArray(value.videoClips) || !Array.isArray(value.audioClips)) {
+    issues.push({ path, code: 'invalid_type', message: 'Timeline videoClips and audioClips must be arrays.' });
+    return;
+  }
+  if (value.videoClips.length > QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS) {
+    issues.push({ path: `${path}.videoClips`, code: 'too_many_clips', message: `Timeline supports at most ${QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS} video clips.` });
+  }
+  if (value.audioClips.length > QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS) {
+    issues.push({ path: `${path}.audioClips`, code: 'too_many_clips', message: `Timeline supports at most ${QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS} audio clips.` });
+  }
+  const ids = new Set<string>();
+  const assetTypes = new Map<string, string>();
+  const validateClip = (clip: unknown, clipPath: string, assetType: 'video' | 'audio') => {
+    if (!isRecord(clip) || typeof clip.id !== 'string' || !clip.id.trim()) {
+      issues.push({ path: `${clipPath}.id`, code: 'invalid_clip_id', message: 'Timeline clip id is required.' });
+      return;
+    }
+    if (ids.has(clip.id)) issues.push({ path: `${clipPath}.id`, code: 'duplicate_clip_id', message: `Timeline clip id must be unique: ${clip.id}.` });
+    ids.add(clip.id);
+    if (!isRecord(clip.source) || (clip.source.kind !== 'template_asset' && clip.source.kind !== 'step_result')) {
+      issues.push({ path: `${clipPath}.source`, code: 'invalid_source', message: 'Timeline clip source is invalid.' });
+    } else if (clip.source.kind === 'template_asset') {
+      if (typeof clip.source.assetKey !== 'string' || !clip.source.assetKey.trim()) {
+        issues.push({ path: `${clipPath}.source.assetKey`, code: 'invalid_asset_key', message: 'Template asset key is required.' });
+      } else {
+        const previousType = assetTypes.get(clip.source.assetKey);
+        if (previousType && previousType !== assetType) {
+          issues.push({ path: `${clipPath}.source.assetKey`, code: 'asset_type_conflict', message: 'One timeline asset key cannot be both video and audio.' });
+        }
+        assetTypes.set(clip.source.assetKey, assetType);
+      }
+    } else if (typeof clip.source.stepId !== 'string' || !clip.source.stepId.trim()) {
+      issues.push({ path: `${clipPath}.source.stepId`, code: 'invalid_step_id', message: 'Step result source requires a step id.' });
+    }
+    if (assetType === 'audio' && (
+      typeof clip.startMs !== 'number'
+      || !Number.isInteger(clip.startMs)
+      || clip.startMs < 0
+      || clip.startMs > QUICK_USE_TIMELINE_MAX_START_MS
+    )) {
+      issues.push({ path: `${clipPath}.startMs`, code: 'invalid_start_time', message: 'Audio start time must be a non-negative whole number of milliseconds.' });
+    }
+  };
+  value.videoClips.forEach((clip, index) => validateClip(clip, `${path}.videoClips[${index}]`, 'video'));
+  value.audioClips.forEach((clip, index) => validateClip(clip, `${path}.audioClips[${index}]`, 'audio'));
+}
+
+function validateTimeline(
+  workflow: unknown,
+  definition: QuickUseDefinition,
+  issues: QuickUseValidationIssue[],
+): void {
+  const timeline = definition.timeline;
+  if (!timeline) return;
+  if (timeline.enabled && definition.finalVideo?.enabled) {
+    issues.push({ path: '$.timeline.enabled', code: 'assembly_mode_conflict', message: 'Timeline and legacy final video cannot both be enabled.' });
+  }
+  if (timeline.enabled && timeline.videoClips.length === 0) {
+    issues.push({ path: '$.timeline.videoClips', code: 'missing_video_clip', message: 'An enabled timeline needs at least one video clip.' });
+  }
+  const steps = readWorkflowSteps(workflow);
+  const stepById = new Map(steps.map((step) => [step.id, step]));
+  const validateSource = (source: { kind: string; stepId?: string }, path: string, assetType: 'video' | 'audio') => {
+    if (source.kind !== 'step_result' || !source.stepId) return;
+    const step = stepById.get(source.stepId);
+    if (!step) {
+      issues.push({ path, code: 'unknown_timeline_step', message: `Timeline references a step that is not in this workflow: ${source.stepId}.` });
+    } else if (step.outputAssetType !== assetType) {
+      issues.push({ path, code: 'timeline_step_type_mismatch', message: `Timeline ${assetType} clip requires a ${assetType}-producing step.` });
+    }
+  };
+  timeline.videoClips.forEach((clip, index) => validateSource(clip.source, `$.timeline.videoClips[${index}].source`, 'video'));
+  timeline.audioClips.forEach((clip, index) => validateSource(clip.source, `$.timeline.audioClips[${index}].source`, 'audio'));
 }
 
 function validateFinalVideoShape(

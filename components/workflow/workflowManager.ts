@@ -26,7 +26,7 @@ export interface WorkflowStep {
   settings: Record<string, unknown>;
   status: TemplateRunStepStatus;
   result?: {
-    type: 'image' | 'video';
+    type: 'image' | 'video' | 'audio';
     url: string;
     thumbnail?: string;
   };
@@ -127,7 +127,9 @@ const buildSessionFromRun = (
       ? {
           type: savedStep?.output?.assetType === 'video'
             ? 'video' as const
-            : 'image' as const,
+            : savedStep?.output?.assetType === 'audio'
+              ? 'audio' as const
+              : 'image' as const,
           url: referenceResult.url,
         }
       : undefined;

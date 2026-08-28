@@ -219,6 +219,34 @@ export interface QuickUseStepReuseDefinition {
   enabled: boolean;
 }
 
+export type QuickUseTimelineClipSource =
+  | { kind: 'template_asset'; assetKey: string }
+  | { kind: 'step_result'; stepId: string };
+
+export interface QuickUseTimelineVideoClipDefinition {
+  id: string;
+  source: QuickUseTimelineClipSource;
+}
+
+export interface QuickUseTimelineAudioClipDefinition {
+  id: string;
+  source: QuickUseTimelineClipSource;
+  /** Milliseconds from the beginning of the final video. */
+  startMs: number;
+}
+
+/**
+ * Version-owned assembly contract. Video clips are concatenated in array
+ * order. Their embedded sound remains enabled; every audio clip is mixed on
+ * top at startMs. Sources can be switched without changing placement.
+ */
+export interface QuickUseTimelineDefinition {
+  enabled: boolean;
+  preserveVideoAudio: true;
+  videoClips: QuickUseTimelineVideoClipDefinition[];
+  audioClips: QuickUseTimelineAudioClipDefinition[];
+}
+
 export interface QuickUseDefinition {
   schemaVersion: typeof QUICK_USE_SCHEMA_VERSION;
   title: string;
@@ -227,6 +255,7 @@ export interface QuickUseDefinition {
   promptTemplates: QuickUsePromptTemplateDefinition[];
   blocks: QuickUseBlockDefinition[];
   finalVideo?: QuickUseFinalVideoDefinition;
+  timeline?: QuickUseTimelineDefinition;
   stepReuse?: QuickUseStepReuseDefinition;
 }
 

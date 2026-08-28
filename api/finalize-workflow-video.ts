@@ -35,6 +35,7 @@ const falKey = process.env.FAL_KEY;
 const FAL_RUN_BASE_URL = 'https://fal.run';
 const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 const FAL_MERGE_ENDPOINT = 'fal-ai/ffmpeg-api/merge-videos';
+const FAL_COMPOSE_ENDPOINT = 'fal-ai/ffmpeg-api/compose';
 const FAL_SCALE_ENDPOINT = 'fal-ai/workflow-utilities/scale-video';
 const FAL_METADATA_ENDPOINT = 'fal-ai/ffmpeg-api/metadata';
 const FAL_EXTRACT_FRAME_URL = 'https://fal.run/fal-ai/ffmpeg-api/extract-frame';
@@ -84,10 +85,10 @@ interface QueuedJob {
   responseUrl: string;
 }
 
-type AssemblyPhase = 'padding' | 'merging' | 'storing';
+type AssemblyPhase = 'padding' | 'merging' | 'mixing' | 'storing';
 
 interface AssemblyState {
-  version: 1;
+  version: 1 | 2;
   phase: AssemblyPhase;
   /** null when clip metadata was unreadable and the provider must choose. */
   target: FrameSize | null;
@@ -96,9 +97,22 @@ interface AssemblyState {
   /** Pad job per position, or null when that clip needed no padding. */
   padJobs: (QueuedJob | null)[];
   mergeJob: QueuedJob | null;
+  mixJob: QueuedJob | null;
   mergedUrl: string | null;
   mergedDuration: number | null;
   paddedCount: number;
+  inputFingerprint: string | null;
+}
+
+interface TimelineSource {
+  kind: 'step_result' | 'template_asset';
+  stepId?: string;
+  assetKey?: string;
+}
+
+interface TimelineDefinition {
+  videoClips: Array<{ id: string; source: TimelineSource }>;
+  audioClips: Array<{ id: string; source: TimelineSource; startMs: number }>;
 }
 
 function sendError(res: VercelResponse, status: number, error: string) {
@@ -195,6 +209,46 @@ function selectFinalVideoStepIds(
   return selected.slice(0, MAX_CLIPS);
 }
 
+function readTimelineDefinition(quickUseDefinition: unknown): TimelineDefinition | null {
+  if (!isRecord(quickUseDefinition) || !isRecord(quickUseDefinition.timeline)) return null;
+  const timeline = quickUseDefinition.timeline;
+  if (timeline.enabled !== true || timeline.preserveVideoAudio !== true) return null;
+  if (!Array.isArray(timeline.videoClips) || !Array.isArray(timeline.audioClips)) return null;
+  const readSource = (value: unknown): TimelineSource | null => {
+    if (!isRecord(value)) return null;
+    if (value.kind === 'step_result') {
+      const stepId = readString(value.stepId);
+      return stepId ? { kind: 'step_result', stepId } : null;
+    }
+    if (value.kind === 'template_asset') {
+      const assetKey = readString(value.assetKey);
+      return assetKey ? { kind: 'template_asset', assetKey } : null;
+    }
+    return null;
+  };
+  const videoClips = timeline.videoClips.flatMap((value): TimelineDefinition['videoClips'] => {
+    if (!isRecord(value)) return [];
+    const id = readString(value.id);
+    const source = readSource(value.source);
+    return id && source ? [{ id, source }] : [];
+  }).slice(0, MAX_CLIPS);
+  const audioClips = timeline.audioClips.flatMap((value): TimelineDefinition['audioClips'] => {
+    if (!isRecord(value)) return [];
+    const id = readString(value.id);
+    const source = readSource(value.source);
+    const startMs = typeof value.startMs === 'number' && Number.isInteger(value.startMs) && value.startMs >= 0
+      ? value.startMs
+      : null;
+    return id && source && startMs !== null ? [{ id, source, startMs }] : [];
+  }).slice(0, MAX_CLIPS);
+  return videoClips.length > 0 ? { videoClips, audioClips } : null;
+}
+
+const timelineFingerprint = (timeline: TimelineDefinition): string => JSON.stringify({
+  video: timeline.videoClips.map((clip) => clip.source),
+  audio: timeline.audioClips.map((clip) => ({ source: clip.source, startMs: clip.startMs })),
+});
+
 // ---------------------------------------------------------------------------
 // Schema tolerance helpers
 // ---------------------------------------------------------------------------
@@ -265,6 +319,82 @@ async function resolveClipUrls(
       executionMode: readString(row.execution_mode) || 'generated',
     };
   });
+}
+
+async function resolveTimelineSources(
+  supabase: SupabaseClient,
+  runId: string,
+  templateId: string,
+  versionId: string,
+  sources: TimelineSource[],
+  expectedType: 'video' | 'audio',
+): Promise<Array<{ url: string; stepId?: string; executionMode: string }>> {
+  const runSteps = await loadRunSteps(supabase, runId);
+  const runStepById = new Map(runSteps.map((row) => [String(row.step_id), row]));
+  const stepIds = [...new Set(sources.flatMap((source) => source.stepId ? [source.stepId] : []))];
+  const generationIds = stepIds
+    .map((stepId) => readString(runStepById.get(stepId)?.generation_id))
+    .filter((id): id is string => Boolean(id));
+  const generationUrls = new Map<string, { video?: string; audio?: string }>();
+  if (generationIds.length > 0) {
+    const { data, error } = await supabase
+      .from('generations')
+      .select('id,video_url,audio_url,image_url,media_type')
+      .in('id', generationIds);
+    if (error) throw error;
+    for (const value of data || []) {
+      const row = value as Record<string, unknown>;
+      const id = readString(row.id);
+      if (!id) continue;
+      generationUrls.set(id, {
+        video: readString(row.video_url) || (row.media_type === 'video' ? readString(row.image_url) || undefined : undefined),
+        audio: readString(row.audio_url) || (row.media_type === 'audio' ? readString(row.image_url) || undefined : undefined),
+      });
+    }
+  }
+
+  const assetKeys = [...new Set(sources.flatMap((source) => source.assetKey ? [source.assetKey] : []))];
+  const assetsByKey = new Map<string, Record<string, unknown>>();
+  if (assetKeys.length > 0) {
+    const { data, error } = await supabase
+      .from('template_assets')
+      .select('asset_key,asset_type,storage_bucket,storage_path,public_url')
+      .eq('template_id', templateId)
+      .eq('version_id', versionId)
+      .in('asset_key', assetKeys);
+    if (error) throw error;
+    for (const value of data || []) {
+      const row = value as Record<string, unknown>;
+      const key = readString(row.asset_key);
+      if (key) assetsByKey.set(key, row);
+    }
+  }
+
+  return Promise.all(sources.map(async (source) => {
+    if (source.kind === 'step_result' && source.stepId) {
+      const stepRow = runStepById.get(source.stepId);
+      if (!stepRow || stepRow.status !== 'completed') throw new Error(`Timeline step ${source.stepId} is not complete.`);
+      const generationId = readString(stepRow.generation_id);
+      const url = generationId ? generationUrls.get(generationId)?.[expectedType] : undefined;
+      const fallback = readString(stepRow.result_url);
+      if (!url && !fallback) throw new Error(`Timeline step ${source.stepId} has no ${expectedType} result.`);
+      return {
+        url: await ensureFetchableUrl(supabase, url || fallback!),
+        stepId: source.stepId,
+        executionMode: readString(stepRow.execution_mode) || 'generated',
+      };
+    }
+    const asset = source.assetKey ? assetsByKey.get(source.assetKey) : undefined;
+    if (!asset || asset.asset_type !== expectedType) throw new Error(`Timeline asset ${source.assetKey || ''} is missing or has the wrong type.`);
+    const publicUrl = readString(asset.public_url);
+    if (publicUrl) return { url: publicUrl, executionMode: 'template_asset' };
+    const bucket = readString(asset.storage_bucket);
+    const path = readString(asset.storage_path);
+    if (!bucket || !path) throw new Error(`Timeline asset ${source.assetKey || ''} has no readable file.`);
+    const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 6 * 60 * 60);
+    if (error || !data?.signedUrl) throw new Error(`Timeline asset ${source.assetKey || ''} could not be signed.`);
+    return { url: data.signedUrl, executionMode: 'template_asset' };
+  }));
 }
 
 /**
@@ -393,14 +523,35 @@ function firstVideoUrl(payload: Record<string, unknown>): string | null {
   return null;
 }
 
+async function probeDuration(url: string): Promise<number | null> {
+  try {
+    return readDuration(await falRun(FAL_METADATA_ENDPOINT, { media_url: url }));
+  } catch (error) {
+    console.warn('[Finalize workflow video] Could not read media duration:', error);
+    return null;
+  }
+}
+
 function readDuration(payload: Record<string, unknown>): number | null {
+  const durationValue = (value: unknown): number | null => {
+    const parsed = typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(value)
+        : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
   const containers = [payload, payload.data, payload.output, payload.result];
   for (const container of containers) {
     if (!isRecord(container)) continue;
+    const direct = durationValue(container.duration);
+    if (direct) return direct;
     const metadata = container.metadata;
-    if (isRecord(metadata) && typeof metadata.duration === 'number') return metadata.duration;
+    const metadataDuration = isRecord(metadata) ? durationValue(metadata.duration) : null;
+    if (metadataDuration) return metadataDuration;
     const video = container.video;
-    if (isRecord(video) && typeof video.duration === 'number') return video.duration;
+    const videoDuration = isRecord(video) ? durationValue(video.duration) : null;
+    if (videoDuration) return videoDuration;
   }
   return null;
 }
@@ -466,15 +617,22 @@ const sameFrame = (a: FrameSize | null, b: FrameSize): boolean =>
 // Checkpointing
 // ---------------------------------------------------------------------------
 
-function readAssemblyState(value: unknown, clipCount: number): AssemblyState | null {
-  if (!isRecord(value) || value.version !== 1) return null;
+function readAssemblyState(
+  value: unknown,
+  clipCount: number,
+  expectedVersion: 1 | 2,
+  expectedFingerprint: string | null,
+): AssemblyState | null {
+  if (!isRecord(value) || value.version !== expectedVersion) return null;
   const padded = value.padded;
   const padJobs = value.padJobs;
   if (!Array.isArray(padded) || !Array.isArray(padJobs)) return null;
   // A checkpoint that does not describe this run's clip list is not resumable.
   if (padded.length !== clipCount || padJobs.length !== clipCount) return null;
   const phase = value.phase;
-  if (phase !== 'padding' && phase !== 'merging' && phase !== 'storing') return null;
+  if (phase !== 'padding' && phase !== 'merging' && phase !== 'mixing' && phase !== 'storing') return null;
+  const inputFingerprint = readString(value.inputFingerprint);
+  if (expectedVersion === 2 && inputFingerprint !== expectedFingerprint) return null;
 
   const readJob = (job: unknown): QueuedJob | null => {
     if (!isRecord(job)) return null;
@@ -492,15 +650,17 @@ function readAssemblyState(value: unknown, clipCount: number): AssemblyState | n
     : null;
 
   return {
-    version: 1,
+    version: expectedVersion,
     phase,
     target,
     padded: padded.map((entry) => readString(entry)),
     padJobs: padJobs.map(readJob),
     mergeJob: readJob(value.mergeJob),
+    mixJob: readJob(value.mixJob),
     mergedUrl: readString(value.mergedUrl),
     mergedDuration: typeof value.mergedDuration === 'number' ? value.mergedDuration : null,
     paddedCount: typeof value.paddedCount === 'number' ? value.paddedCount : 0,
+    inputFingerprint,
   };
 }
 
@@ -720,8 +880,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (!versionData) return sendError(res, 404, 'The locked template version could not be loaded.');
 
     const workflow = versionData.workflow ?? run.workflow;
-    const stepIds = selectFinalVideoStepIds(workflow, versionData.quick_use_definition);
-    if (stepIds.length < MIN_CLIPS) {
+    const timeline = readTimelineDefinition(versionData.quick_use_definition);
+    const legacyStepIds = timeline ? [] : selectFinalVideoStepIds(workflow, versionData.quick_use_definition);
+    const stepIds = timeline ? timeline.videoClips.map((clip) => clip.id) : legacyStepIds;
+    if (!timeline && legacyStepIds.length < MIN_CLIPS) {
       // Not an error: this template simply delivers its last step result.
       return res.status(200).json({
         success: true,
@@ -733,13 +895,32 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
-    const clips = await resolveClipUrls(supabase, runId, stepIds);
-    const clipUrls = await Promise.all(
-      clips.map((clip) => ensureFetchableUrl(supabase, clip.url)),
-    );
+    const clips = timeline
+      ? await resolveTimelineSources(
+          supabase,
+          runId,
+          templateId,
+          versionId,
+          timeline.videoClips.map((clip) => clip.source),
+          'video',
+        )
+      : await resolveClipUrls(supabase, runId, legacyStepIds);
+    const audioClips = timeline
+      ? await resolveTimelineSources(
+          supabase,
+          runId,
+          templateId,
+          versionId,
+          timeline.audioClips.map((clip) => clip.source),
+          'audio',
+        )
+      : [];
+    const clipUrls = await Promise.all(clips.map((clip) => ensureFetchableUrl(supabase, clip.url)));
+    const inputFingerprint = timeline ? timelineFingerprint(timeline) : null;
+    const stateVersion: 1 | 2 = timeline ? 2 : 1;
     checkpointToClear = true;
 
-    let state = readAssemblyState(run.assembly_state, clipUrls.length);
+    let state = readAssemblyState(run.assembly_state, clipUrls.length, stateVersion, inputFingerprint);
     const pendingResponse = async (phase: AssemblyPhase) => {
       await saveAssemblyState(supabase, runId, state);
       return res.status(200).json({
@@ -758,7 +939,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const sizes = await Promise.all(clipUrls.map(probeFrameSize));
       const target = sizes[0] ? normalizeTargetSize(sizes[0]) : null;
       state = {
-        version: 1,
+        version: stateVersion,
         phase: 'padding',
         target,
         // A clip whose metadata could not be read is padded rather than assumed
@@ -768,9 +949,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         )),
         padJobs: clipUrls.map(() => null),
         mergeJob: null,
+        mixJob: null,
         mergedUrl: null,
         mergedDuration: null,
         paddedCount: 0,
+        inputFingerprint,
       };
       await saveAssemblyState(supabase, runId, state);
     }
@@ -816,11 +999,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       }
 
       if (state.phase === 'merging') {
+        const videoUrls = state.padded.filter((url): url is string => Boolean(url));
+        if (videoUrls.length !== clipUrls.length) {
+          throw new Error('A padded clip went missing before the merge.');
+        }
+        if (videoUrls.length === 1) {
+          state.mergedUrl = videoUrls[0];
+          state.mergedDuration = state.mergedDuration || await probeDuration(videoUrls[0]);
+          state.phase = timeline && audioClips.length > 0 ? 'mixing' : 'storing';
+          await saveAssemblyState(supabase, runId, state);
+          continue;
+        }
         if (!state.mergeJob) {
-          const videoUrls = state.padded.filter((url): url is string => Boolean(url));
-          if (videoUrls.length !== clipUrls.length) {
-            throw new Error('A padded clip went missing before the merge.');
-          }
           state.mergeJob = await falSubmit(FAL_MERGE_ENDPOINT, state.target
             ? { video_urls: videoUrls, resolution: { width: state.target.width, height: state.target.height } }
             // Without a known frame the provider picks, taking the first clip's
@@ -836,12 +1026,65 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           const url = firstVideoUrl(result);
           if (!url) throw new Error('The merge provider returned no video.');
           state.mergedUrl = url;
-          state.mergedDuration = readDuration(result);
-          state.phase = 'storing';
+          state.mergedDuration = readDuration(result) || await probeDuration(url);
+          state.phase = timeline && audioClips.length > 0 ? 'mixing' : 'storing';
           await saveAssemblyState(supabase, runId, state);
           continue;
         }
         if (budgetRemaining() < POLL_INTERVAL_MS * 2) return pendingResponse('merging');
+        await delay(POLL_INTERVAL_MS);
+        continue;
+      }
+
+      if (state.phase === 'mixing') {
+        if (!timeline || audioClips.length === 0) {
+          state.phase = 'storing';
+          await saveAssemblyState(supabase, runId, state);
+          continue;
+        }
+        if (!state.mergedUrl) throw new Error('The merged video went missing before audio mixing.');
+        const mergedDurationMs = Math.max(1, Math.round((state.mergedDuration || await probeDuration(state.mergedUrl) || 1) * 1000));
+        if (!state.mixJob) {
+          const audioDurations = await Promise.all(audioClips.map((clip) => probeDuration(clip.url)));
+          state.mixJob = await falSubmit(FAL_COMPOSE_ENDPOINT, {
+            tracks: [
+              {
+                id: 'video',
+                type: 'video',
+                keyframes: [{ timestamp: 0, duration: mergedDurationMs, url: state.mergedUrl }],
+              },
+              // fal compose ignores a video's implicit sound when explicit
+              // audio tracks exist. Re-adding the merged video as audio keeps
+              // every source clip's original soundtrack audible.
+              {
+                id: 'original-video-audio',
+                type: 'audio',
+                keyframes: [{ timestamp: 0, duration: mergedDurationMs, url: state.mergedUrl }],
+              },
+              ...audioClips.map((clip, index) => ({
+                id: `audio-${index + 1}`,
+                type: 'audio',
+                keyframes: [{
+                  timestamp: timeline.audioClips[index].startMs,
+                  duration: Math.max(1, Math.round((audioDurations[index] || mergedDurationMs / 1000) * 1000)),
+                  url: clip.url,
+                }],
+              })),
+            ],
+          }, 'Audio mix');
+          await saveAssemblyState(supabase, runId, state);
+        }
+        const result = await falPoll(state.mixJob, 'Audio mix');
+        if (result) {
+          const url = firstVideoUrl(result);
+          if (!url) throw new Error('The audio mixer returned no video.');
+          state.mergedUrl = url;
+          state.mergedDuration = readDuration(result) || state.mergedDuration;
+          state.phase = 'storing';
+          await saveAssemblyState(supabase, runId, state);
+          continue;
+        }
+        if (budgetRemaining() < POLL_INTERVAL_MS * 2) return pendingResponse('mixing');
         await delay(POLL_INTERVAL_MS);
         continue;
       }
@@ -901,9 +1144,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         frame: state.target,
         paddedClipCount: state.paddedCount,
         stepIds,
-        clips: clips.map((clip) => ({
-          stepId: clip.stepId,
-          order: clip.order,
+        clips: clips.map((clip, index) => ({
+          stepId: timeline?.videoClips[index]?.id || clip.stepId,
+          order: index + 1,
           executionMode: clip.executionMode,
         })),
       });

@@ -17,7 +17,8 @@ export type BuilderFeatureType =
   | 'Image to Video'
   | 'Motion Control'
   | 'Image Lip Sync'
-  | 'Video Lip Sync';
+  | 'Video Lip Sync'
+  | 'Text to Speech';
 
 export interface BuilderMaterial {
   id: string;
@@ -45,7 +46,7 @@ export interface BuilderDraftStep {
   id: string;
   feature: BuilderFeatureType;
   resultUrl: string | null;
-  resultType?: 'image' | 'video';
+  resultType?: 'image' | 'video' | 'audio';
   resultThumbnailUrl?: string;
   materials: BuilderMaterial[];
   prompt: string;
@@ -70,6 +71,15 @@ export interface BuilderDraftStep {
     styleWeight: number;
     omniWeight: number;
   };
+  audioParams?: {
+    voiceId: string;
+    speed: number;
+    volume: number;
+    pitch: number;
+    emotion: 'happy' | 'sad' | 'angry' | 'fearful' | 'disgusted' | 'surprised' | 'neutral';
+    languageBoost: string;
+    format: 'mp3' | 'flac';
+  };
   inputBindings?: BuilderInputSelection[];
 }
 
@@ -89,6 +99,7 @@ export const BUILDER_FEATURE_TO_CAPABILITY: Record<
   'Motion Control': 'video.motion_control',
   'Image Lip Sync': 'video.lip_sync_image',
   'Video Lip Sync': 'video.lip_sync_video',
+  'Text to Speech': 'audio.text_to_speech',
 };
 
 const materialAssetType = (
@@ -184,6 +195,18 @@ function buildParameters(
     // their original whitespace, and their defaults are validated against this
     // workflow parameter before a draft can be saved.
     parameters.prompt = step.prompt;
+  }
+
+  if (capabilityKey === 'audio.text_to_speech') {
+    const audioParams = step.audioParams;
+    parameters.text = step.prompt;
+    parameters.voiceId = audioParams?.voiceId || 'Wise_Woman';
+    parameters.speed = audioParams?.speed ?? 1;
+    parameters.volume = audioParams?.volume ?? 1;
+    parameters.pitch = audioParams?.pitch ?? 0;
+    parameters.emotion = audioParams?.emotion || 'neutral';
+    parameters.languageBoost = audioParams?.languageBoost || 'auto';
+    parameters.format = audioParams?.format || 'mp3';
   }
 
   if (capabilityKey === 'video.image_to_video') {

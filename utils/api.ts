@@ -140,6 +140,8 @@ interface DbGeneration {
   video_duration?: number;
   video_aspect_ratio?: string;
   video_mode?: string;
+  audio_url?: string;
+  audio_duration_seconds?: number;
   capability?: string;
   input_assets?: import('../types').GenerationInputAssetSnapshot[] | null;
   generation_parameters?: import('../workflows/types').JsonObject | null;
@@ -157,12 +159,14 @@ const dbToGeneration = (db: DbGeneration): import('../types').Generation => ({
   prompt: db.prompt,
   creditsUsed: db.credits_used,
   createdAt: new Date(db.created_at).getTime(),
-  mediaType: (db.media_type as 'image' | 'video') || 'image',
+  mediaType: (db.media_type as 'image' | 'video' | 'audio') || 'image',
   thumbnailUrl: db.thumbnail_url || undefined,
   videoUrl: db.video_url || undefined,
   videoDuration: db.video_duration || undefined,
   videoAspectRatio: db.video_aspect_ratio || undefined,
   videoMode: (db.video_mode as 'image_to_video' | 'motion_control' | 'lip_sync') || undefined,
+  audioUrl: db.audio_url || undefined,
+  audioDuration: db.audio_duration_seconds || undefined,
   capability: db.capability as import('../workflows/types').WorkflowCapabilityKey | undefined,
   inputAssets: db.input_assets || undefined,
   generationParameters: db.generation_parameters || undefined,
@@ -370,6 +374,8 @@ export async function saveGenerationToDb(
       video_duration: generation.videoDuration || null,
       video_aspect_ratio: generation.videoAspectRatio || null,
       video_mode: generation.videoMode || null,
+      audio_url: generation.audioUrl || null,
+      audio_duration_seconds: generation.audioDuration || null,
       capability: generation.capability || null,
       input_assets: generation.inputAssets || [],
       generation_parameters: generation.generationParameters || {},
@@ -440,6 +446,8 @@ export async function saveGenerationsToDb(
       video_duration: gen.videoDuration || null,
       video_aspect_ratio: gen.videoAspectRatio || null,
       video_mode: gen.videoMode || null,
+      audio_url: gen.audioUrl || null,
+      audio_duration_seconds: gen.audioDuration || null,
       capability: gen.capability || null,
       input_assets: gen.inputAssets || [],
       generation_parameters: gen.generationParameters || {},

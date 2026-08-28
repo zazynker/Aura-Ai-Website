@@ -30,9 +30,9 @@ const cachedAdminDemos = new Map<string, { assetType: AdminDemoAssetType; files:
 type AdminDemoStage = 'upload' | 'running' | 'result' | 'cancelled';
 
 const downloadGeneratedResult = async (
-  result: { type: 'image' | 'video'; url: string },
+  result: { type: 'image' | 'video' | 'audio'; url: string },
 ): Promise<void> => {
-  const extension = result.type === 'video' ? 'mp4' : 'png';
+  const extension = result.type === 'video' ? 'mp4' : result.type === 'audio' ? 'mp3' : 'png';
   try {
     const response = await fetch(result.url);
     if (!response.ok) throw new Error('Download failed.');
@@ -529,7 +529,9 @@ const StepResultsStrip = ({
           >
             {step.type === 'video'
               ? <video src={step.url} className="h-full w-full bg-slate-950 object-cover" muted playsInline preload="metadata" />
-              : <img src={step.url} alt={step.stepTitle} className="h-full w-full bg-slate-100 object-cover dark:bg-slate-950" />}
+              : step.type === 'audio'
+                ? <div className="flex h-full w-full items-center justify-center bg-purple-50 px-2 text-center text-[10px] font-semibold text-purple-700 dark:bg-purple-950/40 dark:text-purple-200">Audio</div>
+                : <img src={step.url} alt={step.stepTitle} className="h-full w-full bg-slate-100 object-cover dark:bg-slate-950" />}
             <span className="absolute left-1 top-1 rounded bg-slate-950/70 px-1.5 text-[10px] font-semibold text-white">{step.order}</span>
             {highlightFinal && included.has(step.stepId) && (
               <span className="absolute bottom-1 right-1 rounded bg-purple-600/90 p-0.5 text-white"><Film className="h-3 w-3" /></span>
@@ -857,7 +859,11 @@ const QuickUseControl = ({ block, candidate, onChange, value }: { block: QuickUs
 
 const ResultMedia = ({ result }: { result: RealTemplateDetail['finalResult'] }) => (
   <div className="flex min-h-80 max-h-[65vh] items-center justify-center overflow-hidden rounded-2xl bg-slate-950">
-    {result.type === 'video' ? <video src={result.url} poster={result.thumbnail} className="max-h-[65vh] w-full object-contain" autoPlay muted controls playsInline /> : <img src={result.thumbnail || result.url} alt="Template result" className="max-h-[65vh] w-full object-contain" />}
+    {result.type === 'video'
+      ? <video src={result.url} poster={result.thumbnail} className="max-h-[65vh] w-full object-contain" autoPlay muted controls playsInline />
+      : result.type === 'audio'
+        ? <audio src={result.url} className="w-full max-w-xl" controls />
+        : <img src={result.thumbnail || result.url} alt="Template result" className="max-h-[65vh] w-full object-contain" />}
   </div>
 );
 
@@ -873,10 +879,12 @@ const ExpandedExampleMedia = ({ assetType, url }: { assetType: 'image' | 'video'
   return <img src={url} alt="Example preview" className="max-h-[85vh] w-full object-contain" />;
 };
 
-const ExecutionResultMedia = ({ poster, result }: { poster?: string; result: { type: 'image' | 'video'; url: string } }) => (
+const ExecutionResultMedia = ({ poster, result }: { poster?: string; result: { type: 'image' | 'video' | 'audio'; url: string } }) => (
   <div className="flex min-h-80 items-center justify-center overflow-hidden rounded-2xl bg-slate-950">
     {result.type === 'video'
       ? <video src={result.url} poster={poster} className="max-h-[65vh] w-full object-contain" controls playsInline />
-      : <img src={result.url} alt="Generated result" className="max-h-[65vh] w-full object-contain" />}
+      : result.type === 'audio'
+        ? <audio src={result.url} className="w-full max-w-xl" controls />
+        : <img src={result.url} alt="Generated result" className="max-h-[65vh] w-full object-contain" />}
   </div>
 );

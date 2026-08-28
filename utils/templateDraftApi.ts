@@ -1,6 +1,7 @@
 import type { WorkflowDefinition } from '../workflows/types';
 import type { QuickUseDefinition } from '../workflows/quickUseTypes';
 import { QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX } from '../workflows/quickUseCandidates';
+import { getTimelineTemplateAssetSources } from '../workflows/quickUseTimeline';
 import { validateQuickUseDefinition } from '../workflows/quickUseValidators';
 import {
   convertAndValidateBuilderWorkflow,
@@ -29,6 +30,7 @@ export type PersistedMaterialMap = Record<string, UploadedTemplateObject>;
 export type PersistedResultMap = Record<string, UploadedTemplateObject>;
 export type PersistedResultPosterMap = Record<string, UploadedTemplateObject>;
 export type PersistedQuickUseExampleMap = Record<string, UploadedTemplateObject>;
+export type PersistedTimelineAssetMap = Record<string, UploadedTemplateObject>;
 
 export interface SaveTemplateDraftInput {
   identity?: TemplateDraftIdentity | null;
@@ -54,6 +56,8 @@ export interface SaveTemplateDraftInput {
   quickUseDefinition?: QuickUseDefinition | null;
   quickUseExampleFiles?: Record<string, File>;
   persistedQuickUseExamples?: PersistedQuickUseExampleMap;
+  timelineAssetFiles?: Record<string, File>;
+  persistedTimelineAssets?: PersistedTimelineAssetMap;
 }
 
 export interface SaveTemplateDraftResult {
@@ -67,6 +71,7 @@ export interface SaveTemplateDraftResult {
   materialAssetIds: Record<string, string>;
   quickUseDefinition: QuickUseDefinition | null;
   quickUseExamples: PersistedQuickUseExampleMap;
+  timelineAssets: PersistedTimelineAssetMap;
 }
 
 export interface SubmitTemplateForReviewResult {
@@ -95,6 +100,8 @@ export interface LoadTemplateDraftResult {
   quickUseDefinition: QuickUseDefinition | null;
   quickUseExamples: PersistedQuickUseExampleMap;
   quickUseExampleUrls: Record<string, string>;
+  timelineAssets: PersistedTimelineAssetMap;
+  timelineAssetUrls: Record<string, string>;
 }
 
 interface ExistingAssetRow {
@@ -149,6 +156,7 @@ const CAPABILITY_TO_FEATURE: Record<string, BuilderFeatureType> = {
   'video.motion_control': 'Motion Control',
   'video.lip_sync_image': 'Image Lip Sync',
   'video.lip_sync_video': 'Video Lip Sync',
+  'audio.text_to_speech': 'Text to Speech',
 };
 
 const DEFAULT_MATERIAL_TYPES: Record<BuilderFeatureType, BuilderMaterial['type'][]> = {
@@ -159,6 +167,7 @@ const DEFAULT_MATERIAL_TYPES: Record<BuilderFeatureType, BuilderMaterial['type']
   'Motion Control': ['Image', 'Video'],
   'Image Lip Sync': ['Image', 'Audio'],
   'Video Lip Sync': ['Video', 'Audio'],
+  'Text to Speech': [],
 };
 
 const VIDEO_FEATURES = new Set<BuilderFeatureType>([
@@ -167,6 +176,22 @@ const VIDEO_FEATURES = new Set<BuilderFeatureType>([
   'Image Lip Sync',
   'Video Lip Sync',
 ]);
+
+const AUDIO_FEATURES = new Set<BuilderFeatureType>(['Text to Speech']);
+
+const defaultResultTypeForFeature = (
+  feature: BuilderFeatureType,
+): 'image' | 'video' | 'audio' => VIDEO_FEATURES.has(feature)
+  ? 'video'
+  : AUDIO_FEATURES.has(feature)
+    ? 'audio'
+    : 'image';
+
+const resultAssetTypeFromMime = (mimeType: string): 'image' | 'video' | 'audio' => (
+  mimeType.startsWith('video/') ? 'video'
+    : mimeType.startsWith('audio/') ? 'audio'
+      : 'image'
+);
 
 interface QuickUseMediaExampleBinding {
   assetKey: string;
@@ -512,6 +537,10 @@ export async function saveTemplateDraft(
     ...(input.persistedQuickUseExamples || {}),
   };
   const quickUseMediaExamples = getQuickUseMediaExamples(input.quickUseDefinition);
+  const timelineAssetSources = getTimelineTemplateAssetSources(input.quickUseDefinition);
+  const timelineAssetUploads: PersistedTimelineAssetMap = {
+    ...(input.persistedTimelineAssets || {}),
+  };
   const newlyUploaded: Array<{ bucket: string; path: string }> = [];
   let assetPersistenceStarted = false;
 
@@ -560,7 +589,7 @@ export async function saveTemplateDraft(
     for (const step of input.steps) {
       const file = input.resultFiles[step.id];
       if (!file || step.resultGenerationId) continue;
-      const assetType = file.type.startsWith('video/') ? 'video' : 'image';
+      const assetType = resultAssetTypeFromMime(file.type);
       if (assetType === 'video') {
         const uploaded = await uploadTemplateVideoWithPoster(
           identity,
@@ -596,6 +625,19 @@ export async function saveTemplateDraft(
         example.assetKey,
       );
       quickUseExampleUploads[example.assetKey] = uploaded;
+      newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
+    }
+
+    for (const source of timelineAssetSources) {
+      const file = input.timelineAssetFiles?.[source.assetKey];
+      if (!file) continue;
+      const uploaded = await uploadTemplateMaterial(
+        identity,
+        file,
+        source.assetType,
+        source.assetKey,
+      );
+      timelineAssetUploads[source.assetKey] = uploaded;
       newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
     }
 
@@ -675,7 +717,7 @@ export async function saveTemplateDraft(
             identity,
             input.userId,
             `step-${stepIndex + 1}-result`,
-            step.resultType || (VIDEO_FEATURES.has(step.feature) ? 'video' : 'image'),
+            step.resultType || defaultResultTypeForFeature(step.feature),
             step.resultGenerationId,
             step.resultUrl,
             sortOrder++,
@@ -703,7 +745,7 @@ export async function saveTemplateDraft(
             identity,
             input.userId,
             `step-${stepIndex + 1}-result`,
-            step.resultType || (uploaded.mimeType.startsWith('video/') ? 'video' : 'image'),
+            step.resultType || resultAssetTypeFromMime(uploaded.mimeType),
             uploaded,
             sortOrder++,
             false,
@@ -777,9 +819,28 @@ export async function saveTemplateDraft(
       );
     }
 
+    for (const source of timelineAssetSources) {
+      const uploaded = timelineAssetUploads[source.assetKey];
+      if (!uploaded) continue;
+      rows.push(
+        uploadRow(
+          identity,
+          input.userId,
+          source.assetKey,
+          source.assetType,
+          uploaded,
+          sortOrder++,
+          false,
+        ),
+      );
+    }
+
     assetPersistenceStarted = true;
     const preservedQuickUseExampleKeys = new Set(
-      quickUseMediaExamples.map((example) => example.assetKey),
+      [
+        ...quickUseMediaExamples.map((example) => example.assetKey),
+        ...timelineAssetSources.map((source) => source.assetKey),
+      ],
     );
     const { previous, current } = await replaceAssetRows(
       identity,
@@ -791,6 +852,11 @@ export async function saveTemplateDraft(
     for (const example of quickUseMediaExamples) {
       if (!currentAssetKeys.has(example.assetKey)) {
         throw new Error(`Quick Use example asset is missing: ${example.assetKey}.`);
+      }
+    }
+    for (const source of input.quickUseDefinition?.timeline?.enabled ? timelineAssetSources : []) {
+      if (!currentAssetKeys.has(source.assetKey)) {
+        throw new Error(`Timeline asset is missing: ${source.assetKey}.`);
       }
     }
     const assetIdByKey = Object.fromEntries(
@@ -891,6 +957,13 @@ export async function saveTemplateDraft(
           ) {
             return [];
           }
+          const stored = savedObject(asset);
+          return stored ? [[asset.asset_key, stored] as const] : [];
+        }),
+      ),
+      timelineAssets: Object.fromEntries(
+        current.flatMap((asset) => {
+          if (!timelineAssetSources.some((source) => source.assetKey === asset.asset_key)) return [];
           const stored = savedObject(asset);
           return stored ? [[asset.asset_key, stored] as const] : [];
         }),
@@ -1009,6 +1082,8 @@ export async function loadTemplateDraft(
   const persistedResultPosters: PersistedResultPosterMap = {};
   const persistedQuickUseExamples: PersistedQuickUseExampleMap = {};
   const quickUseExampleUrls: Record<string, string> = {};
+  const persistedTimelineAssets: PersistedTimelineAssetMap = {};
+  const timelineAssetUrls: Record<string, string> = {};
   assets
     .filter((asset) => asset.asset_key.startsWith(QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX))
     .forEach((asset) => {
@@ -1024,6 +1099,24 @@ export async function loadTemplateDraft(
     if (!quickUseExampleUrls[example.assetKey]) {
       throw new Error(`The saved Quick Use example asset is missing: ${example.assetKey}.`);
     }
+  }
+  for (const source of getTimelineTemplateAssetSources(quickUseDefinition)) {
+    const asset = assets.find((candidate) => candidate.asset_key === source.assetKey);
+    const url = asset ? urls.get(asset.id) || asset.public_url : null;
+    if (!asset || !url) {
+      if (quickUseDefinition?.timeline?.enabled) {
+        throw new Error(`The saved timeline asset is missing: ${source.assetKey}.`);
+      }
+      continue;
+    }
+    if (asset.asset_type !== source.assetType) {
+      throw new Error(`The saved timeline asset has the wrong type: ${source.assetKey}.`);
+    }
+    if (asset.source_kind === 'upload') {
+      const stored = savedObject(asset);
+      if (stored) persistedTimelineAssets[source.assetKey] = stored;
+    }
+    timelineAssetUrls[source.assetKey] = url;
   }
   const steps: BuilderDraftStep[] = workflow.steps.map((workflowStep, stepIndex) => {
     const feature = CAPABILITY_TO_FEATURE[workflowStep.capability];
@@ -1084,9 +1177,7 @@ export async function loadTemplateDraft(
       id: workflowStep.id,
       feature,
       resultUrl: resultAsset ? urls.get(resultAsset.id) || resultAsset.public_url : null,
-      resultType: resultAsset
-        ? resultAsset.asset_type === 'video' ? 'video' : 'image'
-        : undefined,
+      resultType: resultAsset?.asset_type,
       resultThumbnailUrl: resultThumbnailAsset
         ? urls.get(resultThumbnailAsset.id) || resultThumbnailAsset.public_url || undefined
         : undefined,
@@ -1095,7 +1186,9 @@ export async function loadTemplateDraft(
       prompt:
         typeof parameters.prompt === 'string'
           ? parameters.prompt
-          : workflowStep.instruction || '',
+          : typeof parameters.text === 'string'
+            ? parameters.text
+            : workflowStep.instruction || '',
       videoParams: feature === 'Image to Video'
         ? {
             duration: `${Number(parameters.duration || 3)}s`,
@@ -1123,6 +1216,21 @@ export async function loadTemplateDraft(
             omniWeight: readNumberParameter(parameters, 'omniWeight', 100),
           }
         : undefined,
+      audioParams: feature === 'Text to Speech'
+        ? {
+            voiceId: String(parameters.voiceId || 'Wise_Woman'),
+            speed: readNumberParameter(parameters, 'speed', 1),
+            volume: readNumberParameter(parameters, 'volume', 1),
+            pitch: readNumberParameter(parameters, 'pitch', 0),
+            emotion: (
+              ['happy', 'sad', 'angry', 'fearful', 'disgusted', 'surprised', 'neutral'].includes(String(parameters.emotion))
+                ? parameters.emotion
+                : 'neutral'
+            ) as NonNullable<BuilderDraftStep['audioParams']>['emotion'],
+            languageBoost: String(parameters.languageBoost || 'auto'),
+            format: parameters.format === 'flac' ? 'flac' : 'mp3',
+          }
+        : undefined,
       inputBindings: workflowStep.inputs.map((input) => ({ ...input })),
     };
   });
@@ -1142,7 +1250,7 @@ export async function loadTemplateDraft(
         thumbnail,
       }
     : null;
-  const finalStep = steps[steps.length - 1];
+  const finalStep = [...steps].reverse().find((step) => step.resultType !== 'audio');
   const savedFinalResult = finalResultRow ? savedObject(finalResultRow) : null;
   const savedFinalResultPoster = finalResultThumbnailRow
     ? savedObject(finalResultThumbnailRow)
@@ -1165,8 +1273,10 @@ export async function loadTemplateDraft(
     description: version.description || template.description || '',
     steps,
     finalResultUrl: manualFinalResultUrl || finalStep?.resultUrl || null,
-    finalResultType: manualFinalResultType || finalStep?.resultType || (finalStep
-      ? VIDEO_FEATURES.has(finalStep.feature) ? 'video' : 'image'
+    finalResultType: manualFinalResultType || (finalStep
+      ? finalStep.resultType === 'video' || VIDEO_FEATURES.has(finalStep.feature)
+        ? 'video'
+        : 'image'
       : null),
     isFinalResultManual: Boolean(finalResultRow && manualFinalResultUrl),
     finalResult: savedFinalResult,
@@ -1180,6 +1290,8 @@ export async function loadTemplateDraft(
     quickUseDefinition,
     quickUseExamples: persistedQuickUseExamples,
     quickUseExampleUrls,
+    timelineAssets: persistedTimelineAssets,
+    timelineAssetUrls,
   };
 }
 

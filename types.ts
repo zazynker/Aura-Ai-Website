@@ -54,6 +54,7 @@ export type WorkflowFeature =
   | 'Image to Image'
   | 'Motion Control'
   | 'Lip Sync'
+  | 'Text to Speech'
   | 'Upscaler';
 
 export type WorkflowMediaType = 'image' | 'video' | 'audio';
@@ -68,7 +69,7 @@ export interface WorkflowStep {
   prompt: string;
   settings: Record<string, string | number | boolean>;
   result: {
-    type: 'image' | 'video';
+    type: 'image' | 'video' | 'audio';
     url: string;
   };
 }
@@ -152,12 +153,14 @@ export interface Generation {
   isOriginal?: boolean;
   isSessionOnly?: boolean;
   groupId?: string; // 同一批生成的图片共享同一个 groupId
-  mediaType?: 'image' | 'video';
+  mediaType?: 'image' | 'video' | 'audio';
   thumbnailUrl?: string;
   videoUrl?: string;
   videoDuration?: number;
   videoAspectRatio?: string;
   videoMode?: 'image_to_video' | 'motion_control' | 'lip_sync';
+  audioUrl?: string;
+  audioDuration?: number;
   capability?: WorkflowCapabilityKey;
   inputAssets?: GenerationInputAssetSnapshot[];
   generationParameters?: JsonObject;

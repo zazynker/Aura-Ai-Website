@@ -43,7 +43,7 @@ export interface QuickUseExecutionStep {
   inputs: QuickUseExecutionInput[];
   output: {
     key: string;
-    assetType: 'image' | 'video';
+    assetType: WorkflowAssetType;
   };
 }
 

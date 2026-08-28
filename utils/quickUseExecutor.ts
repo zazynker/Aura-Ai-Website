@@ -17,6 +17,7 @@ import {
 } from '../workflows/quickUseReuse';
 import { selectFinalVideoStepIds } from '../workflows/quickUseFinalVideo';
 import { generateImages, generateVideo } from './generateService';
+import { generateAudio } from './generateAudio';
 import { saveGenerationsToDb } from './api';
 import { supabase } from './supabase';
 import {
@@ -44,7 +45,7 @@ export interface QuickUseStepOutcome {
   stepId: string;
   stepTitle: string;
   order: number;
-  type: 'image' | 'video';
+  type: WorkflowAssetType;
   url: string;
   executionMode: QuickUseStepExecutionMode;
 }
@@ -70,7 +71,7 @@ export interface QuickUseExecutionProgress {
   stepTitle?: string;
   error?: string;
   result?: {
-    type: 'image' | 'video';
+    type: WorkflowAssetType;
     url: string;
   };
   /** Every step result in workflow order, generated or reused. */
@@ -133,7 +134,7 @@ interface AssetRow {
 }
 
 interface StepResult {
-  type: 'image' | 'video';
+  type: WorkflowAssetType;
   url: string;
 }
 
@@ -244,7 +245,8 @@ async function loadTemplateAssetUrls(
 /**
  * Maps the template's `step-N-result` demo assets onto authored step ids so a
  * step the user left untouched can be served without calling a provider.
- * Audio results are ignored: no workflow step outputs audio.
+ * Results of every registered output type are reusable, including generated
+ * speech that later feeds lip sync or the final timeline.
  */
 function mapTemplateStepResults(
   steps: QuickUseExecutionStep[],
@@ -255,7 +257,7 @@ function mapTemplateStepResults(
   ordered.forEach((step, index) => {
     const asset = assetsByKey[`step-${step.order}-result`]
       || assetsByKey[`step-${index + 1}-result`];
-    if (!asset || asset.type === 'audio') return;
+    if (!asset) return;
     results[step.id] = { url: asset.url, type: asset.type };
   });
   return results;
@@ -285,6 +287,7 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((
 const ASSEMBLY_PHASE_LABELS: Record<WorkflowFinalVideoPhase, string> = {
   padding: 'Matching your shot sizes',
   merging: 'Joining your shots',
+  mixing: 'Mixing your audio tracks',
   storing: 'Saving your video',
 };
 
@@ -473,6 +476,23 @@ async function executeVideoStep(
   });
 }
 
+async function executeAudioStep(
+  step: QuickUseExecutionStep,
+  context: TemplateGenerationContext,
+) {
+  return generateAudio({
+    text: asString(step.parameters.text, step.instruction),
+    voiceId: asString(step.parameters.voiceId, 'Wise_Woman'),
+    speed: asNumber(step.parameters.speed, 1),
+    volume: asNumber(step.parameters.volume, 1),
+    pitch: asNumber(step.parameters.pitch, 0),
+    emotion: asString(step.parameters.emotion, 'neutral'),
+    languageBoost: asString(step.parameters.languageBoost, 'auto'),
+    format: asString(step.parameters.format, 'mp3') === 'flac' ? 'flac' : 'mp3',
+    ...context,
+  });
+}
+
 export async function executeQuickUseTemplate(
   options: ExecuteQuickUseOptions,
 ): Promise<QuickUseExecutionProgress> {
@@ -590,7 +610,7 @@ export async function executeQuickUseTemplate(
           url: result.images[0],
           executionMode: 'generated',
         });
-      } else {
+      } else if (step.output.assetType === 'video') {
         const result = await awaitWithCancellation(executeVideoStep(step, context, resultsByStepId), options.signal);
         if (!result.success || !result.videoUrl || !result.requestId) {
           throw new Error(result.error || 'Video generation did not return a result.');
@@ -629,6 +649,43 @@ export async function executeQuickUseTemplate(
           url: result.videoUrl,
           executionMode: 'generated',
         });
+      } else {
+        const result = await awaitWithCancellation(executeAudioStep(step, context), options.signal);
+        if (!result.audioUrl || !result.requestId) {
+          throw new Error('Audio generation did not return a result.');
+        }
+        const durationSeconds = result.durationMs > 0 ? result.durationMs / 1000 : undefined;
+        const saved = await saveGenerationsToDb([{
+          userId: options.userId,
+          templateId: options.templateId,
+          templateName: options.templateName,
+          // image_url is a legacy required column. For audio rows it mirrors
+          // audio_url so older history queries remain readable.
+          imageUrl: result.audioUrl,
+          creditsUsed: result.creditsUsed,
+          prompt: asString(step.parameters.text, step.instruction),
+          mediaType: 'audio',
+          audioUrl: result.audioUrl,
+          audioDuration: durationSeconds,
+          capability: step.capability,
+          inputAssets,
+          generationParameters: step.parameters,
+          requestId: result.requestId,
+          templateRunId: run.id,
+          templateStepId: step.id,
+          templateCapability: step.capability,
+        }], options.userPlan);
+        if (saved.error || !saved.data[0]) throw new Error(saved.error || 'Could not persist the generated audio.');
+        await completeTemplateRunStep(run.id, step.id, saved.data[0].id);
+        resultsByStepId.set(step.id, { type: 'audio', url: result.audioUrl });
+        stepOutcomes.push({
+          stepId: step.id,
+          stepTitle: step.title,
+          order: step.order,
+          type: 'audio',
+          url: result.audioUrl,
+          executionMode: 'generated',
+        });
       }
       throwIfCancelled(options.signal);
     }
@@ -641,7 +698,10 @@ export async function executeQuickUseTemplate(
     // saved, so the last step result is delivered instead.
     let finalVideo: QuickUseFinalVideoOutcome | undefined;
     let finalVideoError: string | undefined;
-    if (selectFinalVideoStepIds(plan, definition).length > 0) {
+    if (
+      (definition.timeline?.enabled && definition.timeline.videoClips.length > 0)
+      || selectFinalVideoStepIds(plan, definition).length > 0
+    ) {
       throwIfCancelled(options.signal);
       report({
         status: 'assembling',

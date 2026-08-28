@@ -9,7 +9,7 @@ import type {
   QuickUseCandidate,
   QuickUseDefinition,
 } from './quickUseTypes';
-import type { JsonPrimitive } from './types';
+import type { JsonPrimitive, WorkflowAssetType } from './types';
 
 export type QuickUseStepExecutionMode = 'generate' | 'reuse';
 
@@ -28,12 +28,12 @@ export interface QuickUseStepExecutionDecision {
   reason: QuickUseStepExecutionReason;
   /** Present only when mode is 'reuse'. */
   reusableUrl?: string;
-  reusableType?: 'image' | 'video';
+  reusableType?: WorkflowAssetType;
 }
 
 export interface QuickUseTemplateStepResult {
   url: string;
-  type: 'image' | 'video';
+  type: WorkflowAssetType;
 }
 
 export interface ResolveQuickUseStepExecutionParams {

@@ -16,7 +16,8 @@ export type WorkflowCapabilityKey =
   | 'video.image_to_video'
   | 'video.motion_control'
   | 'video.lip_sync_image'
-  | 'video.lip_sync_video';
+  | 'video.lip_sync_video'
+  | 'audio.text_to_speech';
 
 export type WorkflowAssetType = 'image' | 'video' | 'audio';
 
@@ -37,7 +38,7 @@ export interface WorkflowInputBinding {
 
 export interface WorkflowOutputDefinition {
   key: string;
-  assetType: 'image' | 'video';
+  assetType: WorkflowAssetType;
   allowUserSelection?: boolean;
 }
 

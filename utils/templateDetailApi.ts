@@ -22,7 +22,7 @@ export interface TemplateDetailMaterial {
 
 export interface TemplateDetailResult {
   id: string;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'audio';
   url: string;
   thumbnail?: string;
   thumbnailIsFallback?: boolean;
@@ -97,6 +97,7 @@ const FEATURE_NAMES: Record<string, string> = {
   'video.motion_control': 'Motion Control',
   'video.lip_sync_image': 'Image Lip Sync',
   'video.lip_sync_video': 'Video Lip Sync',
+  'audio.text_to_speech': 'Text to Speech',
 };
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -321,7 +322,11 @@ export async function fetchTemplateDetail(
     // Older saved Lip Sync/Motion Control rows may have been persisted with
     // asset_type=image. The workflow capability is the source of truth for
     // the generated result type, so those existing templates still play.
-    const resultType = step.capability.startsWith('video.') ? 'video' : 'image';
+    const resultType = step.capability.startsWith('video.')
+      ? 'video'
+      : step.capability.startsWith('audio.')
+        ? 'audio'
+        : 'image';
     const results: TemplateDetailResult[] = resultAsset && resultUrl
       ? (() => {
           const dedicatedThumbnail = resultType === 'video'

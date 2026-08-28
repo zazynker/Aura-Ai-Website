@@ -408,6 +408,8 @@ export const WorkflowDock = () => {
                   {modalStep.result?.url ? (
                     modalStep.result.type === 'video' ? (
                       <video src={modalStep.result.url} controls playsInline preload="metadata" className="mx-auto max-h-[65vh] w-full rounded-lg bg-black object-contain" />
+                    ) : modalStep.result.type === 'audio' ? (
+                      <audio src={modalStep.result.url} controls preload="metadata" className="w-full" />
                     ) : (
                       <img src={modalStep.result.url} alt={`Step ${modalStep.stepNumber} result`} className="mx-auto max-h-[65vh] w-full rounded-lg bg-black object-contain" />
                     )
