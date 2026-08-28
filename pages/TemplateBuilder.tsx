@@ -55,6 +55,8 @@ import type {
 import {
   createDefaultTimelineDefinition,
   createTimelineAssetKey,
+  QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS,
+  QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS,
 } from '../workflows/quickUseTimeline';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import { AuthGateModal } from '../components/AuthGateModal';
@@ -467,6 +469,50 @@ export const TemplateBuilder = () => {
   const quickUseCandidates = useMemo(
     () => deriveQuickUseCandidates(workflowConversion.workflow, adminDefinition),
     [workflowConversion.workflow, adminDefinition],
+  );
+  const quickUseCandidateById = new Map<string, (typeof quickUseCandidates.candidates)[number]>(
+    quickUseCandidates.candidates.map((candidate) => [candidate.id, candidate]),
+  );
+  const exposedQuickUseStepIds = new Set(
+    adminDefinition.blocks.flatMap((block) => {
+      const candidate = quickUseCandidateById.get(block.candidateId);
+      return candidate ? [candidate.stepId] : [];
+    }),
+  );
+  const timelineStepLabel = (step: WorkflowStep): string => {
+    const stepNumber = steps.findIndex((candidate) => candidate.id === step.id) + 1;
+    const hasReplaceableMaterial = adminDefinition.replaceableMaterials.some(
+      (item) => item.binding.stepId === step.id,
+    );
+    const hasPromptVariables = adminDefinition.promptTemplates.some(
+      (template) => template.stepId === step.id && template.variables.length > 0,
+    );
+    const userEditable = hasReplaceableMaterial
+      || hasPromptVariables
+      || exposedQuickUseStepIds.has(step.id);
+    return `Step ${stepNumber} · ${step.feature} · ${userEditable ? 'user-editable input' : 'template result when unchanged'}`;
+  };
+  const timelineVideoStepUsage = new Map<string, number>();
+  timelineDefinition.videoClips.forEach((clip) => {
+    if (clip.source.kind !== 'step_result') return;
+    timelineVideoStepUsage.set(
+      clip.source.stepId,
+      (timelineVideoStepUsage.get(clip.source.stepId) || 0) + 1,
+    );
+  });
+  const timelineAudioStepUsage = new Map<string, number>();
+  timelineDefinition.audioClips.forEach((clip) => {
+    if (clip.source.kind !== 'step_result') return;
+    timelineAudioStepUsage.set(
+      clip.source.stepId,
+      (timelineAudioStepUsage.get(clip.source.stepId) || 0) + 1,
+    );
+  });
+  const nextUnusedTimelineVideoStep = timelineVideoSteps.find(
+    (step) => !timelineVideoStepUsage.has(step.id),
+  );
+  const nextUnusedTimelineAudioStep = timelineAudioSteps.find(
+    (step) => !timelineAudioStepUsage.has(step.id),
   );
   const settingCandidates = useMemo(
     () => quickUseCandidates.candidates.filter(
@@ -1191,12 +1237,34 @@ export const TemplateBuilder = () => {
     setSaveState('idle');
   };
 
-  const addTimelineClip = (assetType: 'video' | 'audio') => {
+  const addTimelineStepClip = (assetType: 'video' | 'audio') => {
+    const matchingStep = assetType === 'video'
+      ? nextUnusedTimelineVideoStep
+      : nextUnusedTimelineAudioStep;
+    const currentCount = assetType === 'video'
+      ? timelineDefinition.videoClips.length
+      : timelineDefinition.audioClips.length;
+    const maxCount = assetType === 'video'
+      ? QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS
+      : QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS;
+    if (!matchingStep || currentCount >= maxCount) return;
     const id = `${assetType}-${Date.now()}`;
-    const matchingStep = steps.find((step) => assetType === 'video' ? isVideoFeature(step.feature) : isAudioFeature(step.feature));
-    const source = matchingStep
-      ? { kind: 'step_result' as const, stepId: matchingStep.id }
-      : { kind: 'template_asset' as const, assetKey: createTimelineAssetKey(id) };
+    const source = { kind: 'step_result' as const, stepId: matchingStep.id };
+    updateTimeline((timeline) => assetType === 'video'
+      ? { ...timeline, videoClips: [...timeline.videoClips, { id, source }] }
+      : { ...timeline, audioClips: [...timeline.audioClips, { id, source, startMs: 0 }] });
+  };
+
+  const addStandaloneTimelineClip = (assetType: 'video' | 'audio') => {
+    const currentCount = assetType === 'video'
+      ? timelineDefinition.videoClips.length
+      : timelineDefinition.audioClips.length;
+    const maxCount = assetType === 'video'
+      ? QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS
+      : QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS;
+    if (currentCount >= maxCount) return;
+    const id = `${assetType}-${Date.now()}`;
+    const source = { kind: 'template_asset' as const, assetKey: createTimelineAssetKey(id) };
     updateTimeline((timeline) => assetType === 'video'
       ? { ...timeline, videoClips: [...timeline.videoClips, { id, source }] }
       : { ...timeline, audioClips: [...timeline.audioClips, { id, source, startMs: 0 }] });
@@ -3470,7 +3538,7 @@ export const TemplateBuilder = () => {
                       <div>
                         <div className="text-sm font-semibold text-cyan-950 dark:text-cyan-100">Final timeline · video + multi-track audio</div>
                         <div className="mt-1 max-w-2xl text-xs leading-5 text-cyan-800/80 dark:text-cyan-200/80">
-                          Video clips play in the order below. Their original sound stays on; every audio row is mixed on top from its start time. Switching a row between a fixed file and a step result does not move it.
+                          Each row is one position in the final output. A workflow step row uses that step's final result; Quick Use separately decides whether the unchanged template result is reused or a user-edited result is generated. A standalone upload is only for an intro, outro, B-roll, music, or narration that has no workflow step.
                         </div>
                       </div>
                       <label className="flex items-center gap-2 text-xs font-semibold text-cyan-900 dark:text-cyan-100">
@@ -3497,16 +3565,45 @@ export const TemplateBuilder = () => {
                       </label>
                     </div>
 
+                    <div className="flex gap-2 rounded-lg border border-cyan-200 bg-white/70 px-3 py-2.5 text-xs leading-5 text-cyan-950 dark:border-cyan-500/20 dark:bg-slate-900/60 dark:text-cyan-100">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600" />
+                      <span><strong>Fixed versus user-generated is configured on the workflow step, not in this timeline.</strong> The timeline only chooses which step output appears, how often it appears, and in what order.</span>
+                    </div>
+
                     <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Video sequence</div>
-                        <Button variant="outline" size="sm" onClick={() => addTimelineClip('video')}><Plus className="mr-1 h-3.5 w-3.5" />Video clip</Button>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Video sequence · {timelineDefinition.videoClips.length}/{QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS}</div>
+                          <div className="mt-1 text-[11px] text-slate-500">Rows play from top to bottom. Original video sound stays on.</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addTimelineStepClip('video')}
+                            disabled={!nextUnusedTimelineVideoStep || timelineDefinition.videoClips.length >= QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS}
+                            title={nextUnusedTimelineVideoStep ? `Add ${timelineStepLabel(nextUnusedTimelineVideoStep)}` : 'Every video-producing workflow step is already used'}
+                          >
+                            <Plus className="mr-1 h-3.5 w-3.5" />{nextUnusedTimelineVideoStep ? `Next unused step (${steps.findIndex((step) => step.id === nextUnusedTimelineVideoStep.id) + 1})` : 'All video steps added'}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addStandaloneTimelineClip('video')}
+                            disabled={timelineDefinition.videoClips.length >= QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS}
+                          >
+                            <Plus className="mr-1 h-3.5 w-3.5" />Standalone video
+                          </Button>
+                        </div>
                       </div>
                       {timelineDefinition.videoClips.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-cyan-200 px-3 py-4 text-center text-xs text-slate-500 dark:border-cyan-500/20">Add at least one video clip before enabling the timeline.</div>
+                        <div className="rounded-lg border border-dashed border-cyan-200 px-3 py-4 text-center text-xs text-slate-500 dark:border-cyan-500/20">Add the next unused workflow step, or add a standalone uploaded video that is not represented by a step.</div>
                       ) : timelineDefinition.videoClips.map((clip, index) => {
                         const assetKey = clip.source.kind === 'template_asset' ? clip.source.assetKey : createTimelineAssetKey(clip.id);
                         const fixedUrl = timelineAssetUrls[assetKey];
+                        const usageCount = clip.source.kind === 'step_result'
+                          ? timelineVideoStepUsage.get(clip.source.stepId) || 0
+                          : 0;
                         return (
                           <div key={clip.id} className="grid gap-3 rounded-lg border border-cyan-100 bg-white p-3 dark:border-cyan-500/15 dark:bg-slate-900/70 sm:grid-cols-[3rem_1fr_auto] sm:items-center">
                             <div className="text-center text-sm font-bold text-cyan-700">{index + 1}</div>
@@ -3516,13 +3613,26 @@ export const TemplateBuilder = () => {
                                 onChange={(event) => setTimelineSource('video', clip.id, event.target.value)}
                                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                               >
-                                <option value="template_asset">Fixed template video</option>
-                                {timelineVideoSteps.map((step) => <option key={step.id} value={`step:${step.id}`}>Step result · {step.feature}</option>)}
+                                <option value="template_asset">Standalone uploaded video · not a workflow step</option>
+                                <optgroup label="Workflow step outputs">
+                                  {timelineVideoSteps.map((step) => {
+                                    const usedElsewhere = (timelineVideoStepUsage.get(step.id) || 0)
+                                      - (clip.source.kind === 'step_result' && clip.source.stepId === step.id ? 1 : 0);
+                                    return <option key={step.id} value={`step:${step.id}`}>{timelineStepLabel(step)}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>;
+                                  })}
+                                </optgroup>
                               </select>
+                              {clip.source.kind === 'step_result' && (
+                                <div className={`text-[11px] ${usageCount > 1 ? 'font-medium text-amber-700 dark:text-amber-300' : 'text-slate-500'}`}>
+                                  {usageCount > 1
+                                    ? `This same step output appears ${usageCount} times in the final video.`
+                                    : 'This position follows the selected workflow step output; it does not upload another fixed file.'}
+                                </div>
+                              )}
                               {clip.source.kind === 'template_asset' && (
                                 <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-cyan-200 p-2 text-xs text-cyan-700 dark:border-cyan-500/25 dark:text-cyan-200">
                                   {fixedUrl ? <video src={fixedUrl} className="h-10 w-16 rounded object-cover" muted /> : <Upload className="h-4 w-4" />}
-                                  <span>{fixedUrl ? 'Replace fixed video' : 'Upload fixed video'}</span>
+                                  <span>{fixedUrl ? 'Replace standalone video' : 'Upload standalone video'}</span>
                                   <input type="file" accept="video/*" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadTimelineAsset('video', clip.id, file); event.target.value = ''; }} />
                                 </label>
                               )}
@@ -3538,15 +3648,39 @@ export const TemplateBuilder = () => {
                     </div>
 
                     <div className="space-y-3 border-t border-cyan-200 pt-4 dark:border-cyan-500/20">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Audio overlays</div>
-                        <Button variant="outline" size="sm" onClick={() => addTimelineClip('audio')}><Plus className="mr-1 h-3.5 w-3.5" />Audio track</Button>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Audio overlays · {timelineDefinition.audioClips.length}/{QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS}</div>
+                          <div className="mt-1 text-[11px] text-slate-500">Each row is mixed over the video from its start time.</div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addTimelineStepClip('audio')}
+                            disabled={!nextUnusedTimelineAudioStep || timelineDefinition.audioClips.length >= QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS}
+                            title={nextUnusedTimelineAudioStep ? `Add ${timelineStepLabel(nextUnusedTimelineAudioStep)}` : 'Every audio-producing workflow step is already used'}
+                          >
+                            <Plus className="mr-1 h-3.5 w-3.5" />{nextUnusedTimelineAudioStep ? `Next unused step (${steps.findIndex((step) => step.id === nextUnusedTimelineAudioStep.id) + 1})` : 'All audio steps added'}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => addStandaloneTimelineClip('audio')}
+                            disabled={timelineDefinition.audioClips.length >= QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS}
+                          >
+                            <Plus className="mr-1 h-3.5 w-3.5" />Standalone audio
+                          </Button>
+                        </div>
                       </div>
                       {timelineDefinition.audioClips.length === 0 ? (
-                        <div className="rounded-lg border border-dashed border-cyan-200 px-3 py-4 text-center text-xs text-slate-500 dark:border-cyan-500/20">Optional: add narration, music, or another generated audio step.</div>
+                        <div className="rounded-lg border border-dashed border-cyan-200 px-3 py-4 text-center text-xs text-slate-500 dark:border-cyan-500/20">Optional: use a Text to Speech step output, or upload standalone narration or music that has no workflow step.</div>
                       ) : timelineDefinition.audioClips.map((clip) => {
                         const assetKey = clip.source.kind === 'template_asset' ? clip.source.assetKey : createTimelineAssetKey(clip.id);
                         const fixedUrl = timelineAssetUrls[assetKey];
+                        const usageCount = clip.source.kind === 'step_result'
+                          ? timelineAudioStepUsage.get(clip.source.stepId) || 0
+                          : 0;
                         return (
                           <div key={clip.id} className="grid gap-3 rounded-lg border border-cyan-100 bg-white p-3 dark:border-cyan-500/15 dark:bg-slate-900/70 sm:grid-cols-[1fr_9rem_auto] sm:items-start">
                             <div className="space-y-2">
@@ -3555,13 +3689,26 @@ export const TemplateBuilder = () => {
                                 onChange={(event) => setTimelineSource('audio', clip.id, event.target.value)}
                                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                               >
-                                <option value="template_asset">Fixed template audio</option>
-                                {timelineAudioSteps.map((step) => <option key={step.id} value={`step:${step.id}`}>Step result · {step.feature}</option>)}
+                                <option value="template_asset">Standalone uploaded audio · not a workflow step</option>
+                                <optgroup label="Workflow step outputs">
+                                  {timelineAudioSteps.map((step) => {
+                                    const usedElsewhere = (timelineAudioStepUsage.get(step.id) || 0)
+                                      - (clip.source.kind === 'step_result' && clip.source.stepId === step.id ? 1 : 0);
+                                    return <option key={step.id} value={`step:${step.id}`}>{timelineStepLabel(step)}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>;
+                                  })}
+                                </optgroup>
                               </select>
+                              {clip.source.kind === 'step_result' && (
+                                <div className={`text-[11px] ${usageCount > 1 ? 'font-medium text-amber-700 dark:text-amber-300' : 'text-slate-500'}`}>
+                                  {usageCount > 1
+                                    ? `This same audio step output is mixed ${usageCount} times.`
+                                    : 'This track follows the selected audio step output.'}
+                                </div>
+                              )}
                               {clip.source.kind === 'template_asset' && (
                                 <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-cyan-200 p-2 text-xs text-cyan-700 dark:border-cyan-500/25 dark:text-cyan-200">
                                   <Music className="h-4 w-4" />
-                                  <span>{fixedUrl ? 'Replace fixed audio' : 'Upload fixed audio'}</span>
+                                  <span>{fixedUrl ? 'Replace standalone audio' : 'Upload standalone audio'}</span>
                                   {fixedUrl && <audio src={fixedUrl} className="h-8 max-w-48" controls onClick={(event) => event.preventDefault()} />}
                                   <input type="file" accept="audio/*" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadTimelineAsset('audio', clip.id, file); event.target.value = ''; }} />
                                 </label>

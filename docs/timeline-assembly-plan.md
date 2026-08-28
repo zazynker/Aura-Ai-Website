@@ -85,6 +85,21 @@ Admin 模式新增 `Final timeline · video + multi-track audio`：
 - 固定文件保存后会获得稳定 asset key；重新打开草稿仍可预览并替换。
 - 类型校验会阻止视频行选择音频步骤，或音频行选择视频步骤。
 
+### 2026-08-29：时间线来源选择 UX 修正
+
+早期界面的 `Video clip` 每次都会默认选择第一个视频步骤；当多个步骤都叫 `Image to Video` 时，下拉菜单也不显示步骤编号。这会让正常的三步装配看起来像把同一个素材重复五次。
+
+修正后的规则：
+
+- `Next unused step (N)` 按工作流顺序加入下一个尚未使用的视频或音频步骤，全部加入后按钮禁用。
+- 步骤选项显示 `Step N · capability · behavior`，例如 `Step 4 · Image to Video · user-editable input`。
+- 同一步骤仍允许有意使用多次，但重复时显示黄色提示，不再把重复作为默认行为。
+- 原来的 `Fixed template video/audio` 改名为 `Standalone uploaded video/audio · not a workflow step`，并用独立按钮添加。
+- 一个步骤是复用模板结果还是根据用户输入重新生成，由该步骤的 Quick Use 配置和运行时复用规则决定；timeline 只决定步骤结果出现的顺序和次数。
+- 视频和音频分别显示 `当前数量/8`，达到上限后不再允许继续添加。
+
+因此，一个包含 Step 3、4、5 三个 `Image to Video` 的模板，正常配置是把这三个步骤结果各放一次。即使 Step 3 使用固定 First Frame、Step 4 允许用户替换 First Frame，它们在 timeline 中仍然都是步骤结果；只有不属于任何步骤的片头、片尾或外部素材才使用 Standalone upload。
+
 ## 第一版有意保留的边界
 
 - 不支持画中画、透明叠加、分屏或两段视频同时可见。
