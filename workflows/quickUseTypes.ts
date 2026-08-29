@@ -226,6 +226,12 @@ export type QuickUseTimelineClipSource =
 export interface QuickUseTimelineVideoClipDefinition {
   id: string;
   source: QuickUseTimelineClipSource;
+  /**
+   * Final-assembly duration divided by the source duration. A value of 1.2
+   * plays the clip at 1 / 1.2 speed and makes it 20% longer. The source step
+   * result is never replaced; retiming only creates an assembly-time copy.
+   */
+  durationScale?: number;
 }
 
 export interface QuickUseTimelineAudioClipDefinition {

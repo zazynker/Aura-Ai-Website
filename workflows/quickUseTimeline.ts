@@ -7,6 +7,8 @@ import type {
 export const QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS = 8;
 export const QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS = 8;
 export const QUICK_USE_TIMELINE_MAX_START_MS = 6 * 60 * 60 * 1000;
+export const QUICK_USE_TIMELINE_MIN_DURATION_SCALE = 1;
+export const QUICK_USE_TIMELINE_MAX_DURATION_SCALE = 2;
 export const QUICK_USE_TIMELINE_ASSET_KEY_PREFIX = 'timeline-asset-';
 
 export const createDefaultTimelineDefinition = (): QuickUseTimelineDefinition => ({

@@ -57,7 +57,9 @@ import {
   createDefaultTimelineDefinition,
   createTimelineAssetKey,
   QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS,
+  QUICK_USE_TIMELINE_MAX_DURATION_SCALE,
   QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS,
+  QUICK_USE_TIMELINE_MIN_DURATION_SCALE,
 } from '../workflows/quickUseTimeline';
 import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import { AuthGateModal } from '../components/AuthGateModal';
@@ -1292,7 +1294,7 @@ export const TemplateBuilder = () => {
     const id = `${assetType}-${Date.now()}`;
     const source = { kind: 'step_result' as const, stepId: matchingStep.id };
     updateTimeline((timeline) => assetType === 'video'
-      ? { ...timeline, videoClips: [...timeline.videoClips, { id, source }] }
+      ? { ...timeline, videoClips: [...timeline.videoClips, { id, source, durationScale: 1 }] }
       : { ...timeline, audioClips: [...timeline.audioClips, { id, source, startMs: 0 }] });
   };
 
@@ -1307,8 +1309,21 @@ export const TemplateBuilder = () => {
     const id = `${assetType}-${Date.now()}`;
     const source = { kind: 'template_asset' as const, assetKey: createTimelineAssetKey(id) };
     updateTimeline((timeline) => assetType === 'video'
-      ? { ...timeline, videoClips: [...timeline.videoClips, { id, source }] }
+      ? { ...timeline, videoClips: [...timeline.videoClips, { id, source, durationScale: 1 }] }
       : { ...timeline, audioClips: [...timeline.audioClips, { id, source, startMs: 0 }] });
+  };
+
+  const setTimelineVideoDurationScale = (clipId: string, durationScale: number) => {
+    const normalized = Math.min(
+      QUICK_USE_TIMELINE_MAX_DURATION_SCALE,
+      Math.max(QUICK_USE_TIMELINE_MIN_DURATION_SCALE, Math.round(durationScale * 100) / 100),
+    );
+    updateTimeline((timeline) => ({
+      ...timeline,
+      videoClips: timeline.videoClips.map((clip) => (
+        clip.id === clipId ? { ...clip, durationScale: normalized } : clip
+      )),
+    }));
   };
 
   const setTimelineSource = (assetType: 'video' | 'audio', clipId: string, value: string) => {
@@ -3614,6 +3629,7 @@ export const TemplateBuilder = () => {
                                 ? (definition.finalVideo?.stepIds || []).map((stepId, index) => ({
                                     id: `legacy-video-${index + 1}-${stepId.replace(/[^a-z0-9_-]/gi, '_')}`,
                                     source: { kind: 'step_result' as const, stepId },
+                                    durationScale: 1,
                                   }))
                                 : currentTimeline.videoClips;
                               return {
@@ -3647,7 +3663,7 @@ export const TemplateBuilder = () => {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Video sequence · {timelineDefinition.videoClips.length}/{QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS}</div>
-                          <div className="mt-1 text-[11px] text-slate-500">Rows play from top to bottom. Original video sound stays on.</div>
+                          <div className="mt-1 text-[11px] text-slate-500">Rows play from top to bottom. Original video sound stays on. Duration × applies only to the final assembled copy.</div>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <Button
@@ -3709,6 +3725,26 @@ export const TemplateBuilder = () => {
                                   <input type="file" accept="video/*" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) uploadTimelineAsset('video', clip.id, file); event.target.value = ''; }} />
                                 </label>
                               )}
+                              <label className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+                                <span className="font-semibold">Final duration ×</span>
+                                <input
+                                  type="number"
+                                  min={QUICK_USE_TIMELINE_MIN_DURATION_SCALE}
+                                  max={QUICK_USE_TIMELINE_MAX_DURATION_SCALE}
+                                  step={0.05}
+                                  value={clip.durationScale ?? 1}
+                                  onChange={(event) => setTimelineVideoDurationScale(
+                                    clip.id,
+                                    Number(event.target.value) || 1,
+                                  )}
+                                  className="h-8 w-20 rounded-md border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
+                                />
+                                <span>
+                                  {(clip.durationScale ?? 1) === 1
+                                    ? 'Normal speed'
+                                    : `${Math.round(100 / (clip.durationScale ?? 1))}% playback speed · source result unchanged`}
+                                </span>
+                              </label>
                             </div>
                             <div className="flex items-center justify-end gap-1">
                               <button type="button" onClick={() => moveTimelineVideoClip(clip.id, -1)} disabled={index === 0} className="rounded px-2 py-1 text-xs disabled:opacity-30">↑</button>

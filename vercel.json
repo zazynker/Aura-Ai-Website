@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/finalize-workflow-video.ts": {
+      "includeFiles": "node_modules/@ffmpeg-installer/**"
+    }
+  },
   "crons": [
     { "path": "/api/cleanup-template-uploads", "schedule": "17 3 * * *" }
   ],

@@ -625,6 +625,7 @@ export const QuickUseBuilder = () => {
 const FinalAssemblySummary = ({ definition }: { definition: QuickUseDefinition }) => {
   const timeline = definition.timeline;
   const legacyEnabled = Boolean(definition.finalVideo?.enabled);
+  const retimedClipCount = timeline?.videoClips.filter((clip) => (clip.durationScale ?? 1) !== 1).length || 0;
   return (
     <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
@@ -633,7 +634,7 @@ const FinalAssemblySummary = ({ definition }: { definition: QuickUseDefinition }
       </div>
       {timeline?.enabled ? (
         <div className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5 text-[11px] leading-5 text-cyan-900 dark:border-cyan-500/25 dark:bg-cyan-500/10 dark:text-cyan-200">
-          Configured in Admin Builder: {timeline.videoClips.length} video clip{timeline.videoClips.length === 1 ? '' : 's'} + {timeline.audioClips.length} audio overlay{timeline.audioClips.length === 1 ? '' : 's'}. Video sound is preserved.
+          Configured in Admin Builder: {timeline.videoClips.length} video clip{timeline.videoClips.length === 1 ? '' : 's'} + {timeline.audioClips.length} audio overlay{timeline.audioClips.length === 1 ? '' : 's'}. Video sound is preserved{retimedClipCount > 0 ? `; ${retimedClipCount} clip${retimedClipCount === 1 ? '' : 's'} will be slowed only for final assembly` : ''}.
         </div>
       ) : legacyEnabled ? (
         <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-5 text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">

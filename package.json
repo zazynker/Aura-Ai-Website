@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@fal-ai/client": "^1.10.1",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@sentry/react": "^10.50.0",
     "@supabase/supabase-js": "^2.99.2",
     "@vercel/analytics": "^2.0.1",

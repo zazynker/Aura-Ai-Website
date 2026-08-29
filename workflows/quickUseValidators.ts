@@ -9,8 +9,10 @@ import {
 } from './quickUseFinalVideo.js';
 import {
   QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS,
+  QUICK_USE_TIMELINE_MAX_DURATION_SCALE,
   QUICK_USE_TIMELINE_MAX_START_MS,
   QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS,
+  QUICK_USE_TIMELINE_MIN_DURATION_SCALE,
 } from './quickUseTimeline.js';
 import {
   QUICK_USE_SCHEMA_VERSION,
@@ -228,6 +230,18 @@ function validateTimelineShape(value: unknown, issues: QuickUseValidationIssue[]
       }
     } else if (typeof clip.source.stepId !== 'string' || !clip.source.stepId.trim()) {
       issues.push({ path: `${clipPath}.source.stepId`, code: 'invalid_step_id', message: 'Step result source requires a step id.' });
+    }
+    if (assetType === 'video' && clip.durationScale !== undefined && (
+      typeof clip.durationScale !== 'number'
+      || !Number.isFinite(clip.durationScale)
+      || clip.durationScale < QUICK_USE_TIMELINE_MIN_DURATION_SCALE
+      || clip.durationScale > QUICK_USE_TIMELINE_MAX_DURATION_SCALE
+    )) {
+      issues.push({
+        path: `${clipPath}.durationScale`,
+        code: 'invalid_duration_scale',
+        message: `Video duration multiplier must be between ${QUICK_USE_TIMELINE_MIN_DURATION_SCALE} and ${QUICK_USE_TIMELINE_MAX_DURATION_SCALE}.`,
+      });
     }
     if (assetType === 'audio' && (
       typeof clip.startMs !== 'number'

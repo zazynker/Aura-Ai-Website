@@ -1,5 +1,12 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { spawn } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import ffmpegInstaller from '@ffmpeg-installer/ffmpeg';
+
+const ffmpegPath = ffmpegInstaller.path;
 
 /**
  * Joins the video results of one finished template run into a single
@@ -64,6 +71,8 @@ const POLL_INTERVAL_MS = 2_000;
 
 /** Above this we keep the provider URL instead of buffering the file. */
 const MAX_REHOST_BYTES = 300 * 1024 * 1024;
+const MAX_RETIME_BYTES = 150 * 1024 * 1024;
+const RETIME_TIMEOUT_MS = 90_000;
 
 type RunRow = Record<string, unknown>;
 
@@ -85,13 +94,17 @@ interface QueuedJob {
   responseUrl: string;
 }
 
-type AssemblyPhase = 'padding' | 'merging' | 'mixing' | 'storing';
+type AssemblyPhase = 'retiming' | 'padding' | 'merging' | 'mixing' | 'storing';
 
 interface AssemblyState {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   phase: AssemblyPhase;
   /** null when clip metadata was unreadable and the provider must choose. */
   target: FrameSize | null;
+  /** Assembly-only retimed URL per position. Version 3 only. */
+  retimed: (string | null)[];
+  /** Whether each source still needs letterboxing after retiming. */
+  needsPadding: boolean[];
   /** Resolved clip URL per position, or null while its pad job is running. */
   padded: (string | null)[];
   /** Pad job per position, or null when that clip needed no padding. */
@@ -100,6 +113,7 @@ interface AssemblyState {
   mixJob: QueuedJob | null;
   mergedUrl: string | null;
   mergedDuration: number | null;
+  retimedCount: number;
   paddedCount: number;
   inputFingerprint: string | null;
 }
@@ -111,7 +125,7 @@ interface TimelineSource {
 }
 
 interface TimelineDefinition {
-  videoClips: Array<{ id: string; source: TimelineSource }>;
+  videoClips: Array<{ id: string; source: TimelineSource; durationScale: number }>;
   audioClips: Array<{ id: string; source: TimelineSource; startMs: number }>;
 }
 
@@ -230,7 +244,13 @@ function readTimelineDefinition(quickUseDefinition: unknown): TimelineDefinition
     if (!isRecord(value)) return [];
     const id = readString(value.id);
     const source = readSource(value.source);
-    return id && source ? [{ id, source }] : [];
+    const durationScale = typeof value.durationScale === 'number'
+      && Number.isFinite(value.durationScale)
+      && value.durationScale >= 1
+      && value.durationScale <= 2
+      ? Math.round(value.durationScale * 100) / 100
+      : 1;
+    return id && source ? [{ id, source, durationScale }] : [];
   }).slice(0, MAX_CLIPS);
   const audioClips = timeline.audioClips.flatMap((value): TimelineDefinition['audioClips'] => {
     if (!isRecord(value)) return [];
@@ -245,7 +265,7 @@ function readTimelineDefinition(quickUseDefinition: unknown): TimelineDefinition
 }
 
 const timelineFingerprint = (timeline: TimelineDefinition): string => JSON.stringify({
-  video: timeline.videoClips.map((clip) => clip.source),
+  video: timeline.videoClips.map((clip) => ({ source: clip.source, durationScale: clip.durationScale })),
   audio: timeline.audioClips.map((clip) => ({ source: clip.source, startMs: clip.startMs })),
 });
 
@@ -416,6 +436,88 @@ async function ensureFetchableUrl(
     .createSignedUrl(decodeURIComponent(path), 6 * 60 * 60);
   if (error || !data?.signedUrl) return url;
   return data.signedUrl;
+}
+
+// ---------------------------------------------------------------------------
+// Assembly-only retiming
+// ---------------------------------------------------------------------------
+
+async function runFfmpeg(args: string[]): Promise<void> {
+  if (!ffmpegPath) throw new Error('The FFmpeg executable is unavailable.');
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(ffmpegPath, args, { windowsHide: true });
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error('Clip retiming exceeded the server time limit.'));
+    }, RETIME_TIMEOUT_MS);
+    child.stderr.on('data', (chunk: Buffer | string) => {
+      stderr = `${stderr}${String(chunk)}`.slice(-8_000);
+    });
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`Clip retiming failed${stderr.trim() ? `: ${stderr.trim()}` : '.'}`));
+    });
+  });
+}
+
+async function retimeClip(
+  supabase: SupabaseClient,
+  sourceUrl: string,
+  durationScale: number,
+  storagePath: string,
+): Promise<string> {
+  const workDir = await mkdtemp(join(tmpdir(), 'lazora-retime-'));
+  const inputPath = join(workDir, 'input.mp4');
+  const outputPath = join(workDir, 'output.mp4');
+  try {
+    const response = await fetch(sourceUrl);
+    if (!response.ok) throw new Error(`The clip selected for retiming could not be downloaded (${response.status}).`);
+    const declaredLength = Number(response.headers.get('content-length') || '0');
+    if (declaredLength > MAX_RETIME_BYTES) throw new Error('The clip selected for retiming is too large.');
+    const inputBytes = Buffer.from(await response.arrayBuffer());
+    if (inputBytes.byteLength > MAX_RETIME_BYTES) throw new Error('The clip selected for retiming is too large.');
+    await writeFile(inputPath, inputBytes);
+
+    const playbackRate = 1 / durationScale;
+    await runFfmpeg([
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-y',
+      '-i', inputPath,
+      '-map', '0:v:0',
+      '-map', '0:a?',
+      '-filter:v', `setpts=${durationScale.toFixed(4)}*PTS`,
+      '-filter:a', `atempo=${playbackRate.toFixed(6)}`,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '18',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-movflags', '+faststart',
+      outputPath,
+    ]);
+
+    const outputBytes = await readFile(outputPath);
+    const { error } = await supabase.storage
+      .from(FINAL_VIDEO_BUCKET)
+      .upload(storagePath, outputBytes, {
+        contentType: 'video/mp4',
+        cacheControl: '31536000',
+        upsert: true,
+      });
+    if (error) throw new Error(`The retimed clip could not be stored: ${error.message}`);
+    const { data } = supabase.storage.from(FINAL_VIDEO_BUCKET).getPublicUrl(storagePath);
+    if (!data.publicUrl) throw new Error('The retimed clip has no readable URL.');
+    return data.publicUrl;
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -620,19 +722,29 @@ const sameFrame = (a: FrameSize | null, b: FrameSize): boolean =>
 function readAssemblyState(
   value: unknown,
   clipCount: number,
-  expectedVersion: 1 | 2,
+  expectedVersion: 1 | 2 | 3,
   expectedFingerprint: string | null,
 ): AssemblyState | null {
   if (!isRecord(value) || value.version !== expectedVersion) return null;
+  const retimed = value.retimed;
+  const needsPadding = value.needsPadding;
   const padded = value.padded;
   const padJobs = value.padJobs;
   if (!Array.isArray(padded) || !Array.isArray(padJobs)) return null;
   // A checkpoint that does not describe this run's clip list is not resumable.
   if (padded.length !== clipCount || padJobs.length !== clipCount) return null;
+  if (expectedVersion === 3 && (
+    !Array.isArray(retimed)
+    || retimed.length !== clipCount
+    || !Array.isArray(needsPadding)
+    || needsPadding.length !== clipCount
+    || needsPadding.some((entry) => typeof entry !== 'boolean')
+  )) return null;
   const phase = value.phase;
-  if (phase !== 'padding' && phase !== 'merging' && phase !== 'mixing' && phase !== 'storing') return null;
+  if (phase !== 'retiming' && phase !== 'padding' && phase !== 'merging' && phase !== 'mixing' && phase !== 'storing') return null;
+  if (phase === 'retiming' && expectedVersion !== 3) return null;
   const inputFingerprint = readString(value.inputFingerprint);
-  if (expectedVersion === 2 && inputFingerprint !== expectedFingerprint) return null;
+  if (expectedVersion >= 2 && inputFingerprint !== expectedFingerprint) return null;
 
   const readJob = (job: unknown): QueuedJob | null => {
     if (!isRecord(job)) return null;
@@ -653,12 +765,19 @@ function readAssemblyState(
     version: expectedVersion,
     phase,
     target,
+    retimed: expectedVersion === 3
+      ? (retimed as unknown[]).map((entry) => readString(entry))
+      : Array.from({ length: clipCount }, () => null),
+    needsPadding: expectedVersion === 3
+      ? needsPadding as boolean[]
+      : Array.from({ length: clipCount }, () => false),
     padded: padded.map((entry) => readString(entry)),
     padJobs: padJobs.map(readJob),
     mergeJob: readJob(value.mergeJob),
     mixJob: readJob(value.mixJob),
     mergedUrl: readString(value.mergedUrl),
     mergedDuration: typeof value.mergedDuration === 'number' ? value.mergedDuration : null,
+    retimedCount: typeof value.retimedCount === 'number' ? value.retimedCount : 0,
     paddedCount: typeof value.paddedCount === 'number' ? value.paddedCount : 0,
     inputFingerprint,
   };
@@ -916,8 +1035,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         )
       : [];
     const clipUrls = await Promise.all(clips.map((clip) => ensureFetchableUrl(supabase, clip.url)));
+    const durationScales = timeline
+      ? timeline.videoClips.map((clip) => clip.durationScale)
+      : clipUrls.map(() => 1);
+    const hasRetimedClips = durationScales.some((scale) => scale !== 1);
+    const retimedStoragePaths = durationScales.map((_, index) => (
+      `${user.id}/${runId}/retimed-${index + 1}.mp4`
+    ));
     const inputFingerprint = timeline ? timelineFingerprint(timeline) : null;
-    const stateVersion: 1 | 2 = timeline ? 2 : 1;
+    // Version 3 adds persisted assembly-only retiming. Timelines that do not
+    // use it stay on version 2 so an already-running ordinary assembly is not
+    // invalidated by this release.
+    const stateVersion: 1 | 2 | 3 = timeline ? (hasRetimedClips ? 3 : 2) : 1;
     checkpointToClear = true;
 
     let state = readAssemblyState(run.assembly_state, clipUrls.length, stateVersion, inputFingerprint);
@@ -938,20 +1067,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // clips actually need padding. Probing is a handful of fast calls.
       const sizes = await Promise.all(clipUrls.map(probeFrameSize));
       const target = sizes[0] ? normalizeTargetSize(sizes[0]) : null;
+      const needsPadding = clipUrls.map((_, index) => Boolean(target && !sameFrame(sizes[index], target)));
       state = {
         version: stateVersion,
-        phase: 'padding',
+        phase: hasRetimedClips ? 'retiming' : 'padding',
         target,
+        retimed: clipUrls.map((url, index) => durationScales[index] === 1 ? url : null),
+        needsPadding,
         // A clip whose metadata could not be read is padded rather than assumed
         // to match: guessing is the one path that silently stretches a shot.
         padded: clipUrls.map((url, index) => (
-          !target || sameFrame(sizes[index], target) ? url : null
+          durationScales[index] === 1 && (!target || !needsPadding[index]) ? url : null
         )),
         padJobs: clipUrls.map(() => null),
         mergeJob: null,
         mixJob: null,
         mergedUrl: null,
         mergedDuration: null,
+        retimedCount: 0,
         paddedCount: 0,
         inputFingerprint,
       };
@@ -960,11 +1093,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // ---- the resumable machine -------------------------------------------
     for (;;) {
+      if (state.phase === 'retiming') {
+        for (let index = 0; index < clipUrls.length; index += 1) {
+          if (state.retimed[index]) continue;
+          // Retime one clip per invocation when the earlier work has consumed
+          // most of the safe budget. Each completed copy is checkpointed.
+          if (budgetRemaining() < 15_000) return pendingResponse('retiming');
+          const retimedUrl = await retimeClip(
+            supabase,
+            clipUrls[index],
+            durationScales[index],
+            retimedStoragePaths[index],
+          );
+          state.retimed[index] = retimedUrl;
+          if (!state.target || !state.needsPadding[index]) state.padded[index] = retimedUrl;
+          state.retimedCount += 1;
+          await saveAssemblyState(supabase, runId, state);
+        }
+        state.phase = 'padding';
+        await saveAssemblyState(supabase, runId, state);
+        continue;
+      }
+
       if (state.phase === 'padding') {
         for (let index = 0; index < clipUrls.length; index += 1) {
           if (state.padded[index] || state.padJobs[index]) continue;
+          const assemblyClipUrl = state.retimed[index] || clipUrls[index];
           state.padJobs[index] = await falSubmit(FAL_SCALE_ENDPOINT, {
-            video_url: clipUrls[index],
+            video_url: assemblyClipUrl,
             width: state.target!.width,
             height: state.target!.height,
             mode: 'pad',
@@ -1133,6 +1289,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         stepIds,
       });
 
+      if (hasRetimedClips && hostedVideoUrl) {
+        const temporaryPaths = retimedStoragePaths.filter((_, index) => durationScales[index] !== 1);
+        const { error: cleanupError } = await supabase.storage
+          .from(FINAL_VIDEO_BUCKET)
+          .remove(temporaryPaths);
+        if (cleanupError) {
+          console.warn('[Finalize workflow video] Could not remove assembly-only retimed clips:', cleanupError.message);
+        }
+      }
+
       return res.status(200).json({
         success: true,
         status: 'ready',
@@ -1142,12 +1308,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         thumbnailUrl: finalThumbnailUrl,
         durationSeconds: state.mergedDuration,
         frame: state.target,
+        retimedClipCount: state.retimedCount,
         paddedClipCount: state.paddedCount,
         stepIds,
         clips: clips.map((clip, index) => ({
           stepId: timeline?.videoClips[index]?.id || clip.stepId,
           order: index + 1,
           executionMode: clip.executionMode,
+          durationScale: timeline?.videoClips[index]?.durationScale || 1,
         })),
       });
     }
