@@ -1,5 +1,6 @@
 import {
   getQuickUsePromptVariableToken,
+  parseQuickUseSettingCandidateId,
   renderQuickUsePromptTemplateDefaults,
 } from './quickUseCandidates';
 import { createDefaultFinalVideoDefinition } from './quickUseFinalVideo';
@@ -45,6 +46,7 @@ export function createEmptyQuickUseDefinition(
     schemaVersion: QUICK_USE_SCHEMA_VERSION,
     title: title.trim() || 'Use this template',
     replaceableMaterials: [],
+    editableSettings: [],
     promptTemplates: [],
     blocks: [],
     finalVideo: createDefaultFinalVideoDefinition(),
@@ -63,9 +65,21 @@ export function createEmptyQuickUseDefinition(
 export function withQuickUseDefaults(
   definition: QuickUseDefinition,
 ): QuickUseDefinition {
-  if (definition.finalVideo && definition.timeline && definition.stepReuse) return definition;
+  if (
+    definition.finalVideo
+    && definition.timeline
+    && definition.stepReuse
+    && definition.editableSettings !== undefined
+  ) return definition;
+  const editableSettings = definition.editableSettings || Array.from(
+    new Map(definition.blocks.flatMap((block) => {
+      const binding = parseQuickUseSettingCandidateId(block.candidateId);
+      return binding ? [[`${binding.stepId}:${binding.parameterKey}`, binding] as const] : [];
+    })).values(),
+  );
   return {
     ...definition,
+    editableSettings,
     finalVideo: definition.finalVideo || createDefaultFinalVideoDefinition(),
     timeline: definition.timeline || createDefaultTimelineDefinition(),
     stepReuse: definition.stepReuse || { enabled: true },

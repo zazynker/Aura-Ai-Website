@@ -23,6 +23,7 @@ import type {
   QuickUsePresentationDefinition,
   QuickUseSettingCandidate,
   QuickUseValidationIssue,
+  QuickUseWorkflowParameterBinding,
 } from './quickUseTypes';
 
 const PROMPT_VARIABLE_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
@@ -31,7 +32,7 @@ export const QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX = 'quick-use-example:';
 
 type QuickUseCandidateSource = Pick<
   QuickUseDefinition,
-  'replaceableMaterials' | 'promptTemplates'
+  'replaceableMaterials' | 'editableSettings' | 'promptTemplates'
 >;
 
 const encodeBindingPart = (value: string): string => encodeURIComponent(value);
@@ -47,6 +48,22 @@ export function createQuickUseCandidateId(
     return `quick-use:setting:${stepId}:${encodeBindingPart(binding.parameterKey)}`;
   }
   return `quick-use:prompt:${stepId}:${encodeBindingPart(binding.parameterKey)}:${encodeBindingPart(binding.variableKey)}`;
+}
+
+export function parseQuickUseSettingCandidateId(
+  candidateId: string,
+): QuickUseWorkflowParameterBinding | null {
+  const match = /^quick-use:setting:([^:]+):([^:]+)$/.exec(candidateId);
+  if (!match) return null;
+  try {
+    return {
+      kind: 'workflow_parameter',
+      stepId: decodeURIComponent(match[1]),
+      parameterKey: decodeURIComponent(match[2]),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function getQuickUsePromptVariableToken(variableKey: string): string {
@@ -167,7 +184,12 @@ export function deriveQuickUseCandidates(
     issues,
   );
   derivePromptVariableCandidates(workflow, promptTemplatesByStep, candidates);
-  deriveSettingCandidates(workflow, candidates);
+  const editableSettingIds = validateEditableSettingDefinitions(
+    workflow,
+    source.editableSettings,
+    issues,
+  );
+  deriveSettingCandidates(workflow, editableSettingIds, candidates);
 
   const seenCandidateIds = new Set<string>();
   candidates.forEach((candidate) => {
@@ -186,6 +208,52 @@ export function deriveQuickUseCandidates(
     candidates,
     issues,
   };
+}
+
+function validateEditableSettingDefinitions(
+  workflow: WorkflowDefinition,
+  bindings: QuickUseWorkflowParameterBinding[] | undefined,
+  issues: QuickUseValidationIssue[],
+): Set<string> | null {
+  // Definitions saved before the allow-list release exposed every editable
+  // registry setting. Preserve that contract until an Admin changes a box.
+  if (bindings === undefined) return null;
+
+  const stepById = new Map(workflow.steps.map((step) => [step.id, step]));
+  const ids = new Set<string>();
+  bindings.forEach((binding, index) => {
+    const path = `$.editableSettings[${index}]`;
+    const id = createQuickUseCandidateId(binding);
+    if (ids.has(id)) {
+      issues.push({ path, code: 'duplicate_editable_setting', message: `Editable setting is duplicated: ${id}.` });
+      return;
+    }
+    ids.add(id);
+
+    const step = stepById.get(binding.stepId);
+    if (!step) {
+      issues.push({ path: `${path}.stepId`, code: 'unknown_step', message: `Workflow step does not exist: ${binding.stepId}.` });
+      return;
+    }
+    const parameter = getWorkflowCapability(step.capability).parameters.find(
+      (candidate) => candidate.key === binding.parameterKey,
+    );
+    const isMidjourneyImageStep = step.capability === 'image.text_to_image'
+      && step.parameters.model === 'mj-v8.1';
+    const allowed = Boolean(
+      parameter?.editable
+      && parameter.key !== 'prompt'
+      && (!isMidjourneyImageStep || parameter.key === 'ratio'),
+    );
+    if (!allowed) {
+      issues.push({
+        path: `${path}.parameterKey`,
+        code: 'setting_not_editable',
+        message: `Workflow setting is not available to Quick Use: ${binding.parameterKey}.`,
+      });
+    }
+  });
+  return ids;
 }
 
 function validateReplaceableMaterialDefinitions(
@@ -493,6 +561,7 @@ function derivePromptVariableCandidates(
 
 function deriveSettingCandidates(
   workflow: WorkflowDefinition,
+  editableSettingIds: Set<string> | null,
   candidates: QuickUseCandidate[],
 ): void {
   workflow.steps.forEach((step) => {
@@ -514,6 +583,7 @@ function deriveSettingCandidates(
           stepId: step.id,
           parameterKey: parameter.key,
         };
+        if (editableSettingIds && !editableSettingIds.has(createQuickUseCandidateId(binding))) return;
         const workflowValue = step.parameters[parameter.key];
         const defaultValue = isJsonPrimitive(workflowValue)
           ? workflowValue

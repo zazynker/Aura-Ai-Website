@@ -100,6 +100,27 @@ Admin 模式新增 `Final timeline · video + multi-track audio`：
 
 因此，一个包含 Step 3、4、5 三个 `Image to Video` 的模板，正常配置是把这三个步骤结果各放一次。即使 Step 3 使用固定 First Frame、Step 4 允许用户替换 First Frame，它们在 timeline 中仍然都是步骤结果；只有不属于任何步骤的片头、片尾或外部素材才使用 Standalone upload。
 
+### 2026-08-29：复用音频未进入成片与配置职责收敛
+
+用户实测中 Audio 1、2 都显示为 `reused from the template`，但最终 9 秒视频没有这两条音频。根因不是复用音频 URL 丢失：那次已发布定义仍启用了旧 `finalVideo` / `Merge selected shots`。旧装配器只读取视频步骤 ID，设计上完全不读取音频步骤；步骤结果卡片显示“复用成功”只证明音频步骤执行完成，不代表旧 Merge 会消费它。
+
+修正后的单一职责：
+
+- Admin Builder 的 `Final timeline · video + multi-track audio` 是新模板唯一的最终装配配置。
+- Quick Use Builder 不再提供可修改的 `Merge selected shots`，只显示上一步锁定的装配摘要，避免 Timeline 和 Merge 两套配置互相覆盖。
+- 老模板的 `finalVideo` 仍由服务端兼容；Admin 启用 Final assembly 时，如果 Timeline 还没有视频行，会把旧 Merge 选中的视频步骤迁移为 Timeline 视频行，并关闭旧 Merge。
+- Timeline 启用后，视频先顺序合成，再把该视频作为显式原声音轨，与所有 Timeline Audio rows 一起提交给 `compose`；因此复用音频和新生成音频走同一条混音路径。
+- 若草稿仍处于旧 Merge，Admin Builder 会明确警告“video-only，不能包含 Audio steps”。
+- 草稿可以继续保存；但只要已经配置 Audio rows 却未启用 Timeline，Quick Use 的提交审核会被阻止，避免再次发布出“音频步骤完成但最终成片未消费”的版本。
+
+Quick Use 可编辑参数也改为 Admin allow-list：
+
+- `QuickUseDefinition.editableSettings` 保存 Admin 勾选的具体 `stepId + parameterKey`。
+- Voice ID、Speed、Volume、Pitch、Emotion、Language、Format、Duration、Resolution、Generate audio 等都在各自步骤的 Admin Builder 面板逐项勾选。
+- 未勾选的参数保留 Workflow 默认值，不出现在下一页候选库；取消勾选会同步移除已放入 Quick Use 画布的对应控件。
+- 新模板默认一个设置都不开放。旧草稿迁移时只保留已经放在 Quick Use 画布上的 Setting，避免过去“Registry 所有可编辑参数全部塞进候选库”的行为。
+- Quick Use 候选项显示 `Step N`，同名 Text to Speech / Image to Video 步骤仍可区分。
+
 ## 第一版有意保留的边界
 
 - 不支持画中画、透明叠加、分屏或两段视频同时可见。

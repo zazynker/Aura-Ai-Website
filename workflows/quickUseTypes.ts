@@ -252,6 +252,13 @@ export interface QuickUseDefinition {
   title: string;
   subtitle?: string;
   replaceableMaterials: UserReplaceableMaterialDefinition[];
+  /**
+   * Registry settings the Admin explicitly permits the Quick Use author to
+   * place on the end-user form. An absent field means "all" only for legacy
+   * definitions created before this allow-list existed; new definitions start
+   * with an empty list.
+   */
+  editableSettings?: QuickUseWorkflowParameterBinding[];
   promptTemplates: QuickUsePromptTemplateDefinition[];
   blocks: QuickUseBlockDefinition[];
   finalVideo?: QuickUseFinalVideoDefinition;

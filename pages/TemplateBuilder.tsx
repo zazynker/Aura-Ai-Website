@@ -45,6 +45,7 @@ import {
   removeQuickUsePromptVariable,
   setQuickUseMaterialReplaceable,
   updateQuickUsePromptVariable,
+  withQuickUseDefaults,
 } from '../workflows/quickUseAuthoring';
 import type {
   QuickUseDefinition,
@@ -435,7 +436,7 @@ export const TemplateBuilder = () => {
         setResultFiles({});
         setPersistedMaterials(draft.materials);
         setMaterialFiles({});
-        setQuickUseDefinition(draft.quickUseDefinition);
+        setQuickUseDefinition(draft.quickUseDefinition ? withQuickUseDefaults(draft.quickUseDefinition) : null);
         setPersistedTimelineAssets(draft.timelineAssets);
         setTimelineAssetUrls(draft.timelineAssetUrls);
         setTimelineAssetFiles({});
@@ -460,7 +461,9 @@ export const TemplateBuilder = () => {
     [steps],
   );
   const adminDefinition = useMemo(
-    () => quickUseDefinition || createEmptyQuickUseDefinition(templateTitle, templateDescription),
+    () => quickUseDefinition
+      ? withQuickUseDefaults(quickUseDefinition)
+      : createEmptyQuickUseDefinition(templateTitle, templateDescription),
     [quickUseDefinition, templateTitle, templateDescription],
   );
   const timelineDefinition = adminDefinition.timeline || createDefaultTimelineDefinition();
@@ -468,6 +471,15 @@ export const TemplateBuilder = () => {
   const timelineAudioSteps = steps.filter((step) => isAudioFeature(step.feature));
   const quickUseCandidates = useMemo(
     () => deriveQuickUseCandidates(workflowConversion.workflow, adminDefinition),
+    [workflowConversion.workflow, adminDefinition],
+  );
+  const registryQuickUseCandidates = useMemo(
+    () => deriveQuickUseCandidates(workflowConversion.workflow, {
+      ...adminDefinition,
+      // Admin needs to see every eligible registry setting in order to build
+      // the allow-list. The normal derivation above remains filtered.
+      editableSettings: undefined,
+    }),
     [workflowConversion.workflow, adminDefinition],
   );
   const quickUseCandidateById = new Map<string, (typeof quickUseCandidates.candidates)[number]>(
@@ -515,10 +527,10 @@ export const TemplateBuilder = () => {
     (step) => !timelineAudioStepUsage.has(step.id),
   );
   const settingCandidates = useMemo(
-    () => quickUseCandidates.candidates.filter(
+    () => registryQuickUseCandidates.candidates.filter(
       (candidate): candidate is QuickUseSettingCandidate => candidate.kind === 'setting',
     ),
-    [quickUseCandidates.candidates],
+    [registryQuickUseCandidates.candidates],
   );
   const activeWorkflowStep = workflowConversion.workflow.steps.find(
     (step) => step.id === activeStepId,
@@ -850,10 +862,9 @@ export const TemplateBuilder = () => {
 
   const ensureAdminDefinition = (
     current: QuickUseDefinition | null,
-  ): QuickUseDefinition => current || createEmptyQuickUseDefinition(
-    templateTitle,
-    templateDescription,
-  );
+  ): QuickUseDefinition => current
+    ? withQuickUseDefaults(current)
+    : createEmptyQuickUseDefinition(templateTitle, templateDescription);
 
   const handleAdminTemplateModeToggle = () => {
     if (!user?.isAdmin) return;
@@ -875,6 +886,36 @@ export const TemplateBuilder = () => {
       { kind: 'workflow_input', stepId: activeWorkflowStep.id, slot },
       replaceable,
     ));
+    setSaveState('idle');
+    setBuilderError(null);
+  };
+
+  const handleQuickUseSettingChange = (
+    candidate: QuickUseSettingCandidate,
+    exposed: boolean,
+  ) => {
+    setQuickUseDefinition((current) => {
+      const definition = ensureAdminDefinition(current);
+      const currentBindings = definition.editableSettings === undefined
+        ? settingCandidates.map((item) => item.binding)
+        : definition.editableSettings;
+      const matches = (binding: QuickUseSettingCandidate['binding']): boolean => (
+        binding.stepId === candidate.binding.stepId
+        && binding.parameterKey === candidate.binding.parameterKey
+      );
+      const alreadyExposed = currentBindings.some(matches);
+      const editableSettings = alreadyExposed === exposed
+        ? currentBindings
+        : exposed
+          ? [...currentBindings, candidate.binding]
+          : currentBindings.filter((binding) => !matches(binding));
+      const blocks = exposed
+        ? definition.blocks
+        : definition.blocks
+            .filter((block) => block.candidateId !== candidate.id)
+            .map((block, index) => ({ ...block, order: index + 1 }));
+      return { ...definition, editableSettings, blocks };
+    });
     setSaveState('idle');
     setBuilderError(null);
   };
@@ -2229,7 +2270,7 @@ export const TemplateBuilder = () => {
                 {adminDefinition.promptTemplates.reduce((count, template) => count + template.variables.length, 0)} prompt variables
               </span>
               <span className="rounded-full bg-white/80 px-3 py-1 dark:bg-slate-900/60">
-                {settingCandidates.length} registry settings
+                {adminDefinition.editableSettings?.length ?? settingCandidates.length} editable settings
               </span>
               <button
                 type="button"
@@ -3502,24 +3543,41 @@ export const TemplateBuilder = () => {
                     <div className="mb-3">
                       <div className="text-sm font-semibold text-purple-950 dark:text-purple-100">Settings available to Quick Use</div>
                       <div className="mt-1 text-xs text-purple-700 dark:text-purple-300">
-                        Derived from the Capability Registry. The current workflow values are the template defaults.
+                        Tick only the controls users may change. Unticked settings keep the workflow default and will not appear in the next-page library.
                       </div>
                     </div>
                     {settingCandidates.filter((candidate) => candidate.stepId === activeStep.id).length > 0 ? (
                       <div className="grid gap-2 sm:grid-cols-2">
                         {settingCandidates
                           .filter((candidate) => candidate.stepId === activeStep.id)
-                          .map((candidate) => (
-                            <div
+                          .map((candidate) => {
+                            const checked = adminDefinition.editableSettings === undefined
+                              || adminDefinition.editableSettings.some((binding) => (
+                                binding.stepId === candidate.binding.stepId
+                                && binding.parameterKey === candidate.binding.parameterKey
+                              ));
+                            return (
+                            <label
                               key={candidate.id}
-                              className="rounded-lg border border-purple-100 bg-white px-3 py-2.5 dark:border-purple-500/15 dark:bg-slate-900/70"
+                              className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition ${checked
+                                ? 'border-purple-300 bg-white dark:border-purple-500/35 dark:bg-slate-900/70'
+                                : 'border-slate-200 bg-slate-50/70 opacity-70 dark:border-slate-700 dark:bg-slate-950/50'}`}
                             >
-                              <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{candidate.label}</div>
-                              <div className="mt-0.5 text-[11px] text-slate-500">
-                                {candidate.parameterType} · Default: {candidate.defaultValue === undefined ? 'None' : String(candidate.defaultValue)}
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                onChange={(event) => handleQuickUseSettingChange(candidate, event.target.checked)}
+                                className="mt-0.5 h-4 w-4 shrink-0 accent-purple-600"
+                              />
+                              <div className="min-w-0">
+                                <div className="text-sm font-medium text-slate-800 dark:text-slate-200">{candidate.label}</div>
+                                <div className="mt-0.5 text-[11px] text-slate-500">
+                                  {candidate.parameterType} · Template default: {candidate.defaultValue === undefined ? 'None' : String(candidate.defaultValue)}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            </label>
+                            );
+                          })}
                       </div>
                     ) : (
                       <div className="text-xs text-purple-700 dark:text-purple-300">This capability exposes no editable settings.</div>
@@ -3538,7 +3596,7 @@ export const TemplateBuilder = () => {
                       <div>
                         <div className="text-sm font-semibold text-cyan-950 dark:text-cyan-100">Final timeline · video + multi-track audio</div>
                         <div className="mt-1 max-w-2xl text-xs leading-5 text-cyan-800/80 dark:text-cyan-200/80">
-                          Each row is one position in the final output. A workflow step row uses that step's final result; Quick Use separately decides whether the unchanged template result is reused or a user-edited result is generated. A standalone upload is only for an intro, outro, B-roll, music, or narration that has no workflow step.
+                          This is the single final-assembly configuration for new templates. Video rows are joined in order, their original sound is preserved, and every audio row is mixed on top at its start time.
                         </div>
                       </div>
                       <label className="flex items-center gap-2 text-xs font-semibold text-cyan-900 dark:text-cyan-100">
@@ -3549,9 +3607,18 @@ export const TemplateBuilder = () => {
                             const enabled = event.target.checked;
                             setQuickUseDefinition((current) => {
                               const definition = ensureAdminDefinition(current);
+                              const currentTimeline = definition.timeline || createDefaultTimelineDefinition();
+                              const migratedVideoClips = enabled
+                                && currentTimeline.videoClips.length === 0
+                                && Boolean(definition.finalVideo?.enabled)
+                                ? (definition.finalVideo?.stepIds || []).map((stepId, index) => ({
+                                    id: `legacy-video-${index + 1}-${stepId.replace(/[^a-z0-9_-]/gi, '_')}`,
+                                    source: { kind: 'step_result' as const, stepId },
+                                  }))
+                                : currentTimeline.videoClips;
                               return {
                                 ...definition,
-                                timeline: { ...(definition.timeline || createDefaultTimelineDefinition()), enabled },
+                                timeline: { ...currentTimeline, enabled, videoClips: migratedVideoClips },
                                 finalVideo: enabled && definition.finalVideo
                                   ? { ...definition.finalVideo, enabled: false }
                                   : definition.finalVideo,
@@ -3561,13 +3628,19 @@ export const TemplateBuilder = () => {
                           }}
                           className="h-4 w-4 accent-cyan-600"
                         />
-                        Enable timeline
+                        Enable final assembly
                       </label>
                     </div>
 
+                    {!timelineDefinition.enabled && adminDefinition.finalVideo?.enabled && (
+                      <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs leading-5 text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                        This draft still uses the legacy video-only Merge. It cannot include Audio steps. Enable final assembly above to migrate its selected video steps and activate the audio rows below.
+                      </div>
+                    )}
+
                     <div className="flex gap-2 rounded-lg border border-cyan-200 bg-white/70 px-3 py-2.5 text-xs leading-5 text-cyan-950 dark:border-cyan-500/20 dark:bg-slate-900/60 dark:text-cyan-100">
                       <Info className="mt-0.5 h-4 w-4 shrink-0 text-cyan-600" />
-                      <span><strong>Fixed versus user-generated is configured on the workflow step, not in this timeline.</strong> The timeline only chooses which step output appears, how often it appears, and in what order.</span>
+                      <span><strong>Fixed versus user-generated is configured on the workflow step, not in this timeline.</strong> The timeline chooses the final video order and which audio outputs are actually mixed into the result.</span>
                     </div>
 
                     <div className="space-y-3">

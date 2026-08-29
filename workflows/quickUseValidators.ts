@@ -121,6 +121,31 @@ function validateDefinitionShape(
       }
     });
   }
+  if (value.editableSettings !== undefined) {
+    if (!Array.isArray(value.editableSettings)) {
+      issues.push({
+        path: '$.editableSettings',
+        code: 'invalid_type',
+        message: 'Editable settings must be an array.',
+      });
+    } else {
+      value.editableSettings.forEach((item, index) => {
+        const path = `$.editableSettings[${index}]`;
+        if (!isRecord(item)
+          || item.kind !== 'workflow_parameter'
+          || typeof item.stepId !== 'string'
+          || !item.stepId.trim()
+          || typeof item.parameterKey !== 'string'
+          || !item.parameterKey.trim()) {
+          issues.push({
+            path,
+            code: 'invalid_parameter_binding',
+            message: 'Editable setting must bind to a workflow step parameter.',
+          });
+        }
+      });
+    }
+  }
   if (!Array.isArray(value.promptTemplates)) {
     issues.push({
       path: '$.promptTemplates',

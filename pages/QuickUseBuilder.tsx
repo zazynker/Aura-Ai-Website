@@ -44,14 +44,7 @@ import {
   setQuickUseStepReuseEnabled,
   withQuickUseDefaults,
 } from '../workflows/quickUseAuthoring';
-import {
-  QUICK_USE_FINAL_VIDEO_MIN_CLIPS,
-  isStepIncludedInFinalVideo,
-  listFinalVideoEligibleSteps,
-  pruneFinalVideoDefinition,
-  setFinalVideoEnabled,
-  setStepIncludedInFinalVideo,
-} from '../workflows/quickUseFinalVideo';
+import { pruneFinalVideoDefinition } from '../workflows/quickUseFinalVideo';
 import {
   addQuickUseBlock,
   reorderQuickUseBlock,
@@ -190,13 +183,13 @@ export const QuickUseBuilder = () => {
     () => new Map(derivation.candidates.map((candidate) => [candidate.id, candidate])),
     [derivation.candidates],
   );
+  const stepOrderById = useMemo(
+    () => new Map((workflow?.steps || []).map((step) => [step.id, step.order])),
+    [workflow],
+  );
   const exposedIds = useMemo(
     () => new Set(definition?.blocks.map((block) => block.candidateId) || []),
     [definition?.blocks],
-  );
-  const videoSteps = useMemo(
-    () => workflow ? listFinalVideoEligibleSteps(workflow) : [],
-    [workflow],
   );
   const selectedBlock = definition?.blocks.find(
     (block) => block.candidateId === selectedCandidateId,
@@ -258,20 +251,6 @@ export const QuickUseBuilder = () => {
   const handleUpdateBlock = (updates: Partial<QuickUseBlockDefinition>) => {
     if (!definition || !selectedBlock) return;
     mutateDefinition(updateQuickUseBlock(definition, selectedBlock.candidateId, updates));
-  };
-
-  const handleToggleFinalVideoStep = (stepId: string, included: boolean) => {
-    if (!definition || !workflow) return;
-    try {
-      mutateDefinition(setStepIncludedInFinalVideo(definition, workflow, stepId, included));
-    } catch (toggleError) {
-      addToast('error', toggleError instanceof Error ? toggleError.message : 'This step cannot be added to the final video.');
-    }
-  };
-
-  const handleToggleFinalVideoEnabled = (enabled: boolean) => {
-    if (!definition) return;
-    mutateDefinition(setFinalVideoEnabled(definition, enabled));
   };
 
   const handleExampleKind = (kind: 'none' | 'text' | 'image' | 'video' | 'audio') => {
@@ -410,6 +389,15 @@ export const QuickUseBuilder = () => {
       addToast('error', 'Add at least one Quick Use block before submitting.');
       return;
     }
+    if (
+      !definition.timeline?.enabled
+      && (definition.timeline?.audioClips.length || 0) > 0
+    ) {
+      const message = 'Audio overlays are configured, but the draft still uses the legacy video-only Merge. Return to Admin Builder and enable Final assembly before submitting.';
+      setError(message);
+      addToast('error', message);
+      return;
+    }
     const identity = await handleSaveDraft(false);
     if (!identity) return;
     setSaveState('submitting');
@@ -485,7 +473,7 @@ export const QuickUseBuilder = () => {
       <div className="mx-auto grid max-w-[1600px] grid-cols-1 lg:h-[calc(100vh-8rem)] lg:grid-cols-[280px_minmax(0,1fr)_320px]">
         <aside className="overflow-y-auto border-b border-slate-200 bg-white p-4 dark:border-white/10 dark:bg-slate-900 lg:border-b-0 lg:border-r">
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Block library</h2>
-          <p className="mt-1 text-xs text-slate-400">Drag workflow candidates into the Quick Use canvas.</p>
+          <p className="mt-1 text-xs text-slate-400">Only controls allowed in Admin Builder appear here. Drag the ones you want into the Quick Use canvas.</p>
           <div className="mt-5 space-y-5">
             {(['material', 'prompt_variable', 'setting'] as const).map((kind) => {
               const candidates = derivation.candidates.filter((candidate) => candidate.kind === kind);
@@ -507,7 +495,7 @@ export const QuickUseBuilder = () => {
                         <span className="text-slate-500">{candidateIcon(candidate)}</span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm font-medium text-slate-800 dark:text-slate-200">{candidate.label}</span>
-                          <span className="block truncate text-[11px] text-slate-500">{candidate.stepTitle} · {candidateSummary(candidate)}</span>
+                          <span className="block truncate text-[11px] text-slate-500">Step {stepOrderById.get(candidate.stepId) || '?'} · {candidate.stepTitle} · {candidateSummary(candidate)}</span>
                         </span>
                         {exposedIds.has(candidate.id) ? <Check className="h-4 w-4 text-emerald-500" /> : <GripVertical className="h-4 w-4 text-slate-300" />}
                       </button>
@@ -605,12 +593,7 @@ export const QuickUseBuilder = () => {
               <SettingField label="Quick Use title"><input className={inputClassName} value={definition.title} maxLength={120} onChange={(event) => mutateDefinition({ ...definition, title: event.target.value })} /></SettingField>
               <SettingField label="Subtitle"><textarea className={`${inputClassName} min-h-24 resize-y`} value={definition.subtitle || ''} maxLength={300} onChange={(event) => mutateDefinition({ ...definition, subtitle: event.target.value || undefined })} /></SettingField>
 
-              <FinalVideoSettings
-                definition={definition}
-                videoSteps={videoSteps}
-                onToggleEnabled={handleToggleFinalVideoEnabled}
-                onToggleStep={handleToggleFinalVideoStep}
-              />
+              <FinalAssemblySummary definition={definition} />
 
               <ToggleSetting
                 label="Reuse unchanged steps"
@@ -639,89 +622,31 @@ export const QuickUseBuilder = () => {
   );
 };
 
-/**
- * Final cut authoring.
- *
- * Membership is opt-in per video step so a template can build an image in
- * step 1, animate it in step 2 and lip-sync it in step 3 while only shipping
- * steps 2 and 3 as the deliverable. Image steps are shown greyed out rather
- * than hidden, so it is obvious why they cannot be picked.
- */
-const FinalVideoSettings = ({
-  definition,
-  onToggleEnabled,
-  onToggleStep,
-  videoSteps,
-}: {
-  definition: QuickUseDefinition;
-  onToggleEnabled: (enabled: boolean) => void;
-  onToggleStep: (stepId: string, included: boolean) => void;
-  videoSteps: Array<{ id: string; order: number; title?: string }>;
-}) => {
-  const enabled = Boolean(definition.finalVideo?.enabled);
-  const includedCount = (definition.finalVideo?.stepIds || []).length;
-  const notEnoughClips = enabled && includedCount < QUICK_USE_FINAL_VIDEO_MIN_CLIPS;
-
+const FinalAssemblySummary = ({ definition }: { definition: QuickUseDefinition }) => {
+  const timeline = definition.timeline;
+  const legacyEnabled = Boolean(definition.finalVideo?.enabled);
   return (
     <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-700">
       <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
         <Film className="h-3.5 w-3.5" />
-        Final video
+        Final assembly
       </div>
-
-      {videoSteps.length < QUICK_USE_FINAL_VIDEO_MIN_CLIPS ? (
-        <p className="mt-3 text-[11px] leading-4 text-slate-400">
-          This workflow has {videoSteps.length === 0 ? 'no' : 'only one'} video step. Add at least
-          {' '}{QUICK_USE_FINAL_VIDEO_MIN_CLIPS} video steps in Workflow Builder to deliver a joined cut.
-        </p>
+      {timeline?.enabled ? (
+        <div className="mt-3 rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2.5 text-[11px] leading-5 text-cyan-900 dark:border-cyan-500/25 dark:bg-cyan-500/10 dark:text-cyan-200">
+          Configured in Admin Builder: {timeline.videoClips.length} video clip{timeline.videoClips.length === 1 ? '' : 's'} + {timeline.audioClips.length} audio overlay{timeline.audioClips.length === 1 ? '' : 's'}. Video sound is preserved.
+        </div>
+      ) : legacyEnabled ? (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-[11px] leading-5 text-amber-900 dark:border-amber-500/25 dark:bg-amber-500/10 dark:text-amber-200">
+          Legacy video-only Merge is still enabled. Return to Admin Builder and enable Final timeline to include audio steps.
+        </div>
       ) : (
-        <>
-          <div className="mt-3">
-            <ToggleSetting
-              label="Merge selected shots into one video"
-              checked={enabled}
-              onChange={onToggleEnabled}
-            />
-          </div>
-          <p className="mt-2 text-[11px] leading-4 text-slate-400">
-            The user receives one continuous video instead of separate clips. Tick the shots below;
-            they are joined in workflow order. The first ticked shot sets the frame — a shot in a
-            different aspect ratio gets black bars rather than being stretched. Every step result
-            is still available on its own.
-          </p>
-          <div className="mt-3 space-y-2">
-            {videoSteps.map((step) => {
-              const included = isStepIncludedInFinalVideo(definition, step.id);
-              return (
-                <label
-                  key={step.id}
-                  className={`flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2 text-xs transition ${
-                    included
-                      ? 'border-purple-300 bg-purple-50 text-purple-800 dark:border-purple-500/40 dark:bg-purple-500/10 dark:text-purple-200'
-                      : 'border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300'
-                  }`}
-                >
-                  <span className="min-w-0 truncate">
-                    <span className="font-semibold">{step.order}.</span> {step.title || step.id}
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={included}
-                    onChange={(event) => onToggleStep(step.id, event.target.checked)}
-                    className="h-4 w-4 shrink-0 accent-purple-600"
-                  />
-                </label>
-              );
-            })}
-          </div>
-          {notEnoughClips && (
-            <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] leading-4 text-amber-800 dark:bg-amber-500/10 dark:text-amber-200">
-              Pick at least {QUICK_USE_FINAL_VIDEO_MIN_CLIPS} shots, or turn the final video off.
-              The draft cannot be saved until this is resolved.
-            </p>
-          )}
-        </>
+        <p className="mt-3 text-[11px] leading-5 text-slate-400">
+          No final assembly is enabled. Configure video order and audio overlays in Admin Builder.
+        </p>
       )}
+      <p className="mt-2 text-[11px] leading-5 text-slate-400">
+        Final media membership is locked on the previous page. This page only arranges the user-editable controls that Admin allowed.
+      </p>
     </div>
   );
 };
