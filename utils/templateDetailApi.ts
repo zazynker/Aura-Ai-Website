@@ -399,8 +399,11 @@ export async function fetchTemplateDetail(
       .flatMap((group) => group.options.map((option) => option.assetKey)) || [];
     return assets.some((asset) => (
       (asset.asset_key.startsWith(stablePrefix) || asset.asset_key.startsWith(ordinalPrefix) || choiceAssetKeys.includes(asset.asset_key))
+      // The storage row itself is enough to establish that a template result
+      // exists.  A signed/public URL may be unavailable temporarily (or may
+      // need to be signed again by the executor), and must not turn an
+      // unchanged reusable step into a paid generation quote.
       && !asset.asset_key.endsWith('-thumbnail')
-      && Boolean(urls.get(asset.id) || asset.public_url)
     ));
   };
   const fallbackType = coverOriginalAsset?.asset_type === 'video' || template.cover_type === 'video'

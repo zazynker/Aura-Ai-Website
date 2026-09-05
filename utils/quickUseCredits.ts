@@ -155,7 +155,10 @@ export const estimateQuickUseCreditsDetailed = (
     // hasTemplateResult is undefined on a server that predates this feature.
     // Treating that as "no demo result" quotes the full price, which is the
     // safe direction.
-    const canReuse = reuseEnabled && step.hasTemplateResult === true;
+    // Older published detail payloads did not include hasTemplateResult. A
+    // missing flag must not turn a no-op form into a paid quote; the executor
+    // still verifies the actual saved asset before it can reuse anything.
+    const canReuse = reuseEnabled && step.hasTemplateResult !== false;
 
     if (!canReuse || hasRequiredBlock || wasEdited || upstreamRegenerates) {
       generating.add(step.id);

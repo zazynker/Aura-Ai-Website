@@ -85,7 +85,12 @@ export function toQuickUsePresentationDefinition(
   const presentation: QuickUsePresentationDefinition = {
     schemaVersion: definition.schemaVersion,
     title: definition.title,
-    blocks: definition.blocks.map((block) => ({ ...block })),
+    blocks: definition.blocks.map((block) => ({
+      ...block,
+      // A result selector is a free assembly choice, never a required
+      // generation input—even if an older draft stored required: true.
+      required: block.candidateId.startsWith('timeline-choice:') ? false : block.required,
+    })),
     timeline: definition.timeline,
     resultChoiceLayoutEnabled: definition.resultChoiceLayoutEnabled,
     candidates: candidates
