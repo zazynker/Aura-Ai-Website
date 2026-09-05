@@ -7,6 +7,7 @@ import { Modal } from '../components/ui/Modal';
 import { Button } from '../components/ui/Button';
 import { fetchPublishedTemplates } from '../utils/templatePublicApi';
 import { AuthGateModal } from '../components/AuthGateModal';
+import { WelcomeGiftModal } from '../components/WelcomeGiftModal';
 import type { RealTemplateDetail } from '../utils/templateDetailApi';
 import type { QuickUseInputValues } from '../components/template/TemplateExperienceModal';
 import {
@@ -17,7 +18,8 @@ import {
   startQuickUseRun,
   useQuickUseRun,
 } from '../utils/quickUseRunManager';
-import { getUserGenerationCount } from '../utils/api';
+import { fetchUserCredits, getUserGenerationCount } from '../utils/api';
+import { DODO_PRODUCTS, isQuickUseSingleProductConfigured, openDodoOverlayCheckout } from '../utils/dodoPayments';
 import {
   clearQuickUseGuestDraft,
   loadQuickUseGuestDraft,
@@ -325,7 +327,7 @@ interface HomeProps {
 
 export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const navigate = useNavigate();
-  const { browsing, saveBrowsingState, addToast, user, collections, addToCollection, createCollection } = useStore();
+  const { browsing, saveBrowsingState, addToast, user, updateUser, collections, addToCollection, createCollection } = useStore();
 
   // State
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -341,6 +343,10 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
   const [experienceLoading, setExperienceLoading] = useState(false);
   const [experienceError, setExperienceError] = useState<string | null>(null);
   const [restoredQuickUseValues, setRestoredQuickUseValues] = useState<QuickUseInputValues | null>(null);
+  const [showQuickUseAuth, setShowQuickUseAuth] = useState(false);
+  const [showQuickUseGift, setShowQuickUseGift] = useState(false);
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const quickUseSubmitRef = useRef(false);
 
   // The run itself lives outside this component. Home renders it while its
   // modal is open; the app-wide dock renders it everywhere else, so leaving
@@ -621,12 +627,13 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
     if (!user) return;
     let cancelled = false;
     void loadQuickUseGuestDraft().then((draft) => {
-      if (cancelled || !draft) return;
+      if (cancelled || !draft || (draft.userId && draft.userId !== user.id)) return;
       trackAuthFunnelEvent('quick_use_restored', { entryContext: 'quick-use' });
       openTemplateExperience(draft.template, 'use', draft.values);
     });
     return () => { cancelled = true; };
   }, [user?.id]);
+
 
   // Closing no longer has to argue with a running generation: the dock picks it
   // up, so the user can close this and keep browsing without losing anything.
@@ -650,28 +657,36 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
     setExperienceMode('use');
   };
 
-  const handleQuickUseInsufficientCredits = () => {
-    navigate('/pricing');
+  const handleQuickUseInsufficientCredits = async (values: QuickUseInputValues) => {
+    if (!user || !selectedTemplateForModal) return;
+    await saveQuickUseGuestDraft(selectedTemplateForModal, values, { userId: user.id });
+    const { data } = await fetchUserCredits();
+    if (data) updateUser({ credits: data.credits, welcomeGiftEligible: data.welcomeGiftEligible,
+      welcomeGiftRedeemed: data.welcomeGiftRedeemed });
+    const eligible = data ? data.welcomeGiftEligible && !data.welcomeGiftRedeemed
+      : user.welcomeGiftEligible && !user.welcomeGiftRedeemed;
+    if (eligible) setShowQuickUseGift(true);
+    else navigate('/pricing');
   };
 
   const handleQuickUseGenerate = async (values: QuickUseInputValues, estimatedCredits: number) => {
+    if (quickUseSubmitRef.current || paymentBusy) return;
     if (!user) {
       if (!selectedTemplateForModal) return;
       await saveQuickUseGuestDraft(selectedTemplateForModal, values);
       trackAuthFunnelEvent('quick_use_auth_requested', { entryContext: 'quick-use' });
       sessionStorage.setItem('postAuthDestination', '/');
       sessionStorage.setItem('authEntryContext', 'quick-use');
-      navigate('/login', {
-        state: { from: '/', authContext: 'quick-use' },
-      });
+      setShowQuickUseAuth(true);
       return;
     }
     if (!selectedTemplateForModal || !experienceDetail) return;
     if (!user.isWhitelisted && user.credits < estimatedCredits) {
-      handleQuickUseInsufficientCredits();
+      await handleQuickUseInsufficientCredits(values);
       return;
     }
     setExperienceError(null);
+    quickUseSubmitRef.current = true;
     try {
       let showWelcomeGiftOnCompletion = false;
       if (user.welcomeGiftEligible && !user.welcomeGiftRedeemed) {
@@ -701,11 +716,63 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       }
       const message = executionError instanceof Error ? executionError.message : 'Template generation failed.';
       if (/insufficient credits?/i.test(message)) {
-        handleQuickUseInsufficientCredits();
+        await handleQuickUseInsufficientCredits(values);
+        return;
       }
       setExperienceError(message);
+    } finally {
+      quickUseSubmitRef.current = false;
     }
   };
+
+  const handleQuickUsePay = async (values: QuickUseInputValues, estimatedCredits: number) => {
+    if (!user || !selectedTemplateForModal || !experienceDetail || quickUseSubmitRef.current) return;
+    quickUseSubmitRef.current = true;
+    setPaymentBusy(true);
+    try {
+      await openDodoOverlayCheckout({
+        productId: DODO_PRODUCTS.QUICK_USE_SINGLE,
+        customerEmail: user.email,
+        customerId: user.id,
+        successUrl: `${window.location.origin}/#/`,
+        cancelUrl: `${window.location.origin}/#/`,
+        metadata: {
+          purchaseType: 'quick_use_single_generation',
+          templateId: selectedTemplateForModal.id,
+          templateVersionId: experienceDetail.versionId,
+        },
+        country: 'US',
+      }, {
+        onSuccess: async () => {
+          // Dodo's webhook credits the account. Wait briefly for that server
+          // update, then launch the same run path so the paid generation is
+          // recorded in history and charged exactly once.
+          for (let attempt = 0; attempt < 15; attempt += 1) {
+            const latest = await fetchUserCredits();
+            if (latest.data) {
+              updateUser({ credits: latest.data.credits });
+              if (latest.data.credits >= estimatedCredits) {
+                addToast('success', 'Payment received. Starting your generation…');
+                quickUseSubmitRef.current = false;
+                setPaymentBusy(false);
+                await handleQuickUseGenerate(values, estimatedCredits);
+                return;
+              }
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+          }
+          addToast('info', 'Payment received. Credits may take a moment to appear; please press Generate when they arrive.');
+        },
+        onFailed: () => addToast('error', 'Payment failed. Please try again.'),
+      });
+    } catch (error) {
+      addToast('error', error instanceof Error ? error.message : 'Unable to open checkout.');
+    } finally {
+      quickUseSubmitRef.current = false;
+      setPaymentBusy(false);
+    }
+  };
+
 
   const handleAction = (e: React.MouseEvent, type: 'share' | 'collect', t: Template) => {
     e.stopPropagation();
@@ -1047,7 +1114,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
       {experienceMode && (
         <React.Suspense fallback={null}>
           <TemplateExperienceModal
-            isOpen
+            isOpen={!showQuickUseAuth && !showQuickUseGift}
             mode={experienceMode}
             detail={experienceDetail}
             loading={experienceLoading}
@@ -1060,12 +1127,18 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
             onClose={closeTemplateExperience}
             onUse={switchExperienceToUse}
             onGenerate={handleQuickUseGenerate}
+            onPayPerUse={user && isQuickUseSingleProductConfigured ? handleQuickUsePay : undefined}
+            paymentBusy={paymentBusy}
             onMinimize={closeTemplateExperience}
             onCancel={cancelQuickUseRun}
             onReset={dismissQuickUseRun}
           />
         </React.Suspense>
       )}
+      <AuthGateModal isOpen={showQuickUseAuth} onClose={() => setShowQuickUseAuth(false)} destination="/"
+        entryContext="quick-use" title="Sign in to generate your template"
+        description="Your photo and settings are saved. After signing in, choose credits or $1.99 for one generation." />
+      {showQuickUseGift && <WelcomeGiftModal isOpen onClose={() => setShowQuickUseGift(false)} />}
       <AuthGateModal
         isOpen={modalType === 'auth'}
         onClose={() => setModalType(null)}

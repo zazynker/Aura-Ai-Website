@@ -17,7 +17,13 @@ export const DODO_PRODUCTS = {
   GIFT_120: 'pdt_0Nj2BOIxjWXYK7KJFznSj',
   GIFT_250: 'pdt_0Nj2BYdzYVo0gpmFzdwyl',
   GIFT_600: 'pdt_0Nj2BkTObSUe7155RRQsG',
+  // Replace with the dedicated Dodo one-shot Template product after it is
+  // created in the merchant dashboard. The fallback keeps local preview and
+  // existing deployments usable while that product is being configured.
+  QUICK_USE_SINGLE: (import.meta.env.VITE_DODO_QUICK_USE_PRODUCT_ID || 'pdt_0Nj2BOIxjWXYK7KJFznSj') as string,
 } as const;
+
+export const isQuickUseSingleProductConfigured = Boolean(import.meta.env.VITE_DODO_QUICK_USE_PRODUCT_ID);
 
 // Product details for display
 export const PRODUCT_DETAILS = {

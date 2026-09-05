@@ -10,6 +10,7 @@ interface AuthGateModalProps {
   destination: string;
   title?: string;
   description?: string;
+  entryContext?: string;
 }
 
 export const AuthGateModal: React.FC<AuthGateModalProps> = ({
@@ -18,15 +19,16 @@ export const AuthGateModal: React.FC<AuthGateModalProps> = ({
   destination,
   title = 'Create your free account to continue',
   description = 'Browse every Lazora tool for free. Sign up only when you are ready to create.',
+  entryContext = 'feature-gate',
 }) => {
   const navigate = useNavigate();
 
   const continueToAuth = (mode: 'login' | 'signup') => {
     sessionStorage.setItem('postAuthDestination', destination);
-    sessionStorage.setItem('authEntryContext', 'feature-gate');
+    sessionStorage.setItem('authEntryContext', entryContext);
     onClose();
     navigate(mode === 'signup' ? '/signup' : '/login', {
-      state: { from: destination },
+      state: { from: destination, authContext: entryContext },
     });
   };
 

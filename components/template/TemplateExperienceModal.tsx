@@ -66,6 +66,8 @@ interface TemplateExperienceModalProps {
   isAdmin?: boolean;
   initialValues?: QuickUseInputValues | null;
   showCreditEstimate?: boolean;
+  onPayPerUse?: (values: QuickUseInputValues, estimatedCredits: number) => void | Promise<void>;
+  paymentBusy?: boolean;
 }
 
 export function validateQuickUseInputValues(
@@ -100,6 +102,8 @@ export const TemplateExperienceModal = ({
   onReset,
   onUse,
   showCreditEstimate = true,
+  onPayPerUse,
+  paymentBusy = false,
 }: TemplateExperienceModalProps) => {
   const [values, setValues] = useState<QuickUseInputValues>({});
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -226,7 +230,7 @@ export const TemplateExperienceModal = ({
     onCancel?.();
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = (payment: 'credits' | 'cash' = 'credits') => {
     if (!definition) return;
     const issues = validateQuickUseInputValues(definition, values);
     if (issues.length > 0) {
@@ -234,6 +238,11 @@ export const TemplateExperienceModal = ({
       return;
     }
     setValidationError(null);
+    if (paymentBusy) return;
+    if (payment === 'cash') {
+      void onPayPerUse?.(values, estimatedCredits);
+      return;
+    }
     const hasCachedAdminDemo = Boolean(detail?.id && cachedAdminDemos.get(detail.id)?.files.length);
     if (isAdmin && (adminDemoFiles.length > 0 || hasCachedAdminDemo)) {
       startAdminDemo();
@@ -266,11 +275,12 @@ export const TemplateExperienceModal = ({
                   : `${creditEstimate.reusedStepIds.length} unchanged ${creditEstimate.reusedStepIds.length === 1 ? 'shot is' : 'shots are'} reused for free.`}
               </p>
             )}
+            <div className="flex flex-col gap-2 sm:flex-row">
             <Button
               variant="gradient"
-              className="w-full"
-              disabled={(!generationAvailable && !isAdminDemoArmed) || !definition?.blocks.length || isExecuting}
-              onClick={handleGenerate}
+              className="w-full sm:flex-1"
+              disabled={paymentBusy || (!generationAvailable && !isAdminDemoArmed) || !definition?.blocks.length || isExecuting}
+              onClick={() => handleGenerate()}
             >
               {!showCreditEstimate
                 ? 'Generate'
@@ -278,6 +288,14 @@ export const TemplateExperienceModal = ({
                   ? 'Free · Generate'
                   : `~${estimatedCredits} credits · Generate`}
             </Button>
+            {showCreditEstimate && onPayPerUse && estimatedCredits > 0 && !isAdminDemoArmed && (
+              <Button variant="outline" className="w-full sm:flex-1"
+                disabled={paymentBusy || !generationAvailable || !definition?.blocks.length || isExecuting}
+                onClick={() => handleGenerate('cash')}>
+                {paymentBusy ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Connecting to checkout…</> : 'Generate · $1.99 / use'}
+              </Button>
+            )}
+            </div>
           </div>
       )
     : null;
@@ -436,7 +454,7 @@ export const TemplateExperienceModal = ({
           </div>
           <div className="mt-5 flex gap-3">
             {onReset && <Button variant="secondary" className="flex-1" onClick={onReset}>Edit inputs</Button>}
-            <Button variant="gradient" className="flex-1" onClick={handleGenerate}>Retry</Button>
+            <Button variant="gradient" className="flex-1" onClick={() => handleGenerate()}>Retry</Button>
           </div>
         </div>
       ) : detail && definition ? (

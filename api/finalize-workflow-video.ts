@@ -96,7 +96,7 @@ interface QueuedJob {
 type AssemblyPhase = 'retiming' | 'padding' | 'merging' | 'mixing' | 'storing';
 
 interface AssemblyState {
-  version: 1 | 2 | 3 | 4;
+  version: 1 | 2 | 3 | 4 | 5;
   phase: AssemblyPhase;
   /** null when clip metadata was unreadable and the provider must choose. */
   target: FrameSize | null;
@@ -551,6 +551,9 @@ async function prepareClip(
         `scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease`,
         `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:black`,
       ] : []),
+      // Source clips can have incompatible sample aspect ratios even when
+      // their pixel dimensions match. The concat filter requires one SAR.
+      'setsar=1',
     ].join(',');
     const commonArgs = [
       '-hide_banner',
@@ -907,7 +910,7 @@ const sameFrame = (a: FrameSize | null, b: FrameSize): boolean =>
 function readAssemblyState(
   value: unknown,
   clipCount: number,
-  expectedVersion: 1 | 2 | 3 | 4,
+  expectedVersion: 1 | 2 | 3 | 4 | 5,
   expectedFingerprint: string | null,
 ): AssemblyState | null {
   if (!isRecord(value) || value.version !== expectedVersion) return null;
@@ -1253,10 +1256,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `${user.id}/${runId}/prepared-${index + 1}.mp4`
     ));
     const inputFingerprint = timeline ? timelineFingerprint(timeline) : null;
-    // Version 4 normalizes every timeline clip before concatenation. This
+    // Version 5 normalizes every timeline clip's sample aspect ratio before
+    // concatenation. This
     // invalidates older timeline checkpoints that may still contain mixed
     // channel layouts or broken timestamps.
-    const stateVersion: 1 | 2 | 3 | 4 = timeline ? 4 : 1;
+    const stateVersion: 1 | 2 | 3 | 4 | 5 = timeline ? 5 : 1;
     checkpointToClear = true;
 
     let state = readAssemblyState(run.assembly_state, clipUrls.length, stateVersion, inputFingerprint);

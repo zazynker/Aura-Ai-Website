@@ -5,6 +5,7 @@ export interface QuickUseGuestDraft {
   template: Template;
   values: QuickUseInputValues;
   savedAt: number;
+  userId?: string;
 }
 
 const DATABASE_NAME = 'lazora-guest-drafts';
@@ -40,7 +41,7 @@ const runTransaction = async <T>(
     return await new Promise<T>((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, mode);
       const request = action(transaction.objectStore(STORE_NAME));
-      request.onsuccess = () => resolve(request.result);
+      transaction.oncomplete = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error('Quick Use draft storage failed.'));
       transaction.onabort = () => reject(transaction.error || new Error('Quick Use draft storage was aborted.'));
     });
@@ -52,13 +53,15 @@ const runTransaction = async <T>(
 export const saveQuickUseGuestDraft = async (
   template: Template,
   values: QuickUseInputValues,
+  options: { userId?: string; requirePersistence?: boolean } = {},
 ): Promise<void> => {
-  const draft: QuickUseGuestDraft = { template, values, savedAt: Date.now() };
+  const draft: QuickUseGuestDraft = { template, values, savedAt: Date.now(), userId: options.userId };
   memoryDraft = draft;
   try {
     await runTransaction('readwrite', (store) => store.put(draft, DRAFT_KEY));
   } catch (error) {
     console.warn('Could not persist the Quick Use draft across login.', error);
+    if (options.requirePersistence) throw new Error('Please allow browser storage before continuing. Your photo must be saved before checkout.');
   }
 };
 
