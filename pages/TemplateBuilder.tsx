@@ -21,6 +21,7 @@ import {
   loadTemplateDraft,
   saveTemplateDraft,
   submitTemplateForReview,
+  templateResultPersistenceKey,
   type PersistedMaterialMap,
   type PersistedResultMap,
   type PersistedResultPosterMap,
@@ -130,6 +131,40 @@ const CAPABILITY_TO_BUILDER_FEATURE = Object.fromEntries(
 
 const isPersistedGenerationId = (id: string): boolean =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+
+const primaryResultOptionIndex = (step: WorkflowStep): number => {
+  if (!step.resultOptions?.length) return -1;
+  if (step.resultGenerationId) {
+    const generationIndex = step.resultOptions.findIndex(
+      (option) => option.resultGenerationId === step.resultGenerationId,
+    );
+    if (generationIndex >= 0) return generationIndex;
+  }
+  if (step.resultUrl) {
+    const urlIndex = step.resultOptions.findIndex((option) => option.url === step.resultUrl);
+    if (urlIndex >= 0) return urlIndex;
+  }
+  return 0;
+};
+
+const withPrimaryResultFirst = (step: WorkflowStep): WorkflowStep => {
+  const primaryIndex = primaryResultOptionIndex(step);
+  if (!step.resultOptions || primaryIndex <= 0) return step;
+  const primary = step.resultOptions[primaryIndex];
+  return {
+    ...step,
+    resultOptions: [
+      primary,
+      ...step.resultOptions.filter((_, index) => index !== primaryIndex),
+    ],
+  };
+};
+
+const resultPersistenceKeys = (step: WorkflowStep): string[] => [
+  step.id,
+  templateResultPersistenceKey(step.id, 'default'),
+  ...(step.resultOptions || []).map((option) => templateResultPersistenceKey(step.id, option.id)),
+];
 
 const VIDEO_FEATURES: FeatureType[] = [
   'Image to Video',
@@ -394,6 +429,7 @@ export const TemplateBuilder = () => {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resultFileInputRef = useRef<HTMLInputElement>(null);
+  const resultUploadModeRef = useRef<'replace' | 'append'>('replace');
   const resultDragDepthRef = useRef(0);
   const publishFileInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -1571,20 +1607,21 @@ export const TemplateBuilder = () => {
     e.stopPropagation();
     if (steps.length === 1) return;
     const removedStep = steps.find((step) => step.id === id);
+    if (!removedStep) return;
     if (removedStep?.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(removedStep.resultUrl);
     setResultFiles((current) => {
       const next = { ...current };
-      delete next[id];
+      resultPersistenceKeys(removedStep).forEach((key) => delete next[key]);
       return next;
     });
     setPersistedResults((current) => {
       const next = { ...current };
-      delete next[id];
+      resultPersistenceKeys(removedStep).forEach((key) => delete next[key]);
       return next;
     });
     setPersistedResultPosters((current) => {
       const next = { ...current };
-      delete next[id];
+      resultPersistenceKeys(removedStep).forEach((key) => delete next[key]);
       return next;
     });
     const newSteps = steps.filter(s => s.id !== id);
@@ -1622,7 +1659,12 @@ export const TemplateBuilder = () => {
     });
   };
 
-  const applyStepResultFile = (file: File) => {
+  const openStepResultUpload = (mode: 'replace' | 'append') => {
+    resultUploadModeRef.current = mode;
+    resultFileInputRef.current?.click();
+  };
+
+  const applyStepResultFile = (file: File, mode: 'replace' | 'append') => {
     if (!file.type.startsWith('image/') && !file.type.startsWith('video/') && !file.type.startsWith('audio/')) {
       addToast('error', 'Please choose an image, video, or audio file.');
       return;
@@ -1640,43 +1682,108 @@ export const TemplateBuilder = () => {
     }
 
     const resultUrl = URL.createObjectURL(file);
-    const resultTypeValue = resultType;
     const existingOptions = activeStep.resultOptions?.length
       ? activeStep.resultOptions
       : activeStep.resultUrl
-        ? [{ id: 'default', label: 'Result 1', url: activeStep.resultUrl, resultType: activeStep.resultType || resultTypeValue, resultGenerationId: activeStep.resultGenerationId, resultThumbnailUrl: activeStep.resultThumbnailUrl }]
+        ? [{ id: 'default', label: 'Result 1', url: activeStep.resultUrl, resultType: activeStep.resultType || resultType, resultGenerationId: activeStep.resultGenerationId, resultThumbnailUrl: activeStep.resultThumbnailUrl }]
         : [];
-    const optionId = `upload-${Date.now()}`;
-    const option: BuilderResultOption = { id: optionId, label: `Result ${existingOptions.length + 1}`, url: resultUrl, resultType: resultTypeValue };
-    setResultFiles((current) => ({ ...current, [optionId]: file, ...(existingOptions.length === 0 ? { [activeStep.id]: file } : {}) }));
+
+    if (mode === 'append' && existingOptions.length > 0) {
+      const optionId = `upload-${Date.now()}`;
+      const option: BuilderResultOption = {
+        id: optionId,
+        label: `Result ${existingOptions.length + 1}`,
+        url: resultUrl,
+        resultType,
+      };
+      const persistenceKey = templateResultPersistenceKey(activeStep.id, optionId);
+      setResultFiles((current) => ({ ...current, [persistenceKey]: file }));
+      setPersistedResults((current) => {
+        const next = { ...current };
+        delete next[persistenceKey];
+        return next;
+      });
+      setPersistedResultPosters((current) => {
+        const next = { ...current };
+        delete next[persistenceKey];
+        return next;
+      });
+      updateActiveStep({ resultOptions: [...existingOptions, option] });
+      return;
+    }
+
+    const primaryIndex = primaryResultOptionIndex(activeStep);
+    const primaryOption = primaryIndex >= 0 ? existingOptions[primaryIndex] : undefined;
+    const replacementOption: BuilderResultOption = {
+      id: primaryOption?.id || 'default',
+      label: primaryOption?.label || 'Result 1',
+      url: resultUrl,
+      resultType,
+    };
+    const replacementOptions = existingOptions.length > 1
+      ? existingOptions.map((option, index) => index === primaryIndex ? replacementOption : option)
+      : undefined;
+    const replacementFileKey = templateResultPersistenceKey(activeStep.id, replacementOption.id);
+    const primaryPersistenceKey = primaryOption
+      ? templateResultPersistenceKey(activeStep.id, primaryOption.id)
+      : templateResultPersistenceKey(activeStep.id, 'default');
+
+    if (activeStep.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(activeStep.resultUrl);
+    setResultFiles((current) => {
+      const next = { ...current };
+      delete next[activeStep.id];
+      delete next[primaryPersistenceKey];
+      next[replacementFileKey] = file;
+      return next;
+    });
     setPersistedResults((current) => {
       const next = { ...current };
       delete next[activeStep.id];
+      delete next[primaryPersistenceKey];
       return next;
     });
     setPersistedResultPosters((current) => {
       const next = { ...current };
       delete next[activeStep.id];
+      delete next[primaryPersistenceKey];
       return next;
     });
     updateActiveStep({
-      resultUrl: activeStep.resultUrl || resultUrl,
-      resultType: activeStep.resultType || resultType,
-      resultThumbnailUrl: activeStep.resultThumbnailUrl,
-      resultGenerationId: activeStep.resultGenerationId,
-      resultOptions: [...existingOptions, option],
+      resultUrl,
+      resultType,
+      resultThumbnailUrl: undefined,
+      resultGenerationId: undefined,
+      resultOptions: replacementOptions,
     });
 
-    if (!isFinalResultManual && (activeStep.resultUrl ? activeStep.resultType : resultType) !== 'audio' && activeStep.id === steps[steps.length - 1]?.id) {
-      setFinalResult(activeStep.resultUrl || resultUrl);
-      setFinalResultType((activeStep.resultType || resultType) as 'image' | 'video');
+    if (!isFinalResultManual && resultType !== 'audio' && activeStep.id === steps[steps.length - 1]?.id) {
+      setFinalResult(resultUrl);
+      setFinalResultType(resultType);
     }
   };
 
   const handleStepResultUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
-    if (file) applyStepResultFile(file);
+    const mode = resultUploadModeRef.current;
+    resultUploadModeRef.current = 'replace';
+    if (file) applyStepResultFile(file, mode);
+  };
+
+  const makeResultOptionPrimary = (option: BuilderResultOption) => {
+    updateActiveStep({
+      resultUrl: option.url,
+      resultType: option.resultType,
+      resultGenerationId: option.resultGenerationId,
+      resultThumbnailUrl: option.resultThumbnailUrl,
+      resultOptions: activeStep.resultOptions
+        ? [option, ...activeStep.resultOptions.filter((candidate) => candidate.id !== option.id)]
+        : undefined,
+    });
+    if (!isFinalResultManual && option.resultType !== 'audio' && activeStep.id === steps[steps.length - 1]?.id) {
+      setFinalResult(option.url);
+      setFinalResultType(option.resultType);
+    }
   };
 
   const handleResultDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
@@ -1705,7 +1812,7 @@ export const TemplateBuilder = () => {
     resultDragDepthRef.current = 0;
     setIsDraggingResult(false);
     const file = event.dataTransfer.files?.[0];
-    if (file) applyStepResultFile(file);
+    if (file) applyStepResultFile(file, 'replace');
   };
 
   const inferFeatureFromGeneration = (
@@ -1874,6 +1981,25 @@ export const TemplateBuilder = () => {
           format: generation.generationParameters?.format === 'flac' ? 'flac' as const : 'mp3' as const,
         }
       : undefined;
+    const currentPrimaryOptionIndex = primaryResultOptionIndex(activeStep);
+    const currentPrimaryOption = currentPrimaryOptionIndex >= 0
+      ? activeStep.resultOptions?.[currentPrimaryOptionIndex]
+      : undefined;
+    const selectedResultOption: BuilderResultOption = {
+      id: currentPrimaryOption?.id || 'default',
+      label: currentPrimaryOption?.label || 'Result 1',
+      url: resultUrl,
+      resultType: generation.audioUrl && resultUrl === generation.audioUrl
+        ? 'audio'
+        : generation.videoUrl && resultUrl === generation.videoUrl ? 'video' : 'image',
+      resultGenerationId: generation.id,
+      resultThumbnailUrl: generation.thumbnailUrl || undefined,
+    };
+    const nextResultOptions = activeStep.resultOptions && activeStep.resultOptions.length > 1
+      ? activeStep.resultOptions.map((option, index) => (
+          index === currentPrimaryOptionIndex ? selectedResultOption : option
+        ))
+      : undefined;
     const nextStep: WorkflowStep = {
       ...activeStep,
       resultUrl,
@@ -1888,10 +2014,7 @@ export const TemplateBuilder = () => {
           )
         : undefined,
       resultGenerationId: generation.id,
-      resultOptions: [
-        ...(activeStep.resultOptions?.filter((option) => option.id !== 'default') || []),
-        { id: `generation-${generation.id}`, label: `Result ${(activeStep.resultOptions?.length || 0) + 1}`, url: resultUrl, resultType: generation.audioUrl && resultUrl === generation.audioUrl ? 'audio' : generation.videoUrl && resultUrl === generation.videoUrl ? 'video' : 'image', resultGenerationId: generation.id, resultThumbnailUrl: generation.thumbnailUrl || undefined },
-      ],
+      resultOptions: nextResultOptions,
       feature: nextFeature,
       prompt:
         typeof parameterPrompt === 'string'
@@ -1917,16 +2040,19 @@ export const TemplateBuilder = () => {
     setResultFiles((current) => {
       const next = { ...current };
       delete next[activeStep.id];
+      delete next[templateResultPersistenceKey(activeStep.id, currentPrimaryOption?.id || 'default')];
       return next;
     });
     setPersistedResults((current) => {
       const next = { ...current };
       delete next[activeStep.id];
+      delete next[templateResultPersistenceKey(activeStep.id, currentPrimaryOption?.id || 'default')];
       return next;
     });
     setPersistedResultPosters((current) => {
       const next = { ...current };
       delete next[activeStep.id];
+      delete next[templateResultPersistenceKey(activeStep.id, currentPrimaryOption?.id || 'default')];
       return next;
     });
     if (activeStep.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(activeStep.resultUrl);
@@ -1964,19 +2090,17 @@ export const TemplateBuilder = () => {
     });
     setResultFiles((current) => {
       const next = { ...current };
-      delete next[activeStep.id];
-      activeStep.resultOptions?.forEach((option) => delete next[option.id]);
+      resultPersistenceKeys(activeStep).forEach((key) => delete next[key]);
       return next;
     });
     setPersistedResults((current) => {
       const next = { ...current };
-      delete next[activeStep.id];
-      activeStep.resultOptions?.forEach((option) => delete next[option.id]);
+      resultPersistenceKeys(activeStep).forEach((key) => delete next[key]);
       return next;
     });
     setPersistedResultPosters((current) => {
       const next = { ...current };
-      delete next[activeStep.id];
+      resultPersistenceKeys(activeStep).forEach((key) => delete next[key]);
       return next;
     });
     updateActiveStep({
@@ -2026,7 +2150,9 @@ export const TemplateBuilder = () => {
     // Saving or viewing a template must not create paid Fal thumbnail jobs.
     // Persist an existing provider poster when available; otherwise the UI
     // uses its neutral video placeholder.
-    const stepsForSave = steps;
+    // Store the selected Result first as a compatibility fallback for older
+    // readers, while resultChoices.defaultOptionId remains authoritative.
+    const stepsForSave = steps.map(withPrimaryResultFirst);
     const timelineForSave = adminDefinition.timeline
       ? {
           ...adminDefinition.timeline,
@@ -2042,11 +2168,15 @@ export const TemplateBuilder = () => {
             if (!step?.resultOptions || step.resultOptions.length < 2) return [];
             const existingGroup = adminDefinition.timeline?.resultChoices?.find((group) => group.stepId === step.id);
             const validOptionIds = new Set(step.resultOptions.map((option) => option.id));
+            const primaryOption = step.resultOptions[primaryResultOptionIndex(step)];
             return [{
               id: `result-choice-${step.id}`,
               label: existingGroup?.label || `${step.feature} result`,
               stepId: step.id,
-              defaultOptionId: existingGroup && validOptionIds.has(existingGroup.defaultOptionId) ? existingGroup.defaultOptionId : step.resultOptions[0].id,
+              defaultOptionId: primaryOption?.id
+                || (existingGroup && validOptionIds.has(existingGroup.defaultOptionId)
+                  ? existingGroup.defaultOptionId
+                  : step.resultOptions[0].id),
               options: step.resultOptions.map((option) => ({
                 id: option.id,
                 label: existingGroup?.options.find((item) => item.id === option.id)?.label || option.label,
@@ -2564,7 +2694,7 @@ export const TemplateBuilder = () => {
                 </span>
                 <button
                   type="button"
-                  onClick={() => resultFileInputRef.current?.click()}
+                  onClick={() => openStepResultUpload('append')}
                   className="ml-auto rounded-lg border border-purple-200 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-50 dark:border-purple-500/30 dark:text-purple-300"
                 >
                   + Add another result
@@ -2580,8 +2710,10 @@ export const TemplateBuilder = () => {
               />
               {activeStep.resultOptions && activeStep.resultOptions.length > 0 && (
                 <div className="mb-3 grid gap-2 sm:grid-cols-2">
-                  {activeStep.resultOptions.map((option, optionIndex) => (
-                    <div key={option.id} className="rounded-lg border border-purple-200 bg-purple-50/50 p-2 dark:border-purple-500/30 dark:bg-purple-950/20">
+                  {activeStep.resultOptions.map((option, optionIndex) => {
+                    const isPrimary = optionIndex === primaryResultOptionIndex(activeStep);
+                    return (
+                    <div key={option.id} className={`rounded-lg border p-2 ${isPrimary ? 'border-purple-500 bg-purple-100/70 dark:border-purple-400 dark:bg-purple-900/30' : 'border-purple-200 bg-purple-50/50 dark:border-purple-500/30 dark:bg-purple-950/20'}`}>
                       <div className="mb-1 flex items-center justify-between gap-2">
                         <input
                           value={option.label}
@@ -2589,13 +2721,22 @@ export const TemplateBuilder = () => {
                           className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 text-xs font-semibold text-slate-700 focus:border-purple-300 focus:bg-white dark:text-slate-200"
                           aria-label={`Result ${optionIndex + 1} name`}
                         />
+                        <button
+                          type="button"
+                          onClick={() => makeResultOptionPrimary(option)}
+                          disabled={isPrimary}
+                          className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${isPrimary ? 'bg-purple-600 text-white' : 'text-purple-600 hover:bg-purple-100 dark:text-purple-300 dark:hover:bg-purple-900/40'}`}
+                        >
+                          {isPrimary ? 'Default' : 'Set default'}
+                        </button>
                         <span className="text-[10px] text-slate-400">{option.resultType}</span>
                       </div>
                       {option.url && option.resultType === 'video' ? <video src={option.url} muted playsInline preload="metadata" className="h-24 w-full rounded object-cover" /> : null}
                       {option.url && option.resultType === 'image' ? <img src={option.url} alt={option.label} className="h-24 w-full rounded object-cover" /> : null}
                       {option.url && option.resultType === 'audio' ? <audio src={option.url} controls className="w-full" /> : null}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               <div
@@ -2648,7 +2789,7 @@ export const TemplateBuilder = () => {
                       </button>
                       <button
                         type="button"
-                        onClick={() => resultFileInputRef.current?.click()}
+                        onClick={() => openStepResultUpload('replace')}
                         className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm hover:border-purple-300 hover:text-purple-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
                       >
                         <Upload className="h-3.5 w-3.5" />
@@ -2675,7 +2816,7 @@ export const TemplateBuilder = () => {
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
-                        resultFileInputRef.current?.click();
+                        openStepResultUpload('replace');
                       }}
                       className="flex items-center gap-1.5 rounded-lg bg-black/75 px-2.5 py-1.5 text-xs font-medium text-white backdrop-blur hover:bg-black"
                       aria-label="Upload a local replacement for this step result"
@@ -3834,7 +3975,7 @@ export const TemplateBuilder = () => {
 
                     <div className="space-y-3 border-t border-cyan-200 pt-4 dark:border-cyan-500/20">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
+                      <div>
                           <div className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">Audio overlays · {timelineDefinition.audioClips.length}/{QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS}</div>
                           <div className="mt-1 text-[11px] text-slate-500">Each row is mixed over the video from its start time.</div>
                         </div>

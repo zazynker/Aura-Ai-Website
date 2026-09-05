@@ -252,14 +252,19 @@ function mapTemplateStepResults(
   steps: QuickUseExecutionStep[],
   assetsByKey: Readonly<Record<string, { url: string; type: 'image' | 'video' | 'audio' }>>,
   definition: QuickUseDefinition,
+  values: QuickUseExecutionValues,
 ): Record<string, QuickUseTemplateStepResult> {
   const ordered = [...steps].sort((left, right) => left.order - right.order);
   const results: Record<string, QuickUseTemplateStepResult> = {};
   ordered.forEach((step, index) => {
     const resultChoice = definition.timeline?.resultChoices?.find((group) => group.stepId === step.id);
-    const defaultChoice = resultChoice?.options.find((option) => option.id === resultChoice.defaultOptionId);
+    const selectedChoiceId = resultChoice
+      ? asString(values[`timeline-choice:${resultChoice.id}`], resultChoice.defaultOptionId)
+      : '';
+    const selectedChoice = resultChoice?.options.find((option) => option.id === selectedChoiceId)
+      || resultChoice?.options.find((option) => option.id === resultChoice.defaultOptionId);
     const stablePrefix = `${step.id}-result-`;
-    const asset = (defaultChoice ? assetsByKey[defaultChoice.assetKey] : undefined)
+    const asset = (selectedChoice ? assetsByKey[selectedChoice.assetKey] : undefined)
       || assetsByKey[`${stablePrefix}default`]
       || Object.entries(assetsByKey).find(([assetKey]) => assetKey.startsWith(stablePrefix))?.[1]
       || assetsByKey[`step-${step.order}-result`]
@@ -552,7 +557,7 @@ export async function executeQuickUseTemplate(
       definition,
       steps: plan.steps,
       values: resolvedValues,
-      templateStepResults: mapTemplateStepResults(plan.steps, stepResultAssets, definition),
+      templateStepResults: mapTemplateStepResults(plan.steps, stepResultAssets, definition, resolvedValues),
     });
 
     for (let index = 0; index < plan.steps.length; index += 1) {

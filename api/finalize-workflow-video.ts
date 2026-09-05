@@ -407,32 +407,41 @@ async function resolveTimelineSources(
 
   return Promise.all(sources.map(async (source) => {
     if (source.kind === 'step_result' && source.stepId) {
-      const group = choiceGroups?.find((candidate) => candidate.stepId === source.stepId && candidate.options.some((option) => option.assetType === expectedType));
-      const selectedId = source.resultId || (group ? resultChoices[group.id] || group.defaultOptionId : undefined);
-      const selected = group?.options.find((option) => option.id === selectedId && option.assetType === expectedType);
-      if (selected) {
-        const asset = assetsByKey.get(selected.assetKey);
-        if (!asset) throw new Error(`Selected result ${selected.id} is missing.`);
-        const publicUrl = readString(asset.public_url);
-        if (publicUrl) return { url: publicUrl, stepId: source.stepId, executionMode: 'template_asset' };
-        const bucket = readString(asset.storage_bucket);
-        const path = readString(asset.storage_path);
-        if (bucket && path) {
-          const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 6 * 60 * 60);
-          if (!error && data?.signedUrl) return { url: data.signedUrl, stepId: source.stepId, executionMode: 'template_asset' };
-        }
-      }
       const stepRow = runStepById.get(source.stepId);
       if (!stepRow || stepRow.status !== 'completed') throw new Error(`Timeline step ${source.stepId} is not complete.`);
+      const executionMode = readString(stepRow.execution_mode) || 'generated';
       const generationId = readString(stepRow.generation_id);
       const url = generationId ? generationUrls.get(generationId)?.[expectedType] : undefined;
       const fallback = readString(stepRow.result_url);
-      if (!url && !fallback) throw new Error(`Timeline step ${source.stepId} has no ${expectedType} result.`);
-      return {
-        url: await ensureFetchableUrl(supabase, url || fallback!),
-        stepId: source.stepId,
-        executionMode: readString(stepRow.execution_mode) || 'generated',
-      };
+      if (url || fallback) {
+        return {
+          url: await ensureFetchableUrl(supabase, url || fallback!),
+          stepId: source.stepId,
+          executionMode,
+        };
+      }
+
+      // Legacy reused rows may not have persisted result_url. Only those rows
+      // may fall back to the version-owned template asset. A generated row
+      // must never be silently replaced by an old authored Result.
+      if (executionMode === 'reused_template_result') {
+        const group = choiceGroups?.find((candidate) => candidate.stepId === source.stepId && candidate.options.some((option) => option.assetType === expectedType));
+        const selectedId = source.resultId || (group ? resultChoices[group.id] || group.defaultOptionId : undefined);
+        const selected = group?.options.find((option) => option.id === selectedId && option.assetType === expectedType);
+        if (selected) {
+          const asset = assetsByKey.get(selected.assetKey);
+          if (!asset) throw new Error(`Selected result ${selected.id} is missing.`);
+          const publicUrl = readString(asset.public_url);
+          if (publicUrl) return { url: publicUrl, stepId: source.stepId, executionMode };
+          const bucket = readString(asset.storage_bucket);
+          const path = readString(asset.storage_path);
+          if (bucket && path) {
+            const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 6 * 60 * 60);
+            if (!error && data?.signedUrl) return { url: data.signedUrl, stepId: source.stepId, executionMode };
+          }
+        }
+      }
+      throw new Error(`Timeline step ${source.stepId} has no ${expectedType} result.`);
     }
     const asset = source.assetKey ? assetsByKey.get(source.assetKey) : undefined;
     if (!asset || asset.asset_type !== expectedType) throw new Error(`Timeline asset ${source.assetKey || ''} is missing or has the wrong type.`);

@@ -33,6 +33,11 @@ export type PersistedResultPosterMap = Record<string, UploadedTemplateObject>;
 export type PersistedQuickUseExampleMap = Record<string, UploadedTemplateObject>;
 export type PersistedTimelineAssetMap = Record<string, UploadedTemplateObject>;
 
+/** Keeps common option ids such as "default" isolated to their own step. */
+export const templateResultPersistenceKey = (stepId: string, optionId: string): string => (
+  `${stepId}-result-${optionId}`
+);
+
 export interface SaveTemplateDraftInput {
   identity?: TemplateDraftIdentity | null;
   userId: string;
@@ -592,19 +597,22 @@ export async function saveTemplateDraft(
         ? step.resultOptions
         : [{ id: 'default', label: 'Default result', url: step.resultUrl, resultType: step.resultType || defaultResultTypeForFeature(step.feature), resultGenerationId: step.resultGenerationId, resultThumbnailUrl: step.resultThumbnailUrl }];
       for (const option of options) {
-        const file = input.resultFiles[option.id] || (!step.resultGenerationId ? input.resultFiles[step.id] : undefined);
+        const persistenceKey = templateResultPersistenceKey(step.id, option.id);
+        const file = input.resultFiles[persistenceKey]
+          || (!step.resultGenerationId ? input.resultFiles[step.id] : undefined)
+          || (option.id !== 'default' ? input.resultFiles[option.id] : undefined);
         if (!file || option.resultGenerationId) continue;
         const assetType = resultAssetTypeFromMime(file.type);
-        const assetKey = `${step.id}-result-${option.id}`;
+        const assetKey = persistenceKey;
         if (assetType === 'video') {
           const uploaded = await uploadTemplateVideoWithPoster(identity, file, assetKey);
-          resultUploads[option.id] = uploaded.original;
-          resultPosterUploads[option.id] = uploaded.poster;
+          resultUploads[persistenceKey] = uploaded.original;
+          resultPosterUploads[persistenceKey] = uploaded.poster;
           newlyUploaded.push({ bucket: uploaded.original.bucket, path: uploaded.original.path }, { bucket: uploaded.poster.bucket, path: uploaded.poster.path });
         } else {
           const uploaded = await uploadTemplateMaterial(identity, file, assetType, assetKey);
-          resultUploads[option.id] = uploaded;
-          delete resultPosterUploads[option.id];
+          resultUploads[persistenceKey] = uploaded;
+          delete resultPosterUploads[persistenceKey];
           newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
         }
       }
@@ -711,15 +719,18 @@ export async function saveTemplateDraft(
         : [{ id: 'default', label: 'Default result', url: step.resultUrl, resultType: step.resultType || defaultResultTypeForFeature(step.feature), resultGenerationId: step.resultGenerationId, resultThumbnailUrl: step.resultThumbnailUrl }];
       options.forEach((option) => {
         if (!option.url) return;
-        const assetKey = `${step.id}-result-${option.id}`;
+        const assetKey = templateResultPersistenceKey(step.id, option.id);
         const optionGenerationId = option.resultGenerationId;
         if (optionGenerationId) {
           rows.push(generationRow(identity, input.userId, assetKey, option.resultType, optionGenerationId, option.url, sortOrder++, false));
           if (option.resultType === 'video' && option.resultThumbnailUrl) rows.push(generationRow(identity, input.userId, `${assetKey}-thumbnail`, 'image', optionGenerationId, option.resultThumbnailUrl, sortOrder++, false));
-        } else if (resultUploads[option.id] || (option.id === 'default' && resultUploads[step.id])) {
-          const uploaded = resultUploads[option.id] || resultUploads[step.id];
+        } else if (resultUploads[assetKey] || (option.id === 'default' && resultUploads[step.id]) || (option.id !== 'default' && resultUploads[option.id])) {
+          const uploaded = resultUploads[assetKey]
+            || resultUploads[step.id]
+            || resultUploads[option.id];
           rows.push(uploadRow(identity, input.userId, assetKey, option.resultType || resultAssetTypeFromMime(uploaded.mimeType), uploaded, sortOrder++, false));
-          const poster = resultPosterUploads[option.id];
+          const poster = resultPosterUploads[assetKey]
+            || (option.id === 'default' ? resultPosterUploads[step.id] : resultPosterUploads[option.id]);
           if ((option.resultType === 'video' || uploaded.mimeType.startsWith('video/')) && poster) rows.push(uploadRow(identity, input.userId, `${assetKey}-thumbnail`, 'image', poster, sortOrder++, false));
         }
       });
@@ -1113,7 +1124,12 @@ export async function loadTemplateDraft(
       throw new Error(`A saved result is missing for ${workflowStep.title}: ${missingResultOptionId}. The existing draft was left unchanged.`);
     }
     const legacyResultAsset = assets.find((asset) => asset.asset_key === `step-${stepIndex + 1}-result`);
-    const resultAsset = orderedResultAssets[0] || legacyResultAsset;
+    const defaultResultAsset = resultChoiceGroup
+      ? resultAssets.find(
+          (asset) => optionIdForAsset(asset) === resultChoiceGroup.defaultOptionId,
+        )
+      : undefined;
+    const resultAsset = defaultResultAsset || orderedResultAssets[0] || legacyResultAsset;
     const resultThumbnailAsset = resultAsset
       ? assets.find((asset) => asset.asset_key === `${resultAsset.asset_key}-thumbnail`)
         || assets.find((asset) => asset.asset_key === `step-${stepIndex + 1}-result-thumbnail`)
@@ -1122,14 +1138,18 @@ export async function loadTemplateDraft(
       const stored = savedObject(resultAsset);
       if (stored) {
         persistedResults[workflowStep.id] = stored;
-        if (resultAsset !== legacyResultAsset) persistedResults[optionIdForAsset(resultAsset)] = stored;
+        if (resultAsset !== legacyResultAsset) {
+          persistedResults[templateResultPersistenceKey(workflowStep.id, optionIdForAsset(resultAsset))] = stored;
+        }
       }
     }
     if (resultThumbnailAsset?.source_kind === 'upload') {
       const stored = savedObject(resultThumbnailAsset);
       if (stored) {
         persistedResultPosters[workflowStep.id] = stored;
-        if (resultAsset && resultAsset !== legacyResultAsset) persistedResultPosters[optionIdForAsset(resultAsset)] = stored;
+        if (resultAsset && resultAsset !== legacyResultAsset) {
+          persistedResultPosters[templateResultPersistenceKey(workflowStep.id, optionIdForAsset(resultAsset))] = stored;
+        }
       }
     }
     const materialAssets = assets.filter((asset) =>
@@ -1173,10 +1193,10 @@ export async function loadTemplateDraft(
       const authoredOption = authoredResultOptions.find((option) => option.id === optionId);
       const choiceOption = resultChoiceGroup?.options.find((option) => option.id === optionId);
       const stored = asset.source_kind === 'upload' ? savedObject(asset) : undefined;
-      if (stored) persistedResults[optionId] = stored;
+      if (stored) persistedResults[templateResultPersistenceKey(workflowStep.id, optionId)] = stored;
       const thumbnail = assets.find((candidate) => candidate.asset_key === `${asset.asset_key}-thumbnail`);
       const storedPoster = thumbnail?.source_kind === 'upload' ? savedObject(thumbnail) : undefined;
-      if (storedPoster) persistedResultPosters[optionId] = storedPoster;
+      if (storedPoster) persistedResultPosters[templateResultPersistenceKey(workflowStep.id, optionId)] = storedPoster;
       const resultUrl = urls.get(asset.id) || asset.public_url;
       if (!resultUrl) {
         throw new Error(`A saved result could not be opened for ${workflowStep.title}: ${optionId}. The existing draft was left unchanged.`);
