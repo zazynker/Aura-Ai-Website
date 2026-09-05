@@ -394,8 +394,11 @@ export async function fetchTemplateDetail(
   const hasReadableStepResult = (step: { id: string }, stepIndex: number): boolean => {
     const stablePrefix = `${step.id}-result-`;
     const ordinalPrefix = `step-${stepIndex + 1}-result-`;
+    const choiceAssetKeys = quickUseDefinition?.timeline?.resultChoices
+      ?.filter((group) => group.stepId === step.id)
+      .flatMap((group) => group.options.map((option) => option.assetKey)) || [];
     return assets.some((asset) => (
-      (asset.asset_key.startsWith(stablePrefix) || asset.asset_key.startsWith(ordinalPrefix))
+      (asset.asset_key.startsWith(stablePrefix) || asset.asset_key.startsWith(ordinalPrefix) || choiceAssetKeys.includes(asset.asset_key))
       && !asset.asset_key.endsWith('-thumbnail')
       && Boolean(urls.get(asset.id) || asset.public_url)
     ));
