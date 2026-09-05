@@ -8,6 +8,7 @@ import {
   type BuilderDraftStep,
   type BuilderFeatureType,
   type BuilderMaterial,
+  type BuilderResultOption,
 } from '../workflows/builderAdapter';
 import { supabase } from './supabase';
 import {
@@ -587,31 +588,25 @@ export async function saveTemplateDraft(
     }
 
     for (const step of input.steps) {
-      const file = input.resultFiles[step.id];
-      if (!file || step.resultGenerationId) continue;
-      const assetType = resultAssetTypeFromMime(file.type);
-      if (assetType === 'video') {
-        const uploaded = await uploadTemplateVideoWithPoster(
-          identity,
-          file,
-          `${step.id}-result`,
-        );
-        resultUploads[step.id] = uploaded.original;
-        resultPosterUploads[step.id] = uploaded.poster;
-        newlyUploaded.push(
-          { bucket: uploaded.original.bucket, path: uploaded.original.path },
-          { bucket: uploaded.poster.bucket, path: uploaded.poster.path },
-        );
-      } else {
-        const uploaded = await uploadTemplateMaterial(
-          identity,
-          file,
-          assetType,
-          `${step.id}-result`,
-        );
-        resultUploads[step.id] = uploaded;
-        delete resultPosterUploads[step.id];
-        newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
+      const options = step.resultOptions?.length
+        ? step.resultOptions
+        : [{ id: 'default', label: 'Default result', url: step.resultUrl, resultType: step.resultType || defaultResultTypeForFeature(step.feature), resultGenerationId: step.resultGenerationId, resultThumbnailUrl: step.resultThumbnailUrl }];
+      for (const option of options) {
+        const file = input.resultFiles[option.id] || (!step.resultGenerationId ? input.resultFiles[step.id] : undefined);
+        if (!file || option.resultGenerationId) continue;
+        const assetType = resultAssetTypeFromMime(file.type);
+        const assetKey = `${step.id}-result-${option.id}`;
+        if (assetType === 'video') {
+          const uploaded = await uploadTemplateVideoWithPoster(identity, file, assetKey);
+          resultUploads[option.id] = uploaded.original;
+          resultPosterUploads[option.id] = uploaded.poster;
+          newlyUploaded.push({ bucket: uploaded.original.bucket, path: uploaded.original.path }, { bucket: uploaded.poster.bucket, path: uploaded.poster.path });
+        } else {
+          const uploaded = await uploadTemplateMaterial(identity, file, assetType, assetKey);
+          resultUploads[option.id] = uploaded;
+          delete resultPosterUploads[option.id];
+          newlyUploaded.push({ bucket: uploaded.bucket, path: uploaded.path });
+        }
       }
     }
 
@@ -711,61 +706,23 @@ export async function saveTemplateDraft(
     }
 
     input.steps.forEach((step, stepIndex) => {
-      if (step.resultGenerationId && step.resultUrl) {
-        rows.push(
-          generationRow(
-            identity,
-            input.userId,
-            `step-${stepIndex + 1}-result`,
-            step.resultType || defaultResultTypeForFeature(step.feature),
-            step.resultGenerationId,
-            step.resultUrl,
-            sortOrder++,
-            false,
-          ),
-        );
-        if (step.resultType === 'video' && step.resultThumbnailUrl) {
-          rows.push(
-            generationRow(
-              identity,
-              input.userId,
-              `step-${stepIndex + 1}-result-thumbnail`,
-              'image',
-              step.resultGenerationId,
-              step.resultThumbnailUrl,
-              sortOrder++,
-              false,
-            ),
-          );
+      const options = step.resultOptions?.length
+        ? step.resultOptions
+        : [{ id: 'default', label: 'Default result', url: step.resultUrl, resultType: step.resultType || defaultResultTypeForFeature(step.feature), resultGenerationId: step.resultGenerationId, resultThumbnailUrl: step.resultThumbnailUrl }];
+      options.forEach((option) => {
+        if (!option.url) return;
+        const assetKey = `${step.id}-result-${option.id}`;
+        const optionGenerationId = option.resultGenerationId;
+        if (optionGenerationId) {
+          rows.push(generationRow(identity, input.userId, assetKey, option.resultType, optionGenerationId, option.url, sortOrder++, false));
+          if (option.resultType === 'video' && option.resultThumbnailUrl) rows.push(generationRow(identity, input.userId, `${assetKey}-thumbnail`, 'image', optionGenerationId, option.resultThumbnailUrl, sortOrder++, false));
+        } else if (resultUploads[option.id] || (option.id === 'default' && resultUploads[step.id])) {
+          const uploaded = resultUploads[option.id] || resultUploads[step.id];
+          rows.push(uploadRow(identity, input.userId, assetKey, option.resultType || resultAssetTypeFromMime(uploaded.mimeType), uploaded, sortOrder++, false));
+          const poster = resultPosterUploads[option.id];
+          if ((option.resultType === 'video' || uploaded.mimeType.startsWith('video/')) && poster) rows.push(uploadRow(identity, input.userId, `${assetKey}-thumbnail`, 'image', poster, sortOrder++, false));
         }
-      } else if (step.resultUrl && resultUploads[step.id]) {
-        const uploaded = resultUploads[step.id];
-        rows.push(
-          uploadRow(
-            identity,
-            input.userId,
-            `step-${stepIndex + 1}-result`,
-            step.resultType || resultAssetTypeFromMime(uploaded.mimeType),
-            uploaded,
-            sortOrder++,
-            false,
-          ),
-        );
-        const poster = resultPosterUploads[step.id];
-        if ((step.resultType === 'video' || uploaded.mimeType.startsWith('video/')) && poster) {
-          rows.push(
-            uploadRow(
-              identity,
-              input.userId,
-              `step-${stepIndex + 1}-result-thumbnail`,
-              'image',
-              poster,
-              sortOrder++,
-              false,
-            ),
-          );
-        }
-      }
+      });
 
       step.materials.forEach((material, materialIndex) => {
         const key = `step-${stepIndex + 1}-material-${materialIndex + 1}`;
@@ -1123,12 +1080,14 @@ export async function loadTemplateDraft(
     if (!feature) {
       throw new Error(`This draft uses an unsupported feature: ${workflowStep.capability}`);
     }
-    const resultAsset = assets.find(
-      (asset) => asset.asset_key === `step-${stepIndex + 1}-result`,
-    );
-    const resultThumbnailAsset = assets.find(
-      (asset) => asset.asset_key === `step-${stepIndex + 1}-result-thumbnail`,
-    );
+    const resultPrefix = `step-${stepIndex + 1}-result-`;
+    const resultAssets = assets.filter((asset) => asset.asset_key.startsWith(resultPrefix) && !asset.asset_key.endsWith('-thumbnail'));
+    const legacyResultAsset = assets.find((asset) => asset.asset_key === `step-${stepIndex + 1}-result`);
+    const resultAsset = resultAssets[0] || legacyResultAsset;
+    const resultThumbnailAsset = resultAsset
+      ? assets.find((asset) => asset.asset_key === `${resultAsset.asset_key}-thumbnail`)
+        || assets.find((asset) => asset.asset_key === `step-${stepIndex + 1}-result-thumbnail`)
+      : undefined;
     if (resultAsset?.source_kind === 'upload') {
       const stored = savedObject(resultAsset);
       if (stored) persistedResults[workflowStep.id] = stored;
@@ -1173,6 +1132,19 @@ export async function loadTemplateDraft(
       });
     }
     const parameters = workflowStep.parameters || {};
+    const resultOptions: BuilderResultOption[] = resultAssets.map((asset, optionIndex) => {
+      const stored = asset.source_kind === 'upload' ? savedObject(asset) : undefined;
+      if (stored) persistedResults[asset.asset_key.slice(resultPrefix.length) || `option-${optionIndex + 1}`] = stored;
+      const thumbnail = assets.find((candidate) => candidate.asset_key === `${asset.asset_key}-thumbnail`);
+      return {
+        id: asset.asset_key.slice(resultPrefix.length) || `option-${optionIndex + 1}`,
+        label: `Result ${optionIndex + 1}`,
+        url: urls.get(asset.id) || asset.public_url,
+        resultType: asset.asset_type,
+        resultGenerationId: asset.generation_id || undefined,
+        resultThumbnailUrl: thumbnail ? urls.get(thumbnail.id) || thumbnail.public_url || undefined : undefined,
+      };
+    });
     return {
       id: workflowStep.id,
       feature,
@@ -1182,6 +1154,7 @@ export async function loadTemplateDraft(
         ? urls.get(resultThumbnailAsset.id) || resultThumbnailAsset.public_url || undefined
         : undefined,
       resultGenerationId: resultAsset?.generation_id || undefined,
+      resultOptions: resultOptions.length > 1 ? resultOptions : undefined,
       materials,
       prompt:
         typeof parameters.prompt === 'string'

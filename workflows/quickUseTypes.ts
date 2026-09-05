@@ -221,7 +221,7 @@ export interface QuickUseStepReuseDefinition {
 
 export type QuickUseTimelineClipSource =
   | { kind: 'template_asset'; assetKey: string }
-  | { kind: 'step_result'; stepId: string };
+  | { kind: 'step_result'; stepId: string; resultId?: string };
 
 export interface QuickUseTimelineVideoClipDefinition {
   id: string;
@@ -251,6 +251,23 @@ export interface QuickUseTimelineDefinition {
   preserveVideoAudio: true;
   videoClips: QuickUseTimelineVideoClipDefinition[];
   audioClips: QuickUseTimelineAudioClipDefinition[];
+  /** User-facing choices for authored alternatives of a step result. */
+  resultChoices?: QuickUseTimelineResultChoiceGroup[];
+}
+
+export interface QuickUseTimelineResultChoiceOption {
+  id: string;
+  label: string;
+  assetKey: string;
+  assetType: 'image' | 'video' | 'audio';
+}
+
+export interface QuickUseTimelineResultChoiceGroup {
+  id: string;
+  label: string;
+  stepId: string;
+  options: QuickUseTimelineResultChoiceOption[];
+  defaultOptionId: string;
 }
 
 export interface QuickUseDefinition {
@@ -288,7 +305,7 @@ export type QuickUsePresentationCandidate = Pick<
 
 export type QuickUsePresentationDefinition = Pick<
   QuickUseDefinition,
-  'schemaVersion' | 'title' | 'subtitle' | 'blocks'
+  'schemaVersion' | 'title' | 'subtitle' | 'blocks' | 'timeline'
 > & {
   candidates: QuickUsePresentationCandidate[];
 };

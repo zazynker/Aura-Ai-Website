@@ -95,6 +95,7 @@ const isAbort = (error: unknown): boolean =>
 
 async function requestAssemblyStep(
   runId: string,
+  resultChoices: Record<string, string>,
   signal?: AbortSignal,
 ): Promise<FinalizeResponsePayload> {
   // The token is read per attempt rather than once: assembly can outlive a
@@ -112,7 +113,7 @@ async function requestAssemblyStep(
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    body: JSON.stringify({ runId }),
+    body: JSON.stringify({ runId, resultChoices }),
     signal,
   });
 
@@ -141,7 +142,7 @@ async function requestAssemblyStep(
  */
 export async function finalizeWorkflowVideo(
   runId: string,
-  options: { signal?: AbortSignal; onPhase?: (phase: WorkflowFinalVideoPhase) => void } = {},
+  options: { signal?: AbortSignal; onPhase?: (phase: WorkflowFinalVideoPhase) => void; resultChoices?: Record<string, string> } = {},
 ): Promise<WorkflowFinalVideoResult> {
   const deadline = Date.now() + MAX_TOTAL_WAIT_MS;
   let networkErrors = 0;
@@ -150,7 +151,7 @@ export async function finalizeWorkflowVideo(
   for (;;) {
     let payload: FinalizeResponsePayload;
     try {
-      payload = await requestAssemblyStep(runId, options.signal);
+      payload = await requestAssemblyStep(runId, options.resultChoices || {}, options.signal);
       networkErrors = 0;
     } catch (error) {
       if (isAbort(error)) throw error;

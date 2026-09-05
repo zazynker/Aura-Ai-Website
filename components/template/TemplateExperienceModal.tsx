@@ -139,7 +139,7 @@ export const TemplateExperienceModal = ({
       setValues({});
       return;
     }
-    setValues(Object.fromEntries(definition.blocks.map((block) => {
+    const blockValues = Object.fromEntries(definition.blocks.map((block) => {
       const hasRestoredValue = initialValues
         && Object.prototype.hasOwnProperty.call(initialValues, block.candidateId);
       return [
@@ -148,7 +148,12 @@ export const TemplateExperienceModal = ({
           ? initialValues[block.candidateId]
           : block.defaultValue ?? (block.control === 'toggle' ? false : null),
       ];
-    })));
+    }));
+    const choiceValues = Object.fromEntries((definition.timeline?.resultChoices || []).map((group) => [
+      `timeline-choice:${group.id}`,
+      initialValues?.[`timeline-choice:${group.id}`] ?? group.defaultOptionId,
+    ]));
+    setValues({ ...blockValues, ...choiceValues });
     setValidationError(null);
   }, [definition, initialValues]);
 
@@ -434,6 +439,19 @@ export const TemplateExperienceModal = ({
         <div className="mx-auto max-w-2xl">
           {definition.subtitle && <p className="mb-6 text-sm text-slate-500">{definition.subtitle}</p>}
           <div className="space-y-3">
+            {(definition.timeline?.resultChoices || []).map((group) => (
+              <div key={group.id} className="rounded-2xl border border-cyan-200 bg-cyan-50/60 p-4 dark:border-cyan-500/30 dark:bg-cyan-950/20">
+                <div className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">{group.label}</div>
+                <select
+                  className="w-full rounded-xl border border-cyan-200 bg-white px-3 py-2.5 text-sm dark:border-cyan-500/30 dark:bg-slate-900 dark:text-white"
+                  value={String(values[`timeline-choice:${group.id}`] || group.defaultOptionId)}
+                  onChange={(event) => { setValues((current) => ({ ...current, [`timeline-choice:${group.id}`]: event.target.value })); setValidationError(null); }}
+                >
+                  {group.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                </select>
+                <p className="mt-1.5 text-xs text-slate-500">Choose which authored result is used in the final video.</p>
+              </div>
+            ))}
             {[...definition.blocks]
               .sort((left, right) => Number(right.primary) - Number(left.primary) || left.order - right.order)
               .map((block) => (

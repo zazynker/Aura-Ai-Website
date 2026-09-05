@@ -92,6 +92,7 @@ export function compileQuickUseExecutionPlan(
   const candidateById = new Map(derivation.candidates.map((candidate) => [candidate.id, candidate]));
 
   for (const suppliedId of Object.keys(values) as QuickUseCandidateId[]) {
+    if (suppliedId.startsWith('timeline-choice:')) continue;
     if (!exposedIds.has(suppliedId) || !candidateById.has(suppliedId)) {
       throw new Error(`Quick Use value is not exposed by this version: ${suppliedId}.`);
     }

@@ -595,6 +595,19 @@ export const QuickUseBuilder = () => {
 
               <FinalAssemblySummary definition={definition} />
 
+              {(definition.timeline?.resultChoices || []).length > 0 && (
+                <div className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50/50 p-3 dark:border-cyan-500/25 dark:bg-cyan-500/10">
+                  <div className="text-xs font-semibold uppercase tracking-wider text-cyan-800 dark:text-cyan-200">Result choices</div>
+                  <p className="text-[11px] leading-4 text-slate-500">These choices appear in Quick Use and match the uploaded results from each step.</p>
+                  {definition.timeline!.resultChoices!.map((group) => (
+                    <div key={group.id} className="space-y-2 rounded-lg border border-cyan-100 bg-white p-2 dark:border-cyan-500/20 dark:bg-slate-900/70">
+                      <input className={inputClassName} value={group.label} onChange={(event) => mutateDefinition({ ...definition, timeline: { ...definition.timeline!, resultChoices: definition.timeline!.resultChoices!.map((item) => item.id === group.id ? { ...item, label: event.target.value } : item) } })} />
+                      {group.options.map((option) => <input key={option.id} className={inputClassName} value={option.label} onChange={(event) => mutateDefinition({ ...definition, timeline: { ...definition.timeline!, resultChoices: definition.timeline!.resultChoices!.map((item) => item.id === group.id ? { ...item, options: item.options.map((candidate) => candidate.id === option.id ? { ...candidate, label: event.target.value } : candidate) } : item) } })} />)}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               <ToggleSetting
                 label="Reuse unchanged steps"
                 checked={definition.stepReuse?.enabled !== false}

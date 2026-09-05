@@ -85,6 +85,7 @@ export function toQuickUsePresentationDefinition(
     schemaVersion: definition.schemaVersion,
     title: definition.title,
     blocks: definition.blocks.map((block) => ({ ...block })),
+    timeline: definition.timeline,
     candidates: candidates
       .filter((candidate) => exposedIds.has(candidate.id))
       .map((candidate) => {

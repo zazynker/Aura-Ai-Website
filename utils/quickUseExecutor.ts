@@ -304,11 +304,12 @@ async function resolveFinalVideo(
   runId: string,
   signal?: AbortSignal,
   onPhase?: (phase: WorkflowFinalVideoPhase) => void,
+  values: QuickUseExecutionValues = {},
 ): Promise<{ video?: QuickUseFinalVideoOutcome; error?: string }> {
   let lastError: string | undefined;
   try {
     const assembled = await awaitWithCancellation(
-      finalizeWorkflowVideo(runId, { signal, onPhase }),
+      finalizeWorkflowVideo(runId, { signal, onPhase, resultChoices: Object.fromEntries(Object.entries(values).filter(([key, value]) => key.startsWith('timeline-choice:') && typeof value === 'string').map(([key, value]) => [key.slice('timeline-choice:'.length), value as string])) }),
       signal,
     );
     if (assembled.finalVideoUrl) {
@@ -714,7 +715,7 @@ export async function executeQuickUseTemplate(
           currentStep: plan.steps.length,
           stepTitle: ASSEMBLY_PHASE_LABELS[phase],
         });
-      });
+      }, resolvedValues);
       finalVideo = outcome.video;
       finalVideoError = outcome.error;
     }

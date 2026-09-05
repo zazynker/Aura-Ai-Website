@@ -121,12 +121,14 @@ interface AssemblyState {
 interface TimelineSource {
   kind: 'step_result' | 'template_asset';
   stepId?: string;
+  resultId?: string;
   assetKey?: string;
 }
 
 interface TimelineDefinition {
   videoClips: Array<{ id: string; source: TimelineSource; durationScale: number }>;
   audioClips: Array<{ id: string; source: TimelineSource; startMs: number }>;
+  resultChoices?: Array<{ id: string; stepId: string; options: Array<{ id: string; assetKey: string; assetType: string }>; defaultOptionId: string }>;
 }
 
 function sendError(res: VercelResponse, status: number, error: string) {
@@ -151,16 +153,19 @@ function readPositiveInt(value: unknown): number | null {
     : null;
 }
 
-function readBody(body: unknown): { runId: string } {
+function readBody(body: unknown): { runId: string; resultChoices: Record<string, string> } {
   if (typeof body === 'string') {
     try {
       return readBody(JSON.parse(body));
     } catch {
-      return { runId: '' };
+      return { runId: '', resultChoices: {} };
     }
   }
-  if (!isRecord(body)) return { runId: '' };
-  return { runId: readString(body.runId) || '' };
+  if (!isRecord(body)) return { runId: '', resultChoices: {} };
+  const resultChoices = isRecord(body.resultChoices)
+    ? Object.fromEntries(Object.entries(body.resultChoices).flatMap(([key, value]) => typeof value === 'string' ? [[key, value] as [string, string]] : []))
+    : {};
+  return { runId: readString(body.runId) || '', resultChoices };
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
@@ -232,7 +237,8 @@ function readTimelineDefinition(quickUseDefinition: unknown): TimelineDefinition
     if (!isRecord(value)) return null;
     if (value.kind === 'step_result') {
       const stepId = readString(value.stepId);
-      return stepId ? { kind: 'step_result', stepId } : null;
+      const resultId = readString(value.resultId);
+      return stepId ? { kind: 'step_result', stepId, ...(resultId ? { resultId } : {}) } : null;
     }
     if (value.kind === 'template_asset') {
       const assetKey = readString(value.assetKey);
@@ -261,7 +267,14 @@ function readTimelineDefinition(quickUseDefinition: unknown): TimelineDefinition
       : null;
     return id && source && startMs !== null ? [{ id, source, startMs }] : [];
   }).slice(0, MAX_CLIPS);
-  return videoClips.length > 0 ? { videoClips, audioClips } : null;
+  const resultChoices = Array.isArray(timeline.resultChoices)
+    ? timeline.resultChoices.flatMap((value): TimelineDefinition['resultChoices'] => {
+      if (!isRecord(value) || typeof value.id !== 'string' || typeof value.stepId !== 'string' || typeof value.defaultOptionId !== 'string' || !Array.isArray(value.options)) return [];
+      const options = value.options.flatMap((option) => isRecord(option) && typeof option.id === 'string' && typeof option.assetKey === 'string' && typeof option.assetType === 'string' ? [{ id: option.id, assetKey: option.assetKey, assetType: option.assetType }] : []);
+      return options.length > 0 ? [{ id: value.id, stepId: value.stepId, options, defaultOptionId: value.defaultOptionId }] : [];
+    })
+    : undefined;
+  return videoClips.length > 0 ? { videoClips, audioClips, resultChoices } : null;
 }
 
 const timelineFingerprint = (timeline: TimelineDefinition): string => JSON.stringify({
@@ -348,6 +361,8 @@ async function resolveTimelineSources(
   versionId: string,
   sources: TimelineSource[],
   expectedType: 'video' | 'audio',
+  resultChoices: Record<string, string> = {},
+  choiceGroups: TimelineDefinition['resultChoices'] = [],
 ): Promise<Array<{ url: string; stepId?: string; executionMode: string }>> {
   const runSteps = await loadRunSteps(supabase, runId);
   const runStepById = new Map(runSteps.map((row) => [String(row.step_id), row]));
@@ -373,7 +388,8 @@ async function resolveTimelineSources(
     }
   }
 
-  const assetKeys = [...new Set(sources.flatMap((source) => source.assetKey ? [source.assetKey] : []))];
+  const choiceAssetKeys = (choiceGroups || []).flatMap((group) => group.options.map((option) => option.assetKey));
+  const assetKeys = [...new Set(sources.flatMap((source) => source.assetKey ? [source.assetKey] : []).concat(choiceAssetKeys))];
   const assetsByKey = new Map<string, Record<string, unknown>>();
   if (assetKeys.length > 0) {
     const { data, error } = await supabase
@@ -392,6 +408,21 @@ async function resolveTimelineSources(
 
   return Promise.all(sources.map(async (source) => {
     if (source.kind === 'step_result' && source.stepId) {
+      const group = choiceGroups?.find((candidate) => candidate.stepId === source.stepId && candidate.options.some((option) => option.assetType === expectedType));
+      const selectedId = source.resultId || (group ? resultChoices[group.id] || group.defaultOptionId : undefined);
+      const selected = group?.options.find((option) => option.id === selectedId && option.assetType === expectedType);
+      if (selected) {
+        const asset = assetsByKey.get(selected.assetKey);
+        if (!asset) throw new Error(`Selected result ${selected.id} is missing.`);
+        const publicUrl = readString(asset.public_url);
+        if (publicUrl) return { url: publicUrl, stepId: source.stepId, executionMode: 'template_asset' };
+        const bucket = readString(asset.storage_bucket);
+        const path = readString(asset.storage_path);
+        if (bucket && path) {
+          const { data, error } = await supabase.storage.from(bucket).createSignedUrl(path, 6 * 60 * 60);
+          if (!error && data?.signedUrl) return { url: data.signedUrl, stepId: source.stepId, executionMode: 'template_asset' };
+        }
+      }
       const stepRow = runStepById.get(source.stepId);
       if (!stepRow || stepRow.status !== 'completed') throw new Error(`Timeline step ${source.stepId} is not complete.`);
       const generationId = readString(stepRow.generation_id);
@@ -1081,7 +1112,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (!authHeader?.startsWith('Bearer ')) {
     return sendError(res, 401, 'Authentication required.');
   }
-  const { runId } = readBody(req.body);
+  const { runId, resultChoices } = readBody(req.body);
   if (!runId) return sendError(res, 400, 'runId is required.');
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
@@ -1157,6 +1188,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           versionId,
           timeline.videoClips.map((clip) => clip.source),
           'video',
+          resultChoices,
+          timeline.resultChoices,
         )
       : await resolveClipUrls(supabase, runId, legacyStepIds);
     const audioClips = timeline
@@ -1167,6 +1200,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           versionId,
           timeline.audioClips.map((clip) => clip.source),
           'audio',
+          resultChoices,
+          timeline.resultChoices,
         )
       : [];
     const clipUrls = await Promise.all(clips.map((clip) => ensureFetchableUrl(supabase, clip.url)));

@@ -15,6 +15,7 @@ import {
   type BuilderFeatureType as FeatureType,
   type BuilderInputSelection,
   type BuilderMaterial as Material,
+  type BuilderResultOption,
 } from '../workflows/builderAdapter';
 import {
   loadTemplateDraft,
@@ -1291,10 +1292,14 @@ export const TemplateBuilder = () => {
       : QUICK_USE_TIMELINE_MAX_AUDIO_CLIPS;
     if (!matchingStep || currentCount >= maxCount) return;
     const id = `${assetType}-${Date.now()}`;
-    const source = { kind: 'step_result' as const, stepId: matchingStep.id };
+    const firstOption = matchingStep.resultOptions?.[0];
+    const source = { kind: 'step_result' as const, stepId: matchingStep.id, ...(firstOption ? { resultId: firstOption.id } : {}) };
+    const resultChoices = matchingStep.resultOptions && matchingStep.resultOptions.length > 1
+      ? [{ id: `result-choice-${matchingStep.id}`, label: `${matchingStep.feature} result`, stepId: matchingStep.id, defaultOptionId: firstOption!.id, options: matchingStep.resultOptions.map((option) => ({ id: option.id, label: option.label, assetKey: `${matchingStep.id}-result-${option.id}`, assetType: option.resultType })) }]
+      : [];
     updateTimeline((timeline) => assetType === 'video'
-      ? { ...timeline, videoClips: [...timeline.videoClips, { id, source, durationScale: 1 }] }
-      : { ...timeline, audioClips: [...timeline.audioClips, { id, source, startMs: 0 }] });
+      ? { ...timeline, videoClips: [...timeline.videoClips, { id, source, durationScale: 1 }], resultChoices: [...(timeline.resultChoices || []).filter((group) => group.stepId !== matchingStep.id), ...resultChoices] }
+      : { ...timeline, audioClips: [...timeline.audioClips, { id, source, startMs: 0 }], resultChoices: [...(timeline.resultChoices || []).filter((group) => group.stepId !== matchingStep.id), ...resultChoices] });
   };
 
   const addStandaloneTimelineClip = (assetType: 'video' | 'audio') => {
@@ -1328,7 +1333,7 @@ export const TemplateBuilder = () => {
   const setTimelineSource = (assetType: 'video' | 'audio', clipId: string, value: string) => {
     const source = value === 'template_asset'
       ? { kind: 'template_asset' as const, assetKey: createTimelineAssetKey(clipId) }
-      : { kind: 'step_result' as const, stepId: value.replace(/^step:/, '') };
+      : (() => { const [, stepId, resultId] = value.split(':'); return { kind: 'step_result' as const, stepId, ...(resultId ? { resultId } : {}) }; })();
     updateTimeline((timeline) => assetType === 'video'
       ? { ...timeline, videoClips: timeline.videoClips.map((clip) => clip.id === clipId ? { ...clip, source } : clip) }
       : { ...timeline, audioClips: timeline.audioClips.map((clip) => clip.id === clipId ? { ...clip, source } : clip) });
@@ -1634,11 +1639,16 @@ export const TemplateBuilder = () => {
       return;
     }
 
-    if (activeStep.resultUrl?.startsWith('blob:')) {
-      URL.revokeObjectURL(activeStep.resultUrl);
-    }
     const resultUrl = URL.createObjectURL(file);
-    setResultFiles((current) => ({ ...current, [activeStep.id]: file }));
+    const resultTypeValue = resultType;
+    const existingOptions = activeStep.resultOptions?.length
+      ? activeStep.resultOptions
+      : activeStep.resultUrl
+        ? [{ id: 'default', label: 'Result 1', url: activeStep.resultUrl, resultType: activeStep.resultType || resultTypeValue, resultGenerationId: activeStep.resultGenerationId, resultThumbnailUrl: activeStep.resultThumbnailUrl }]
+        : [];
+    const optionId = `upload-${Date.now()}`;
+    const option: BuilderResultOption = { id: optionId, label: `Result ${existingOptions.length + 1}`, url: resultUrl, resultType: resultTypeValue };
+    setResultFiles((current) => ({ ...current, [optionId]: file, ...(existingOptions.length === 0 ? { [activeStep.id]: file } : {}) }));
     setPersistedResults((current) => {
       const next = { ...current };
       delete next[activeStep.id];
@@ -1650,15 +1660,16 @@ export const TemplateBuilder = () => {
       return next;
     });
     updateActiveStep({
-      resultUrl,
-      resultType,
-      resultThumbnailUrl: undefined,
-      resultGenerationId: undefined,
+      resultUrl: activeStep.resultUrl || resultUrl,
+      resultType: activeStep.resultType || resultType,
+      resultThumbnailUrl: activeStep.resultThumbnailUrl,
+      resultGenerationId: activeStep.resultGenerationId,
+      resultOptions: [...existingOptions, option],
     });
 
-    if (!isFinalResultManual && resultType !== 'audio' && activeStep.id === steps[steps.length - 1]?.id) {
-      setFinalResult(resultUrl);
-      setFinalResultType(resultType);
+    if (!isFinalResultManual && (activeStep.resultUrl ? activeStep.resultType : resultType) !== 'audio' && activeStep.id === steps[steps.length - 1]?.id) {
+      setFinalResult(activeStep.resultUrl || resultUrl);
+      setFinalResultType((activeStep.resultType || resultType) as 'image' | 'video');
     }
   };
 
@@ -1877,6 +1888,10 @@ export const TemplateBuilder = () => {
           )
         : undefined,
       resultGenerationId: generation.id,
+      resultOptions: [
+        ...(activeStep.resultOptions?.filter((option) => option.id !== 'default') || []),
+        { id: `generation-${generation.id}`, label: `Result ${(activeStep.resultOptions?.length || 0) + 1}`, url: resultUrl, resultType: generation.audioUrl && resultUrl === generation.audioUrl ? 'audio' : generation.videoUrl && resultUrl === generation.videoUrl ? 'video' : 'image', resultGenerationId: generation.id, resultThumbnailUrl: generation.thumbnailUrl || undefined },
+      ],
       feature: nextFeature,
       prompt:
         typeof parameterPrompt === 'string'
@@ -1944,14 +1959,19 @@ export const TemplateBuilder = () => {
   const clearActiveStepResult = () => {
     const removedResult = activeStep.resultUrl;
     if (removedResult?.startsWith('blob:')) URL.revokeObjectURL(removedResult);
+    activeStep.resultOptions?.forEach((option) => {
+      if (option.url?.startsWith('blob:')) URL.revokeObjectURL(option.url);
+    });
     setResultFiles((current) => {
       const next = { ...current };
       delete next[activeStep.id];
+      activeStep.resultOptions?.forEach((option) => delete next[option.id]);
       return next;
     });
     setPersistedResults((current) => {
       const next = { ...current };
       delete next[activeStep.id];
+      activeStep.resultOptions?.forEach((option) => delete next[option.id]);
       return next;
     });
     setPersistedResultPosters((current) => {
@@ -1964,6 +1984,7 @@ export const TemplateBuilder = () => {
       resultType: undefined,
       resultThumbnailUrl: undefined,
       resultGenerationId: undefined,
+      resultOptions: undefined,
     });
     if (!isFinalResultManual && activeStep.id === steps[steps.length - 1]?.id && finalResult === removedResult) {
       setFinalResult(null);
@@ -2006,6 +2027,26 @@ export const TemplateBuilder = () => {
     // Persist an existing provider poster when available; otherwise the UI
     // uses its neutral video placeholder.
     const stepsForSave = steps;
+    const timelineForSave = adminDefinition.timeline
+      ? {
+          ...adminDefinition.timeline,
+          resultChoices: adminDefinition.timeline.videoClips.concat(adminDefinition.timeline.audioClips).flatMap((clip) => {
+            if (clip.source.kind !== 'step_result') return [];
+            const step = stepsForSave.find((item) => item.id === clip.source.stepId);
+            if (!step?.resultOptions || step.resultOptions.length < 2) return [];
+            return [{
+              id: `result-choice-${step.id}`,
+              label: `${step.feature} result`,
+              stepId: step.id,
+              defaultOptionId: clip.source.resultId || step.resultOptions[0].id,
+              options: step.resultOptions.map((option) => ({ id: option.id, label: option.label, assetKey: `${step.id}-result-${option.id}`, assetType: option.resultType })),
+            }];
+          }).filter((group, index, all) => all.findIndex((item) => item.id === group.id) === index),
+        }
+      : undefined;
+    const definitionForSave = quickUseDefinition
+      ? { ...adminDefinition, ...(timelineForSave ? { timeline: timelineForSave } : {}) }
+      : quickUseDefinition;
     const { workflow, validation } = convertAndValidateBuilderWorkflow(stepsForSave);
     if (!validation.valid) {
       const message =
@@ -2039,7 +2080,7 @@ export const TemplateBuilder = () => {
         persistedResultPosters,
         materialFiles,
         persistedMaterials,
-        quickUseDefinition,
+        quickUseDefinition: definitionForSave,
         timelineAssetFiles,
         persistedTimelineAssets,
       });
@@ -2498,6 +2539,13 @@ export const TemplateBuilder = () => {
                     (Choose from Dashboard or upload a local image/video/audio)
                   </span>
                 </span>
+                <button
+                  type="button"
+                  onClick={() => resultFileInputRef.current?.click()}
+                  className="ml-auto rounded-lg border border-purple-200 px-3 py-1.5 text-xs font-semibold text-purple-700 hover:bg-purple-50 dark:border-purple-500/30 dark:text-purple-300"
+                >
+                  + Add another result
+                </button>
               </h3>
               <input
                 ref={resultFileInputRef}
@@ -2507,6 +2555,26 @@ export const TemplateBuilder = () => {
                 className="hidden"
                 aria-label="Upload a result image, video, or audio from this device"
               />
+              {activeStep.resultOptions && activeStep.resultOptions.length > 0 && (
+                <div className="mb-3 grid gap-2 sm:grid-cols-2">
+                  {activeStep.resultOptions.map((option, optionIndex) => (
+                    <div key={option.id} className="rounded-lg border border-purple-200 bg-purple-50/50 p-2 dark:border-purple-500/30 dark:bg-purple-950/20">
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <input
+                          value={option.label}
+                          onChange={(event) => updateActiveStep({ resultOptions: activeStep.resultOptions?.map((item) => item.id === option.id ? { ...item, label: event.target.value } : item) })}
+                          className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 text-xs font-semibold text-slate-700 focus:border-purple-300 focus:bg-white dark:text-slate-200"
+                          aria-label={`Result ${optionIndex + 1} name`}
+                        />
+                        <span className="text-[10px] text-slate-400">{option.resultType}</span>
+                      </div>
+                      {option.url && option.resultType === 'video' ? <video src={option.url} muted playsInline preload="metadata" className="h-24 w-full rounded object-cover" /> : null}
+                      {option.url && option.resultType === 'image' ? <img src={option.url} alt={option.label} className="h-24 w-full rounded object-cover" /> : null}
+                      {option.url && option.resultType === 'audio' ? <audio src={option.url} controls className="w-full" /> : null}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div
                 onDragEnter={handleResultDragEnter}
                 onDragOver={handleResultDragOver}
@@ -3674,7 +3742,7 @@ export const TemplateBuilder = () => {
                             <div className="text-center text-sm font-bold text-cyan-700">{index + 1}</div>
                             <div className="space-y-2">
                               <select
-                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}` : 'template_asset'}
+                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}${clip.source.resultId ? `:${clip.source.resultId}` : ''}` : 'template_asset'}
                                 onChange={(event) => setTimelineSource('video', clip.id, event.target.value)}
                                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                               >
@@ -3683,7 +3751,8 @@ export const TemplateBuilder = () => {
                                   {timelineVideoSteps.map((step) => {
                                     const usedElsewhere = (timelineVideoStepUsage.get(step.id) || 0)
                                       - (clip.source.kind === 'step_result' && clip.source.stepId === step.id ? 1 : 0);
-                                    return <option key={step.id} value={`step:${step.id}`}>{timelineStepLabel(step)}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>;
+                                    const options = step.resultOptions?.length ? step.resultOptions : [{ id: undefined, label: 'Default result' }];
+                                    return options.map((option) => <option key={`${step.id}:${option.id || 'default'}`} value={`step:${step.id}${option.id ? `:${option.id}` : ''}`}>{timelineStepLabel(step)} · {option.label}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>);
                                   })}
                                 </optgroup>
                               </select>
@@ -3770,7 +3839,7 @@ export const TemplateBuilder = () => {
                           <div key={clip.id} className="grid gap-3 rounded-lg border border-cyan-100 bg-white p-3 dark:border-cyan-500/15 dark:bg-slate-900/70 sm:grid-cols-[1fr_9rem_auto] sm:items-start">
                             <div className="space-y-2">
                               <select
-                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}` : 'template_asset'}
+                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}${clip.source.resultId ? `:${clip.source.resultId}` : ''}` : 'template_asset'}
                                 onChange={(event) => setTimelineSource('audio', clip.id, event.target.value)}
                                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                               >
@@ -3779,7 +3848,8 @@ export const TemplateBuilder = () => {
                                   {timelineAudioSteps.map((step) => {
                                     const usedElsewhere = (timelineAudioStepUsage.get(step.id) || 0)
                                       - (clip.source.kind === 'step_result' && clip.source.stepId === step.id ? 1 : 0);
-                                    return <option key={step.id} value={`step:${step.id}`}>{timelineStepLabel(step)}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>;
+                                    const options = step.resultOptions?.length ? step.resultOptions : [{ id: undefined, label: 'Default result' }];
+                                    return options.map((option) => <option key={`${step.id}:${option.id || 'default'}`} value={`step:${step.id}${option.id ? `:${option.id}` : ''}`}>{timelineStepLabel(step)} · {option.label}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>);
                                   })}
                                 </optgroup>
                               </select>
