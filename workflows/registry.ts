@@ -82,7 +82,8 @@ export const WORKFLOW_CAPABILITIES: Record<
       },
       {
         key: 'image_reference',
-        label: 'Image reference',
+        label: 'Reference image 1',
+        description: 'First image sent to GPT Image. Describe its purpose in the prompt. Midjourney can separately treat this slot as an image reference.',
         assetType: 'image',
         required: false,
         maxCount: 1,
@@ -91,7 +92,8 @@ export const WORKFLOW_CAPABILITIES: Record<
       },
       {
         key: 'style_reference',
-        label: 'Style reference',
+        label: 'Reference image 2',
+        description: 'Second image sent to GPT Image. Describe its purpose in the prompt. Midjourney can separately treat this slot as a style reference.',
         assetType: 'image',
         required: false,
         maxCount: 1,
@@ -100,7 +102,8 @@ export const WORKFLOW_CAPABILITIES: Record<
       },
       {
         key: 'omni_reference',
-        label: 'Subject reference',
+        label: 'Reference image 3',
+        description: 'Third image sent to GPT Image. Describe its purpose in the prompt. Midjourney can separately treat this slot as a subject reference.',
         assetType: 'image',
         required: false,
         maxCount: 1,

@@ -381,9 +381,13 @@ async function executeImageStep(
     .map((input) => getResolvedInputUrl(input, resultsByStepId))
     .filter((url): url is string => Boolean(url));
 
+  // Resolve positional names from the inputs that are actually present in this
+  // execution. The capability registry can contain hidden legacy slots; using
+  // that full list shifted modern GPT Image references from image1..3 to
+  // image2..4 even though only three images were sent to Fal.
   let resolvedPrompt = resolveWorkflowInputPromptTokens(
     prompt,
-    getWorkflowCapability(step.capability).inputs,
+    step.inputs.map((input) => ({ key: input.slot, assetType: input.assetType })),
   );
   if (step.capability === 'image.modify') {
     // Preserve old published templates while presenting the provider with the

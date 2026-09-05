@@ -3053,6 +3053,15 @@ export const TemplateBuilder = () => {
                       </div>
                     </div>
                   )}
+                  {activeStep.feature === 'Image Generation'
+                    && (activeStep.imageParams?.model || 'gpt-image-2') === 'gpt-image-2' && (
+                    <div className="mb-3 rounded-xl border border-blue-200 bg-blue-50/80 p-3 text-xs leading-5 text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
+                      <div className="font-semibold">GPT Image receives one ordered list: Image 1, Image 2, Image 3.</div>
+                      <div className="mt-1">
+                        The model has no separate Style or Subject input type. Explain each image's role in the prompt; the tags below keep that order stable when users replace an image in Quick Use.
+                      </div>
+                    </div>
+                  )}
                   {promptInputOptions.length > 0 && (
                     <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                       <div className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-200">Insert workflow input tag</div>
