@@ -51,6 +51,8 @@ export interface BuilderDraftStep {
   materials: BuilderMaterial[];
   prompt: string;
   resultGenerationId?: string;
+  /** Additional authored results that can be selected during final assembly. */
+  resultOptions?: BuilderResultOption[];
   videoParams?: {
     duration: string;
     resolution: string;
@@ -125,6 +127,15 @@ export function getBuilderMaterialInputSlots(
     slot.key !== 'reference_images'
     && (!type || slot.assetType === type.toLowerCase())
   ));
+}
+
+export interface BuilderResultOption {
+  id: string;
+  label: string;
+  url: string | null;
+  resultType: 'image' | 'video' | 'audio';
+  resultThumbnailUrl?: string;
+  resultGenerationId?: string;
 }
 
 /**
