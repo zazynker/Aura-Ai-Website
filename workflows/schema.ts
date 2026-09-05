@@ -62,6 +62,20 @@ export const WORKFLOW_DEFINITION_JSON_SCHEMA = {
               key: { type: 'string', minLength: 1, maxLength: 64 },
               assetType: { enum: ['image', 'video', 'audio'] },
               allowUserSelection: { type: 'boolean' },
+              resultOptions: {
+                type: 'array',
+                maxItems: 8,
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['id', 'label', 'assetType'],
+                  properties: {
+                    id: { type: 'string', minLength: 1, maxLength: 128 },
+                    label: { type: 'string', minLength: 1, maxLength: 120 },
+                    assetType: { enum: ['image', 'video', 'audio'] },
+                  },
+                },
+              },
             },
           },
         },

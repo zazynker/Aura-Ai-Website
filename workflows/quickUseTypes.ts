@@ -15,7 +15,8 @@ export const QUICK_USE_SCHEMA_VERSION = 1 as const;
 export type QuickUseCandidateId =
   | `quick-use:input:${string}:${string}`
   | `quick-use:setting:${string}:${string}`
-  | `quick-use:prompt:${string}:${string}:${string}`;
+  | `quick-use:prompt:${string}:${string}:${string}`
+  | `timeline-choice:${string}`;
 
 export interface QuickUseWorkflowInputBinding {
   kind: 'workflow_input';
@@ -139,10 +140,20 @@ export interface QuickUseSettingCandidate extends QuickUseCandidateBase {
   maxLength?: number;
 }
 
+export interface QuickUseResultChoiceCandidate extends QuickUseCandidateBase {
+  kind: 'result_choice';
+  groupId: string;
+  parameterType: 'enum';
+  defaultValue: string;
+  enumValues: string[];
+  options: Array<{ id: string; label: string }>;
+}
+
 export type QuickUseCandidate =
   | QuickUseMaterialCandidate
   | QuickUsePromptVariableCandidate
-  | QuickUseSettingCandidate;
+  | QuickUseSettingCandidate
+  | QuickUseResultChoiceCandidate;
 
 /**
  * Serializable presentation semantics. These values describe the product
@@ -286,6 +297,8 @@ export interface QuickUseDefinition {
   blocks: QuickUseBlockDefinition[];
   finalVideo?: QuickUseFinalVideoDefinition;
   timeline?: QuickUseTimelineDefinition;
+  /** When true, result choices are ordinary draggable blocks instead of legacy fixed panels. */
+  resultChoiceLayoutEnabled?: boolean;
   stepReuse?: QuickUseStepReuseDefinition;
 }
 
@@ -301,11 +314,14 @@ export type QuickUsePresentationCandidate = Pick<
 >> & Partial<Pick<
   QuickUsePromptVariableCandidate,
   'dialogue'
+>> & Partial<Pick<
+  QuickUseResultChoiceCandidate,
+  'options'
 >>;
 
 export type QuickUsePresentationDefinition = Pick<
   QuickUseDefinition,
-  'schemaVersion' | 'title' | 'subtitle' | 'blocks' | 'timeline'
+  'schemaVersion' | 'title' | 'subtitle' | 'blocks' | 'timeline' | 'resultChoiceLayoutEnabled'
 > & {
   candidates: QuickUsePresentationCandidate[];
 };

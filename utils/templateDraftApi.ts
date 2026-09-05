@@ -1080,21 +1080,51 @@ export async function loadTemplateDraft(
     if (!feature) {
       throw new Error(`This draft uses an unsupported feature: ${workflowStep.capability}`);
     }
-    const resultPrefix = `step-${stepIndex + 1}-result-`;
-    const resultAssets = assets.filter((asset) => asset.asset_key.startsWith(resultPrefix) && !asset.asset_key.endsWith('-thumbnail'));
+    const stableResultPrefix = `${workflowStep.id}-result-`;
+    const ordinalResultPrefix = `step-${stepIndex + 1}-result-`;
+    const authoredResultOptions = workflowStep.output?.resultOptions || [];
+    const resultChoiceGroup = quickUseDefinition?.timeline?.resultChoices?.find((group) => group.stepId === workflowStep.id);
+    const resultAssets = assets.filter((asset) => (
+      asset.asset_key.startsWith(stableResultPrefix)
+      || asset.asset_key.startsWith(ordinalResultPrefix)
+    ) && !asset.asset_key.endsWith('-thumbnail'));
+    const optionIdForAsset = (asset: SavedAssetRow): string => asset.asset_key.startsWith(stableResultPrefix)
+      ? asset.asset_key.slice(stableResultPrefix.length)
+      : asset.asset_key.slice(ordinalResultPrefix.length);
+    const orderedResultAssets = authoredResultOptions.length > 0
+      ? authoredResultOptions.flatMap((option) => {
+          const asset = resultAssets.find((candidate) => optionIdForAsset(candidate) === option.id);
+          return asset ? [asset] : [];
+        }).concat(resultAssets.filter((asset) => !authoredResultOptions.some((option) => option.id === optionIdForAsset(asset))))
+      : resultAssets;
+    const expectedResultOptionIds = authoredResultOptions.length > 0
+      ? authoredResultOptions.map((option) => option.id)
+      : resultChoiceGroup?.options.map((option) => option.id) || [];
+    const missingResultOptionId = expectedResultOptionIds.find((optionId) => (
+      !resultAssets.some((asset) => optionIdForAsset(asset) === optionId)
+    ));
+    if (missingResultOptionId) {
+      throw new Error(`A saved result is missing for ${workflowStep.title}: ${missingResultOptionId}. The existing draft was left unchanged.`);
+    }
     const legacyResultAsset = assets.find((asset) => asset.asset_key === `step-${stepIndex + 1}-result`);
-    const resultAsset = resultAssets[0] || legacyResultAsset;
+    const resultAsset = orderedResultAssets[0] || legacyResultAsset;
     const resultThumbnailAsset = resultAsset
       ? assets.find((asset) => asset.asset_key === `${resultAsset.asset_key}-thumbnail`)
         || assets.find((asset) => asset.asset_key === `step-${stepIndex + 1}-result-thumbnail`)
       : undefined;
     if (resultAsset?.source_kind === 'upload') {
       const stored = savedObject(resultAsset);
-      if (stored) persistedResults[workflowStep.id] = stored;
+      if (stored) {
+        persistedResults[workflowStep.id] = stored;
+        if (resultAsset !== legacyResultAsset) persistedResults[optionIdForAsset(resultAsset)] = stored;
+      }
     }
     if (resultThumbnailAsset?.source_kind === 'upload') {
       const stored = savedObject(resultThumbnailAsset);
-      if (stored) persistedResultPosters[workflowStep.id] = stored;
+      if (stored) {
+        persistedResultPosters[workflowStep.id] = stored;
+        if (resultAsset && resultAsset !== legacyResultAsset) persistedResultPosters[optionIdForAsset(resultAsset)] = stored;
+      }
     }
     const materialAssets = assets.filter((asset) =>
       asset.asset_key.startsWith(`step-${stepIndex + 1}-material-`),
@@ -1132,15 +1162,24 @@ export async function loadTemplateDraft(
       });
     }
     const parameters = workflowStep.parameters || {};
-    const resultOptions: BuilderResultOption[] = resultAssets.map((asset, optionIndex) => {
+    const resultOptions: BuilderResultOption[] = orderedResultAssets.map((asset, optionIndex) => {
+      const optionId = optionIdForAsset(asset) || `option-${optionIndex + 1}`;
+      const authoredOption = authoredResultOptions.find((option) => option.id === optionId);
+      const choiceOption = resultChoiceGroup?.options.find((option) => option.id === optionId);
       const stored = asset.source_kind === 'upload' ? savedObject(asset) : undefined;
-      if (stored) persistedResults[asset.asset_key.slice(resultPrefix.length) || `option-${optionIndex + 1}`] = stored;
+      if (stored) persistedResults[optionId] = stored;
       const thumbnail = assets.find((candidate) => candidate.asset_key === `${asset.asset_key}-thumbnail`);
+      const storedPoster = thumbnail?.source_kind === 'upload' ? savedObject(thumbnail) : undefined;
+      if (storedPoster) persistedResultPosters[optionId] = storedPoster;
+      const resultUrl = urls.get(asset.id) || asset.public_url;
+      if (!resultUrl) {
+        throw new Error(`A saved result could not be opened for ${workflowStep.title}: ${optionId}. The existing draft was left unchanged.`);
+      }
       return {
-        id: asset.asset_key.slice(resultPrefix.length) || `option-${optionIndex + 1}`,
-        label: `Result ${optionIndex + 1}`,
-        url: urls.get(asset.id) || asset.public_url,
-        resultType: asset.asset_type,
+        id: optionId,
+        label: choiceOption?.label || authoredOption?.label || `Result ${optionIndex + 1}`,
+        url: resultUrl,
+        resultType: authoredOption?.assetType || asset.asset_type,
         resultGenerationId: asset.generation_id || undefined,
         resultThumbnailUrl: thumbnail ? urls.get(thumbnail.id) || thumbnail.public_url || undefined : undefined,
       };

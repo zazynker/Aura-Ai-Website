@@ -267,6 +267,41 @@ function validateStepAgainstCapability(
         message: `Output asset type must be ${capability.output.assetType}.`,
       });
     }
+    if (step.output.resultOptions !== undefined) {
+      if (!Array.isArray(step.output.resultOptions) || step.output.resultOptions.length > 8) {
+        issues.push({
+          path: `${path}.output.resultOptions`,
+          code: 'invalid_result_options',
+          message: 'Step result options must be an array with at most 8 items.',
+        });
+      } else {
+        const optionIds = new Set<string>();
+        step.output.resultOptions.forEach((option, optionIndex) => {
+          const optionPath = `${path}.output.resultOptions[${optionIndex}]`;
+          if (!isRecord(option)
+            || typeof option.id !== 'string'
+            || !option.id.trim()
+            || typeof option.label !== 'string'
+            || !option.label.trim()
+            || option.assetType !== capability.output.assetType) {
+            issues.push({
+              path: optionPath,
+              code: 'invalid_result_option',
+              message: `Each result option needs an id, label, and ${capability.output.assetType} asset type.`,
+            });
+            return;
+          }
+          if (optionIds.has(option.id)) {
+            issues.push({
+              path: `${optionPath}.id`,
+              code: 'duplicate_result_option',
+              message: `Result option ids must be unique: ${option.id}.`,
+            });
+          }
+          optionIds.add(option.id);
+        });
+      }
+    }
   }
 }
 

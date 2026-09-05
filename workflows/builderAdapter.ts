@@ -406,7 +406,16 @@ export function builderStepsToWorkflowDefinition(
         instruction: step.prompt.trim().slice(0, 500),
         inputs: buildInputBindings(step, index, steps, capabilityKey),
         parameters: buildParameters(step, capabilityKey),
-        output: { ...capability.output },
+        output: {
+          ...capability.output,
+          ...(step.resultOptions?.length ? {
+            resultOptions: step.resultOptions.map((option) => ({
+              id: option.id,
+              label: option.label,
+              assetType: option.resultType,
+            })),
+          } : {}),
+        },
       };
     }),
   };

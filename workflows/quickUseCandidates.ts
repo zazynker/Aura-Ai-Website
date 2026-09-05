@@ -20,6 +20,7 @@ import type {
   QuickUseMaterialCandidate,
   QuickUsePromptTemplateDefinition,
   QuickUsePromptVariableCandidate,
+  QuickUseResultChoiceCandidate,
   QuickUsePresentationDefinition,
   QuickUseSettingCandidate,
   QuickUseValidationIssue,
@@ -32,7 +33,7 @@ export const QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX = 'quick-use-example:';
 
 type QuickUseCandidateSource = Pick<
   QuickUseDefinition,
-  'replaceableMaterials' | 'editableSettings' | 'promptTemplates'
+  'replaceableMaterials' | 'editableSettings' | 'promptTemplates' | 'timeline'
 >;
 
 const encodeBindingPart = (value: string): string => encodeURIComponent(value);
@@ -86,6 +87,7 @@ export function toQuickUsePresentationDefinition(
     title: definition.title,
     blocks: definition.blocks.map((block) => ({ ...block })),
     timeline: definition.timeline,
+    resultChoiceLayoutEnabled: definition.resultChoiceLayoutEnabled,
     candidates: candidates
       .filter((candidate) => exposedIds.has(candidate.id))
       .map((candidate) => {
@@ -107,6 +109,11 @@ export function toQuickUsePresentationDefinition(
           if (candidate.max !== undefined) safeCandidate.max = candidate.max;
           if (candidate.step !== undefined) safeCandidate.step = candidate.step;
           if (candidate.maxLength !== undefined) safeCandidate.maxLength = candidate.maxLength;
+        }
+        if (candidate.kind === 'result_choice') {
+          safeCandidate.parameterType = candidate.parameterType;
+          safeCandidate.enumValues = [...candidate.enumValues];
+          safeCandidate.options = candidate.options.map((option) => ({ ...option }));
         }
         if (candidate.kind === 'prompt_variable' && candidate.dialogue) {
           safeCandidate.dialogue = {
@@ -145,6 +152,7 @@ export function getSuggestedQuickUseControl(
     return 'image_upload';
   }
   if (candidate.kind === 'prompt_variable') return candidate.inputKind;
+  if (candidate.kind === 'result_choice') return 'select';
   if (candidate.parameterType === 'boolean') return 'toggle';
   if (candidate.parameterType === 'number') return 'number';
   if (candidate.parameterType === 'enum') return 'select';
@@ -191,6 +199,7 @@ export function deriveQuickUseCandidates(
     issues,
   );
   deriveSettingCandidates(workflow, editableSettingIds, candidates);
+  deriveResultChoiceCandidates(source, stepsById, candidates, issues);
 
   const seenCandidateIds = new Set<string>();
   candidates.forEach((candidate) => {
@@ -209,6 +218,46 @@ export function deriveQuickUseCandidates(
     candidates,
     issues,
   };
+}
+
+function deriveResultChoiceCandidates(
+  source: QuickUseCandidateSource,
+  stepsById: ReadonlyMap<string, WorkflowStep>,
+  candidates: QuickUseCandidate[],
+  issues: QuickUseValidationIssue[],
+): void {
+  (source.timeline?.resultChoices || []).forEach((group, index) => {
+    const path = `$.timeline.resultChoices[${index}]`;
+    const step = stepsById.get(group.stepId);
+    if (!step) {
+      issues.push({ path: `${path}.stepId`, code: 'unknown_result_choice_step', message: `Result choice references an unknown step: ${group.stepId}.` });
+      return;
+    }
+    if (!group.id || !group.label.trim() || group.options.length < 2) {
+      issues.push({ path, code: 'invalid_result_choice', message: 'A result choice needs a label and at least two options.' });
+      return;
+    }
+    if (!group.options.some((option) => option.id === group.defaultOptionId)) {
+      issues.push({ path: `${path}.defaultOptionId`, code: 'invalid_result_choice_default', message: 'The default result choice must match one of its options.' });
+      return;
+    }
+    const candidate: QuickUseResultChoiceCandidate = {
+      id: `timeline-choice:${group.id}`,
+      kind: 'result_choice',
+      groupId: group.id,
+      stepId: group.stepId,
+      stepTitle: step.title,
+      capability: step.capability,
+      capabilityVersion: step.capabilityVersion,
+      label: group.label,
+      required: true,
+      parameterType: 'enum',
+      defaultValue: group.defaultOptionId,
+      enumValues: group.options.map((option) => option.id),
+      options: group.options.map((option) => ({ id: option.id, label: option.label })),
+    };
+    candidates.push(candidate);
+  });
 }
 
 function validateEditableSettingDefinitions(

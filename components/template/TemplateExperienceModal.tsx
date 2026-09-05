@@ -149,10 +149,14 @@ export const TemplateExperienceModal = ({
           : block.defaultValue ?? (block.control === 'toggle' ? false : null),
       ];
     }));
-    const choiceValues = Object.fromEntries((definition.timeline?.resultChoices || []).map((group) => [
-      `timeline-choice:${group.id}`,
-      initialValues?.[`timeline-choice:${group.id}`] ?? group.defaultOptionId,
-    ]));
+    const choiceValues = Object.fromEntries((definition.timeline?.resultChoices || []).map((group) => {
+      const candidateId = `timeline-choice:${group.id}`;
+      const choiceBlock = definition.blocks.find((block) => block.candidateId === candidateId);
+      return [
+        candidateId,
+        initialValues?.[candidateId] ?? choiceBlock?.defaultValue ?? group.defaultOptionId,
+      ];
+    }));
     setValues({ ...blockValues, ...choiceValues });
     setValidationError(null);
   }, [definition, initialValues]);
@@ -439,11 +443,11 @@ export const TemplateExperienceModal = ({
         <div className="mx-auto max-w-2xl">
           {definition.subtitle && <p className="mb-6 text-sm text-slate-500">{definition.subtitle}</p>}
           <div className="space-y-3">
-            {(definition.timeline?.resultChoices || []).map((group) => (
-              <div key={group.id} className="rounded-2xl border border-cyan-200 bg-cyan-50/60 p-4 dark:border-cyan-500/30 dark:bg-cyan-950/20">
+            {definition.resultChoiceLayoutEnabled !== true && (definition.timeline?.resultChoices || []).map((group) => (
+              <div key={group.id} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
                 <div className="mb-2 text-sm font-semibold text-slate-900 dark:text-white">{group.label}</div>
                 <select
-                  className="w-full rounded-xl border border-cyan-200 bg-white px-3 py-2.5 text-sm dark:border-cyan-500/30 dark:bg-slate-900 dark:text-white"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                   value={String(values[`timeline-choice:${group.id}`] || group.defaultOptionId)}
                   onChange={(event) => { setValues((current) => ({ ...current, [`timeline-choice:${group.id}`]: event.target.value })); setValidationError(null); }}
                 >
@@ -867,7 +871,9 @@ const QuickUseControl = ({ block, candidate, onChange, value }: { block: QuickUs
     );
   }
   if (block.control === 'toggle') return <label className="flex items-center justify-between rounded-xl border border-slate-200 px-3 py-2.5 text-sm dark:border-slate-700"><span>{block.placeholder || 'Enabled'}</span><input type="checkbox" checked={Boolean(value)} onChange={(event) => onChange(event.target.checked)} className="h-4 w-4 accent-purple-600" /></label>;
-  if (block.control === 'select') return <select className={inputClass} value={String(value ?? '')} onChange={(event) => { const option = candidate?.enumValues?.find((item) => String(item) === event.target.value); onChange(option ?? event.target.value); }}>{candidate?.enumValues?.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}</select>;
+  if (block.control === 'select') return <select className={inputClass} value={String(value ?? '')} onChange={(event) => { const option = candidate?.enumValues?.find((item) => String(item) === event.target.value); onChange(option ?? event.target.value); }}>{candidate?.options?.length
+    ? candidate.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)
+    : candidate?.enumValues?.map((item) => <option key={String(item)} value={String(item)}>{String(item)}</option>)}</select>;
   if (block.control === 'number' && typeof candidate?.min === 'number' && typeof candidate.max === 'number') return <QuickUseNumberControl label={block.title || candidate.label} min={candidate.min} max={candidate.max} step={candidate.step} value={typeof value === 'number' ? value : null} onChange={onChange} />;
   if (block.control === 'number') return <input type="number" className={inputClass} value={typeof value === 'number' ? value : ''} step={candidate?.step} placeholder={placeholder} onChange={(event) => onChange(event.target.value === '' ? null : Number(event.target.value))} />;
   if (block.control === 'dialogue') return <DialogueEditor value={typeof value === 'string' ? value : ''} definition={candidate?.dialogue} placeholder={placeholder} onChange={onChange} />;

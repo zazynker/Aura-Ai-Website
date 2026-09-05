@@ -70,6 +70,7 @@ const candidateKindLabel: Record<QuickUseCandidate['kind'], string> = {
   material: 'Workflow inputs',
   prompt_variable: 'Prompt variables',
   setting: 'Settings',
+  result_choice: 'Result choices',
 };
 
 const inputClassName = 'mt-1.5 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-100 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:focus:ring-purple-500/15';
@@ -82,6 +83,7 @@ const mediaAccept = (assetType: 'image' | 'video' | 'audio'): string => `${asset
 const candidateSummary = (candidate: QuickUseCandidate): string => {
   if (candidate.kind === 'material') return `${candidate.assetType} upload`;
   if (candidate.kind === 'prompt_variable') return `${candidate.inputKind} · ${candidate.defaultValue}`;
+  if (candidate.kind === 'result_choice') return `${candidate.options.length} authored results`;
   return `${candidate.parameterType} · Default ${candidate.defaultValue === undefined ? 'None' : String(candidate.defaultValue)}`;
 };
 
@@ -96,6 +98,7 @@ const candidateIcon = (candidate: QuickUseCandidate): React.ReactNode => {
       ? <MessageSquare className="h-4 w-4" />
       : <Type className="h-4 w-4" />;
   }
+  if (candidate.kind === 'result_choice') return <Film className="h-4 w-4" />;
   if (candidate.parameterType === 'boolean') return <ToggleRight className="h-4 w-4" />;
   if (/duration/i.test(candidate.label)) return <Clock className="h-4 w-4" />;
   return <Monitor className="h-4 w-4" />;
@@ -475,7 +478,7 @@ export const QuickUseBuilder = () => {
           <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Block library</h2>
           <p className="mt-1 text-xs text-slate-400">Only controls allowed in Admin Builder appear here. Drag the ones you want into the Quick Use canvas.</p>
           <div className="mt-5 space-y-5">
-            {(['material', 'prompt_variable', 'setting'] as const).map((kind) => {
+            {(['material', 'prompt_variable', 'setting', 'result_choice'] as const).map((kind) => {
               const candidates = derivation.candidates.filter((candidate) => candidate.kind === kind);
               return (
                 <section key={kind}>
@@ -573,12 +576,33 @@ export const QuickUseBuilder = () => {
               <div className="flex items-start justify-between border-b border-slate-200 pb-4 dark:border-white/10"><div><h2 className="font-semibold text-slate-900 dark:text-white">Block settings</h2><p className="mt-1 text-[11px] text-slate-500">{selectedCandidate.kind} · {selectedCandidate.stepTitle}</p></div><button type="button" onClick={() => handleRemoveBlock(selectedBlock.candidateId)} className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"><Trash2 className="h-4 w-4" /></button></div>
               <SettingField label="Title"><input className={inputClassName} maxLength={120} value={selectedBlock.title} onChange={(event) => handleUpdateBlock({ title: event.target.value })} /></SettingField>
               <SettingField label="Subtitle / helper text"><textarea className={`${inputClassName} min-h-16 resize-y`} maxLength={300} value={selectedBlock.subtitle || ''} onChange={(event) => handleUpdateBlock({ subtitle: event.target.value || undefined })} /></SettingField>
-              {!isMediaControl(selectedBlock.control) && <SettingField label="Placeholder"><input className={inputClassName} maxLength={200} value={selectedBlock.placeholder || ''} onChange={(event) => handleUpdateBlock({ placeholder: event.target.value || undefined })} /></SettingField>}
+              {!isMediaControl(selectedBlock.control) && selectedCandidate.kind !== 'result_choice' && <SettingField label="Placeholder"><input className={inputClassName} maxLength={200} value={selectedBlock.placeholder || ''} onChange={(event) => handleUpdateBlock({ placeholder: event.target.value || undefined })} /></SettingField>}
               {!isMediaControl(selectedBlock.control) && <DefaultValueEditor block={selectedBlock} candidate={selectedCandidate} onChange={(value) => handleUpdateBlock({ defaultValue: value })} />}
-              <ToggleSetting label="Primary input" checked={selectedBlock.primary} onChange={(checked) => handleUpdateBlock({ primary: checked, openByDefault: checked ? true : selectedBlock.openByDefault })} />
+              {selectedCandidate.kind === 'result_choice' && (
+                <div className="space-y-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+                  <div className="text-xs font-medium text-slate-600 dark:text-slate-300">Choice labels</div>
+                  {definition.timeline?.resultChoices?.find((group) => group.id === selectedCandidate.groupId)?.options.map((option) => (
+                    <input
+                      key={option.id}
+                      className={inputClassName}
+                      value={option.label}
+                      onChange={(event) => mutateDefinition({
+                        ...definition,
+                        timeline: {
+                          ...definition.timeline!,
+                          resultChoices: definition.timeline!.resultChoices!.map((group) => group.id === selectedCandidate.groupId
+                            ? { ...group, options: group.options.map((item) => item.id === option.id ? { ...item, label: event.target.value } : item) }
+                            : group),
+                        },
+                      })}
+                    />
+                  ))}
+                </div>
+              )}
+              {selectedCandidate.kind !== 'result_choice' && <ToggleSetting label="Primary input" checked={selectedBlock.primary} onChange={(checked) => handleUpdateBlock({ primary: checked, openByDefault: checked ? true : selectedBlock.openByDefault })} />}
               <ToggleSetting label="Required" checked={selectedBlock.required} disabled={selectedCandidate.required} onChange={(checked) => handleUpdateBlock({ required: checked })} />
               {!selectedBlock.primary && <ToggleSetting label="Open by default" checked={selectedBlock.openByDefault} onChange={(checked) => handleUpdateBlock({ openByDefault: checked })} />}
-              <SettingField label="Example"><select className={inputClassName} value={exampleKindValue(selectedBlock)} onChange={(event) => handleExampleKind(event.target.value as 'none' | 'text' | 'image' | 'video' | 'audio')}><option value="none">None</option><option value="text">Text / placeholder</option><option value="image">Image</option><option value="video">Video</option><option value="audio">Audio</option></select></SettingField>
+              {selectedCandidate.kind !== 'result_choice' && <SettingField label="Example"><select className={inputClassName} value={exampleKindValue(selectedBlock)} onChange={(event) => handleExampleKind(event.target.value as 'none' | 'text' | 'image' | 'video' | 'audio')}><option value="none">None</option><option value="text">Text / placeholder</option><option value="image">Image</option><option value="video">Video</option><option value="audio">Audio</option></select></SettingField>}
               {selectedBlock.example?.kind === 'text' && <SettingField label="Placeholder example"><textarea className={`${inputClassName} min-h-20 resize-y`} value={selectedBlock.example.value} placeholder="Enter example text..." onChange={(event) => handleUpdateBlock({ placeholder: event.target.value || undefined, example: { kind: 'text', value: event.target.value } })} /></SettingField>}
               {selectedBlock.example?.kind === 'media' && (
                 <div className="space-y-3 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
@@ -594,19 +618,6 @@ export const QuickUseBuilder = () => {
               <SettingField label="Subtitle"><textarea className={`${inputClassName} min-h-24 resize-y`} value={definition.subtitle || ''} maxLength={300} onChange={(event) => mutateDefinition({ ...definition, subtitle: event.target.value || undefined })} /></SettingField>
 
               <FinalAssemblySummary definition={definition} />
-
-              {(definition.timeline?.resultChoices || []).length > 0 && (
-                <div className="space-y-3 rounded-xl border border-cyan-200 bg-cyan-50/50 p-3 dark:border-cyan-500/25 dark:bg-cyan-500/10">
-                  <div className="text-xs font-semibold uppercase tracking-wider text-cyan-800 dark:text-cyan-200">Result choices</div>
-                  <p className="text-[11px] leading-4 text-slate-500">These choices appear in Quick Use and match the uploaded results from each step.</p>
-                  {definition.timeline!.resultChoices!.map((group) => (
-                    <div key={group.id} className="space-y-2 rounded-lg border border-cyan-100 bg-white p-2 dark:border-cyan-500/20 dark:bg-slate-900/70">
-                      <input className={inputClassName} value={group.label} onChange={(event) => mutateDefinition({ ...definition, timeline: { ...definition.timeline!, resultChoices: definition.timeline!.resultChoices!.map((item) => item.id === group.id ? { ...item, label: event.target.value } : item) } })} />
-                      {group.options.map((option) => <input key={option.id} className={inputClassName} value={option.label} onChange={(event) => mutateDefinition({ ...definition, timeline: { ...definition.timeline!, resultChoices: definition.timeline!.resultChoices!.map((item) => item.id === group.id ? { ...item, options: item.options.map((candidate) => candidate.id === option.id ? { ...candidate, label: event.target.value } : candidate) } : item) } })} />)}
-                    </div>
-                  ))}
-                </div>
-              )}
 
               <ToggleSetting
                 label="Reuse unchanged steps"
@@ -671,6 +682,7 @@ const ToggleSetting = ({ checked, disabled, label, onChange }: { checked: boolea
 
 const DefaultValueEditor = ({ block, candidate, onChange }: { block: QuickUseBlockDefinition; candidate: QuickUseCandidate; onChange: (value: JsonPrimitive | undefined) => void }) => {
   if (candidate.kind === 'material') return null;
+  if (candidate.kind === 'result_choice') return <SettingField label="Default result"><select className={inputClassName} value={String(block.defaultValue ?? candidate.defaultValue)} onChange={(event) => onChange(event.target.value)}>{candidate.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select></SettingField>;
   if (candidate.kind === 'setting' && candidate.parameterType === 'boolean') return <ToggleSetting label="Default value" checked={Boolean(block.defaultValue)} onChange={onChange} />;
   if (candidate.kind === 'setting' && candidate.parameterType === 'enum') return <SettingField label="Default value"><select className={inputClassName} value={String(block.defaultValue ?? '')} onChange={(event) => onChange((candidate.enumValues || []).find((value) => String(value) === event.target.value))}>{(candidate.enumValues || []).map((value) => <option key={String(value)} value={String(value)}>{String(value)}</option>)}</select></SettingField>;
   if (candidate.kind === 'setting' && candidate.parameterType === 'number') {
@@ -688,6 +700,7 @@ const DefaultValueEditor = ({ block, candidate, onChange }: { block: QuickUseBlo
 function renderControl(block: QuickUseBlockDefinition, candidate?: QuickUseCandidate): React.ReactNode {
   if (block.control === 'image_upload' || block.control === 'video_upload' || block.control === 'audio_upload') return <div className="flex min-h-24 items-center justify-center rounded-xl border-2 border-dashed border-slate-200 text-xs text-slate-400 dark:border-slate-700">{block.control === 'image_upload' ? <ImageIcon className="mr-2 h-5 w-5" /> : block.control === 'video_upload' ? <Video className="mr-2 h-5 w-5" /> : <Music className="mr-2 h-5 w-5" />}Upload {block.control.split('_')[0]}</div>;
   if (block.control === 'toggle') return <label className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-950"><span>{block.placeholder || 'Enabled'}</span><input type="checkbox" defaultChecked={Boolean(block.defaultValue)} className="h-4 w-4 accent-purple-600" /></label>;
+  if (block.control === 'select' && candidate?.kind === 'result_choice') return <select className={inputClassName} defaultValue={String(block.defaultValue ?? candidate.defaultValue)}>{candidate.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}</select>;
   if (block.control === 'select' && candidate?.kind === 'setting') return <select className={inputClassName} defaultValue={String(block.defaultValue ?? '')}>{(candidate.enumValues || []).map((value) => <option key={String(value)} value={String(value)}>{String(value)}</option>)}</select>;
   if (block.control === 'number' && candidate?.kind === 'setting' && typeof candidate.min === 'number' && typeof candidate.max === 'number') return <QuickUseNumberControl label={block.title || candidate.label} min={candidate.min} max={candidate.max} step={candidate.step} value={typeof block.defaultValue === 'number' ? block.defaultValue : typeof candidate.defaultValue === 'number' ? candidate.defaultValue : null} />;
   if (block.control === 'number') return <input type="number" className={inputClassName} defaultValue={typeof block.defaultValue === 'number' ? block.defaultValue : undefined} placeholder={block.placeholder} />;

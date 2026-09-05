@@ -309,12 +309,17 @@ export async function fetchTemplateDetail(
         };
       })
       .filter((material): material is TemplateDetailMaterial => Boolean(material));
-    const resultAsset = assets.find(
-      (asset) => asset.asset_key === `step-${stepIndex + 1}-result`,
-    );
-    const resultThumbnailAsset = assets.find(
-      (asset) => asset.asset_key === `step-${stepIndex + 1}-result-thumbnail`,
-    );
+    const resultChoiceGroup = quickUseDefinition?.timeline?.resultChoices?.find((group) => group.stepId === step.id);
+    const defaultChoice = resultChoiceGroup?.options.find((option) => option.id === resultChoiceGroup.defaultOptionId);
+    const stableResultPrefix = `${step.id}-result-`;
+    const resultAsset = (defaultChoice ? assets.find((asset) => asset.asset_key === defaultChoice.assetKey) : undefined)
+      || assets.find((asset) => asset.asset_key === `${stableResultPrefix}default`)
+      || assets.find((asset) => asset.asset_key.startsWith(stableResultPrefix) && !asset.asset_key.endsWith('-thumbnail'))
+      || assets.find((asset) => asset.asset_key === `step-${stepIndex + 1}-result`);
+    const resultThumbnailAsset = resultAsset
+      ? assets.find((asset) => asset.asset_key === `${resultAsset.asset_key}-thumbnail`)
+        || assets.find((asset) => asset.asset_key === `step-${stepIndex + 1}-result-thumbnail`)
+      : undefined;
     const resultUrl = resultAsset ? urls.get(resultAsset.id) : undefined;
     const resultThumbnail = resultThumbnailAsset
       ? urls.get(resultThumbnailAsset.id)

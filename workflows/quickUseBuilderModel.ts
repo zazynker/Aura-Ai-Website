@@ -20,7 +20,7 @@ export function createQuickUseBlock(
     subtitle: candidate.stepTitle,
     primary,
     required: candidate.required,
-    openByDefault: primary,
+    openByDefault: primary || candidate.kind === 'result_choice',
   };
   if (candidate.kind !== 'material' && candidate.defaultValue !== undefined) {
     block.defaultValue = candidate.kind === 'prompt_variable' && candidate.dialogue

@@ -40,6 +40,12 @@ export interface WorkflowOutputDefinition {
   key: string;
   assetType: WorkflowAssetType;
   allowUserSelection?: boolean;
+  /** Version-owned authored alternatives for this step's reusable result. */
+  resultOptions?: Array<{
+    id: string;
+    label: string;
+    assetType: WorkflowAssetType;
+  }>;
 }
 
 export interface WorkflowStep {

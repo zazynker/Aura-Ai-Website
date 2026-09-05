@@ -51,6 +51,7 @@ export function createEmptyQuickUseDefinition(
     blocks: [],
     finalVideo: createDefaultFinalVideoDefinition(),
     timeline: createDefaultTimelineDefinition(),
+    resultChoiceLayoutEnabled: true,
     stepReuse: { enabled: true },
   };
   if (subtitle?.trim()) definition.subtitle = subtitle.trim();
@@ -70,6 +71,7 @@ export function withQuickUseDefaults(
     && definition.timeline
     && definition.stepReuse
     && definition.editableSettings !== undefined
+    && definition.resultChoiceLayoutEnabled !== undefined
   ) return definition;
   const editableSettings = definition.editableSettings || Array.from(
     new Map(definition.blocks.flatMap((block) => {
@@ -82,6 +84,7 @@ export function withQuickUseDefaults(
     editableSettings,
     finalVideo: definition.finalVideo || createDefaultFinalVideoDefinition(),
     timeline: definition.timeline || createDefaultTimelineDefinition(),
+    resultChoiceLayoutEnabled: definition.resultChoiceLayoutEnabled ?? true,
     stepReuse: definition.stepReuse || { enabled: true },
   };
 }

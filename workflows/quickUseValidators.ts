@@ -173,6 +173,9 @@ function validateDefinitionShape(
   if (value.finalVideo !== undefined) {
     validateFinalVideoShape(value.finalVideo, issues);
   }
+  if (value.resultChoiceLayoutEnabled !== undefined && typeof value.resultChoiceLayoutEnabled !== 'boolean') {
+    issues.push({ path: '$.resultChoiceLayoutEnabled', code: 'invalid_type', message: 'Result choice layout flag must be boolean.' });
+  }
   if (value.timeline !== undefined) validateTimelineShape(value.timeline, issues);
   if (value.stepReuse !== undefined) {
     if (!isRecord(value.stepReuse) || typeof value.stepReuse.enabled !== 'boolean') {
@@ -254,6 +257,49 @@ function validateTimelineShape(value: unknown, issues: QuickUseValidationIssue[]
   };
   value.videoClips.forEach((clip, index) => validateClip(clip, `${path}.videoClips[${index}]`, 'video'));
   value.audioClips.forEach((clip, index) => validateClip(clip, `${path}.audioClips[${index}]`, 'audio'));
+  if (value.resultChoices !== undefined) {
+    if (!Array.isArray(value.resultChoices)) {
+      issues.push({ path: `${path}.resultChoices`, code: 'invalid_type', message: 'Timeline result choices must be an array.' });
+      return;
+    }
+    const groupIds = new Set<string>();
+    value.resultChoices.forEach((group, groupIndex) => {
+      const groupPath = `${path}.resultChoices[${groupIndex}]`;
+      if (!isRecord(group)
+        || typeof group.id !== 'string'
+        || !group.id.trim()
+        || typeof group.label !== 'string'
+        || !group.label.trim()
+        || typeof group.stepId !== 'string'
+        || !group.stepId.trim()
+        || typeof group.defaultOptionId !== 'string'
+        || !Array.isArray(group.options)
+        || group.options.length < 2) {
+        issues.push({ path: groupPath, code: 'invalid_result_choice', message: 'A result choice needs an id, label, step, default, and at least two options.' });
+        return;
+      }
+      if (groupIds.has(group.id)) issues.push({ path: `${groupPath}.id`, code: 'duplicate_result_choice', message: `Result choice ids must be unique: ${group.id}.` });
+      groupIds.add(group.id);
+      const optionIds = new Set<string>();
+      group.options.forEach((option, optionIndex) => {
+        const optionPath = `${groupPath}.options[${optionIndex}]`;
+        if (!isRecord(option)
+          || typeof option.id !== 'string'
+          || !option.id.trim()
+          || typeof option.label !== 'string'
+          || !option.label.trim()
+          || typeof option.assetKey !== 'string'
+          || !option.assetKey.trim()
+          || !['image', 'video', 'audio'].includes(String(option.assetType))) {
+          issues.push({ path: optionPath, code: 'invalid_result_choice_option', message: 'Each result choice option needs an id, label, asset key, and asset type.' });
+          return;
+        }
+        if (optionIds.has(option.id)) issues.push({ path: `${optionPath}.id`, code: 'duplicate_result_choice_option', message: `Result option ids must be unique: ${option.id}.` });
+        optionIds.add(option.id);
+      });
+      if (!optionIds.has(group.defaultOptionId)) issues.push({ path: `${groupPath}.defaultOptionId`, code: 'invalid_result_choice_default', message: 'The default result must match one of the available options.' });
+    });
+  }
 }
 
 function validateTimeline(
@@ -684,6 +730,12 @@ function validateBlockDefault(
   if (candidate.kind === 'prompt_variable') {
     if (typeof block.defaultValue !== 'string') {
       issues.push({ path: `${path}.defaultValue`, code: 'invalid_default_type', message: 'Prompt variable default must be a string.' });
+    }
+    return;
+  }
+  if (candidate.kind === 'result_choice') {
+    if (typeof block.defaultValue !== 'string' || !candidate.enumValues.includes(block.defaultValue)) {
+      issues.push({ path: `${path}.defaultValue`, code: 'invalid_default_value', message: 'Default result must match one of the authored results.' });
     }
     return;
   }

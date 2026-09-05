@@ -111,6 +111,9 @@ export function collectModifiedStepIds(
       candidates.forEach((item) => modified.add(item.stepId));
       return modified;
     }
+    // Choosing among results the template author already uploaded changes only
+    // final assembly. It must never trigger a paid provider regeneration.
+    if (candidate.kind === 'result_choice') continue;
     if (isQuickUseValueModified(block, candidate, values[block.candidateId])) {
       modified.add(candidate.stepId);
     }

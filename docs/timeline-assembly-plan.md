@@ -145,3 +145,21 @@ Quick Use 可编辑参数也改为 Admin allow-list：
 - 非登录 Builder：已在本地浏览器确认 Text to Speech 入口、参数面板和无素材状态。
 - Admin timeline：当前本地会话未登录，无法在不绕过权限的情况下打开；由类型/构建检查覆盖，部署后需用管理员账户做一次交互验收。
 - 真实付费 TTS：未调用，避免在数据库迁移和登录环境未就绪时产生无法落库的付费结果。
+
+## 2026-09-05：多 Result 持久化与 Quick Use 选择职责修正
+
+本轮针对管理员实测的三个问题完成修正：
+
+- **重新 Edit 后 Result 为空**：文件没有丢失。保存使用的是 `${step.id}-result-${option.id}`，旧读取代码却只按 `step-N-result-*` 查找，新增步骤的真实 ID 并不等于序号。读取端现在优先使用稳定步骤 ID，并兼容旧序号 key；Result 名称和类型也随 workflow 版本保存，重新打开不再退回空白或通用名称。
+- **Final Assembly 不再选择具体 Result**：这里的一行只选择“哪个 workflow step 占据这个视频/音频位置”。多 Result 步骤显示有多少个 Quick Use choices，但不会在 Admin timeline 里预先锁定 Result 1/2。
+- **Result Choices 变成普通 Quick Use 积木**：只有被最终装配使用且拥有多个 Result 的步骤会在左侧 `Result choices` 分类出现。管理员可把它拖到中间画布、调整顺序、修改标题、选项名称和默认 Result；未拖入画布就不会出现在用户页面。
+- **前台样式统一**：新版本通过普通 Quick Use block 渲染 Result choice，使用与其他非 Primary 输入相同的白色折叠卡片。已发布旧版本继续显示兼容选择器，但也去掉了特殊蓝色底板。
+- **选择不触发付费生成**：切换 Result choice 只改变最终装配所取的已上传资产，不会把该步骤判定为“用户修改”，也不会调用图片、视频或音频供应商。
+- **复用路径补齐**：模板步骤结果加载支持稳定的多 Result asset key；没有用户修改时仍能免费复用默认 Result，最终装配再按用户的 choice 选择对应资产。
+
+验证状态：
+
+- [x] `npx tsc --noEmit`
+- [x] `npm run build`
+- [x] `git diff --check`
+- [ ] 部署后管理员验收：Edit 已发布模板，确认多个 Result 均恢复；进入 Quick Use Builder，把 Result choice 从左侧拖入并排序；发布后分别选择两个 Result，确认最终视频使用对应素材且不触发该步骤供应商生成。

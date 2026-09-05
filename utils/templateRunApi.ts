@@ -239,7 +239,7 @@ export async function fetchTemplateStepResultAssets(
     storage_bucket: string | null;
     storage_path: string | null;
     public_url: string | null;
-  }>).filter((row) => /^step-\d+-result$/.test(row.asset_key));
+  }>).filter((row) => /^step-.+-result(?:-.+)?$/.test(row.asset_key) && !row.asset_key.endsWith('-thumbnail'));
 
   const entries = await Promise.all(rows.map(async (row) => {
     let url = row.public_url || '';

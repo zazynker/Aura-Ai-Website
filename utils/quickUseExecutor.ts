@@ -251,11 +251,18 @@ async function loadTemplateAssetUrls(
 function mapTemplateStepResults(
   steps: QuickUseExecutionStep[],
   assetsByKey: Readonly<Record<string, { url: string; type: 'image' | 'video' | 'audio' }>>,
+  definition: QuickUseDefinition,
 ): Record<string, QuickUseTemplateStepResult> {
   const ordered = [...steps].sort((left, right) => left.order - right.order);
   const results: Record<string, QuickUseTemplateStepResult> = {};
   ordered.forEach((step, index) => {
-    const asset = assetsByKey[`step-${step.order}-result`]
+    const resultChoice = definition.timeline?.resultChoices?.find((group) => group.stepId === step.id);
+    const defaultChoice = resultChoice?.options.find((option) => option.id === resultChoice.defaultOptionId);
+    const stablePrefix = `${step.id}-result-`;
+    const asset = (defaultChoice ? assetsByKey[defaultChoice.assetKey] : undefined)
+      || assetsByKey[`${stablePrefix}default`]
+      || Object.entries(assetsByKey).find(([assetKey]) => assetKey.startsWith(stablePrefix))?.[1]
+      || assetsByKey[`step-${step.order}-result`]
       || assetsByKey[`step-${index + 1}-result`];
     if (!asset) return;
     results[step.id] = { url: asset.url, type: asset.type };
@@ -545,7 +552,7 @@ export async function executeQuickUseTemplate(
       definition,
       steps: plan.steps,
       values: resolvedValues,
-      templateStepResults: mapTemplateStepResults(plan.steps, stepResultAssets),
+      templateStepResults: mapTemplateStepResults(plan.steps, stepResultAssets, definition),
     });
 
     for (let index = 0; index < plan.steps.length; index += 1) {

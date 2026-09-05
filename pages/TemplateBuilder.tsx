@@ -1293,7 +1293,7 @@ export const TemplateBuilder = () => {
     if (!matchingStep || currentCount >= maxCount) return;
     const id = `${assetType}-${Date.now()}`;
     const firstOption = matchingStep.resultOptions?.[0];
-    const source = { kind: 'step_result' as const, stepId: matchingStep.id, ...(firstOption ? { resultId: firstOption.id } : {}) };
+    const source = { kind: 'step_result' as const, stepId: matchingStep.id };
     const resultChoices = matchingStep.resultOptions && matchingStep.resultOptions.length > 1
       ? [{ id: `result-choice-${matchingStep.id}`, label: `${matchingStep.feature} result`, stepId: matchingStep.id, defaultOptionId: firstOption!.id, options: matchingStep.resultOptions.map((option) => ({ id: option.id, label: option.label, assetKey: `${matchingStep.id}-result-${option.id}`, assetType: option.resultType })) }]
       : [];
@@ -1333,7 +1333,7 @@ export const TemplateBuilder = () => {
   const setTimelineSource = (assetType: 'video' | 'audio', clipId: string, value: string) => {
     const source = value === 'template_asset'
       ? { kind: 'template_asset' as const, assetKey: createTimelineAssetKey(clipId) }
-      : (() => { const [, stepId, resultId] = value.split(':'); return { kind: 'step_result' as const, stepId, ...(resultId ? { resultId } : {}) }; })();
+      : (() => { const [, stepId] = value.split(':'); return { kind: 'step_result' as const, stepId }; })();
     updateTimeline((timeline) => assetType === 'video'
       ? { ...timeline, videoClips: timeline.videoClips.map((clip) => clip.id === clipId ? { ...clip, source } : clip) }
       : { ...timeline, audioClips: timeline.audioClips.map((clip) => clip.id === clipId ? { ...clip, source } : clip) });
@@ -2030,22 +2030,45 @@ export const TemplateBuilder = () => {
     const timelineForSave = adminDefinition.timeline
       ? {
           ...adminDefinition.timeline,
+          videoClips: adminDefinition.timeline.videoClips.map((clip) => clip.source.kind === 'step_result'
+            ? { ...clip, source: { kind: 'step_result' as const, stepId: clip.source.stepId } }
+            : clip),
+          audioClips: adminDefinition.timeline.audioClips.map((clip) => clip.source.kind === 'step_result'
+            ? { ...clip, source: { kind: 'step_result' as const, stepId: clip.source.stepId } }
+            : clip),
           resultChoices: adminDefinition.timeline.videoClips.concat(adminDefinition.timeline.audioClips).flatMap((clip) => {
             if (clip.source.kind !== 'step_result') return [];
             const step = stepsForSave.find((item) => item.id === clip.source.stepId);
             if (!step?.resultOptions || step.resultOptions.length < 2) return [];
+            const existingGroup = adminDefinition.timeline?.resultChoices?.find((group) => group.stepId === step.id);
+            const validOptionIds = new Set(step.resultOptions.map((option) => option.id));
             return [{
               id: `result-choice-${step.id}`,
-              label: `${step.feature} result`,
+              label: existingGroup?.label || `${step.feature} result`,
               stepId: step.id,
-              defaultOptionId: clip.source.resultId || step.resultOptions[0].id,
-              options: step.resultOptions.map((option) => ({ id: option.id, label: option.label, assetKey: `${step.id}-result-${option.id}`, assetType: option.resultType })),
+              defaultOptionId: existingGroup && validOptionIds.has(existingGroup.defaultOptionId) ? existingGroup.defaultOptionId : step.resultOptions[0].id,
+              options: step.resultOptions.map((option) => ({
+                id: option.id,
+                label: existingGroup?.options.find((item) => item.id === option.id)?.label || option.label,
+                assetKey: `${step.id}-result-${option.id}`,
+                assetType: option.resultType,
+              })),
             }];
           }).filter((group, index, all) => all.findIndex((item) => item.id === group.id) === index),
         }
       : undefined;
+    const validResultChoiceIds = new Set((timelineForSave?.resultChoices || []).map((group) => `timeline-choice:${group.id}`));
     const definitionForSave = quickUseDefinition
-      ? { ...adminDefinition, ...(timelineForSave ? { timeline: timelineForSave } : {}) }
+      ? {
+          ...adminDefinition,
+          blocks: adminDefinition.blocks
+            .filter((block) => !block.candidateId.startsWith('timeline-choice:') || validResultChoiceIds.has(block.candidateId))
+            .map((block, index) => {
+              const group = timelineForSave?.resultChoices?.find((item) => `timeline-choice:${item.id}` === block.candidateId);
+              return { ...block, order: index + 1, ...(group && !group.options.some((option) => option.id === block.defaultValue) ? { defaultValue: group.defaultOptionId } : {}) };
+            }),
+          ...(timelineForSave ? { timeline: timelineForSave } : {}),
+        }
       : quickUseDefinition;
     const { workflow, validation } = convertAndValidateBuilderWorkflow(stepsForSave);
     if (!validation.valid) {
@@ -3751,7 +3774,7 @@ export const TemplateBuilder = () => {
                             <div className="text-center text-sm font-bold text-cyan-700">{index + 1}</div>
                             <div className="space-y-2">
                               <select
-                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}${clip.source.resultId ? `:${clip.source.resultId}` : ''}` : 'template_asset'}
+                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}` : 'template_asset'}
                                 onChange={(event) => setTimelineSource('video', clip.id, event.target.value)}
                                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                               >
@@ -3760,8 +3783,7 @@ export const TemplateBuilder = () => {
                                   {timelineVideoSteps.map((step) => {
                                     const usedElsewhere = (timelineVideoStepUsage.get(step.id) || 0)
                                       - (clip.source.kind === 'step_result' && clip.source.stepId === step.id ? 1 : 0);
-                                    const options = step.resultOptions?.length ? step.resultOptions : [{ id: undefined, label: 'Default result' }];
-                                    return options.map((option) => <option key={`${step.id}:${option.id || 'default'}`} value={`step:${step.id}${option.id ? `:${option.id}` : ''}`}>{timelineStepLabel(step)} · {option.label}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>);
+                                    return <option key={step.id} value={`step:${step.id}`}>{timelineStepLabel(step)}{step.resultOptions && step.resultOptions.length > 1 ? ` · ${step.resultOptions.length} choices in Quick Use` : ''}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>;
                                   })}
                                 </optgroup>
                               </select>
@@ -3769,7 +3791,7 @@ export const TemplateBuilder = () => {
                                 <div className={`text-[11px] ${usageCount > 1 ? 'font-medium text-amber-700 dark:text-amber-300' : 'text-slate-500'}`}>
                                   {usageCount > 1
                                     ? `This same step output appears ${usageCount} times in the final video.`
-                                    : 'This position follows the selected workflow step output; it does not upload another fixed file.'}
+                                    : 'This position follows this workflow step. If it has multiple results, the user chooses one in Quick Use.'}
                                 </div>
                               )}
                               {clip.source.kind === 'template_asset' && (
@@ -3848,7 +3870,7 @@ export const TemplateBuilder = () => {
                           <div key={clip.id} className="grid gap-3 rounded-lg border border-cyan-100 bg-white p-3 dark:border-cyan-500/15 dark:bg-slate-900/70 sm:grid-cols-[1fr_9rem_auto] sm:items-start">
                             <div className="space-y-2">
                               <select
-                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}${clip.source.resultId ? `:${clip.source.resultId}` : ''}` : 'template_asset'}
+                                value={clip.source.kind === 'step_result' ? `step:${clip.source.stepId}` : 'template_asset'}
                                 onChange={(event) => setTimelineSource('audio', clip.id, event.target.value)}
                                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs dark:border-slate-700 dark:bg-slate-900"
                               >
@@ -3857,8 +3879,7 @@ export const TemplateBuilder = () => {
                                   {timelineAudioSteps.map((step) => {
                                     const usedElsewhere = (timelineAudioStepUsage.get(step.id) || 0)
                                       - (clip.source.kind === 'step_result' && clip.source.stepId === step.id ? 1 : 0);
-                                    const options = step.resultOptions?.length ? step.resultOptions : [{ id: undefined, label: 'Default result' }];
-                                    return options.map((option) => <option key={`${step.id}:${option.id || 'default'}`} value={`step:${step.id}${option.id ? `:${option.id}` : ''}`}>{timelineStepLabel(step)} · {option.label}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>);
+                                    return <option key={step.id} value={`step:${step.id}`}>{timelineStepLabel(step)}{step.resultOptions && step.resultOptions.length > 1 ? ` · ${step.resultOptions.length} choices in Quick Use` : ''}{usedElsewhere > 0 ? ` · already used ${usedElsewhere}× elsewhere` : ''}</option>;
                                   })}
                                 </optgroup>
                               </select>
@@ -3866,7 +3887,7 @@ export const TemplateBuilder = () => {
                                 <div className={`text-[11px] ${usageCount > 1 ? 'font-medium text-amber-700 dark:text-amber-300' : 'text-slate-500'}`}>
                                   {usageCount > 1
                                     ? `This same audio step output is mixed ${usageCount} times.`
-                                    : 'This track follows the selected audio step output.'}
+                                    : 'This track follows this audio step. If it has multiple results, the user chooses one in Quick Use.'}
                                 </div>
                               )}
                               {clip.source.kind === 'template_asset' && (
