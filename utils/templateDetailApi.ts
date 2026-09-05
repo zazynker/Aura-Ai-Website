@@ -391,6 +391,15 @@ export async function fetchTemplateDetail(
             && !manualFinalResultThumbnail,
         }
       : undefined;
+  const hasReadableStepResult = (step: { id: string }, stepIndex: number): boolean => {
+    const stablePrefix = `${step.id}-result-`;
+    const ordinalPrefix = `step-${stepIndex + 1}-result-`;
+    return assets.some((asset) => (
+      (asset.asset_key.startsWith(stablePrefix) || asset.asset_key.startsWith(ordinalPrefix))
+      && !asset.asset_key.endsWith('-thumbnail')
+      && Boolean(urls.get(asset.id) || asset.public_url)
+    ));
+  };
   const fallbackType = coverOriginalAsset?.asset_type === 'video' || template.cover_type === 'video'
     ? 'video'
     : 'image';
@@ -432,7 +441,7 @@ export async function fetchTemplateDetail(
       dependsOnStepIds: (step.inputs || [])
         .filter((input) => input.source === 'previous_step' && input.fromStepId)
         .map((input) => input.fromStepId!),
-      hasTemplateResult: steps[stepIndex].results.length > 0,
+      hasTemplateResult: steps[stepIndex].results.length > 0 || hasReadableStepResult(step, stepIndex),
     })),
     quickUseDefinition: quickUseDefinition
       ? toQuickUsePresentationDefinition(quickUseDefinition, quickUseCandidates)

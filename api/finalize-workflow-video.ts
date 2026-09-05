@@ -44,7 +44,6 @@ const FAL_QUEUE_BASE_URL = 'https://queue.fal.run';
 const FAL_MERGE_ENDPOINT = 'fal-ai/ffmpeg-api/merge-videos';
 const FAL_COMPOSE_ENDPOINT = 'fal-ai/ffmpeg-api/compose';
 const FAL_SCALE_ENDPOINT = 'fal-ai/workflow-utilities/scale-video';
-const FAL_METADATA_ENDPOINT = 'fal-ai/ffmpeg-api/metadata';
 const FINAL_VIDEO_BUCKET = 'workflow-final-videos';
 
 /** Mirrors QUICK_USE_FINAL_VIDEO_MIN_CLIPS / MAX_CLIPS in workflows/. */
@@ -770,13 +769,59 @@ function firstVideoUrl(payload: Record<string, unknown>): string | null {
   return null;
 }
 
+interface LocalMediaProbe {
+  duration: number | null;
+  size: FrameSize | null;
+}
+
+const localProbeCache = new Map<string, Promise<LocalMediaProbe>>();
+
+/**
+ * Reads media metadata with the bundled ffmpeg binary. The old implementation
+ * called fal's metadata endpoint once per clip (and again for the merged file),
+ * which created a paid request every time a user merely assembled or replayed
+ * a template. Assembly metadata is local bookkeeping, so it must never call a
+ * generation provider.
+ */
+async function probeLocalMedia(url: string): Promise<LocalMediaProbe> {
+  const cached = localProbeCache.get(url);
+  if (cached) return cached;
+  const probe = (async (): Promise<LocalMediaProbe> => {
+    const workDir = await mkdtemp(join(tmpdir(), 'lazora-probe-'));
+    const inputPath = join(workDir, 'input');
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`Media probe download failed (${response.status}).`);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.byteLength > MAX_RETIME_BYTES) throw new Error('Media probe file is too large.');
+      await writeFile(inputPath, bytes);
+      const stderr = await new Promise<string>((resolve) => {
+        const child = spawn(ffmpegPath, ['-hide_banner', '-i', inputPath, '-f', 'null', '-'], { windowsHide: true });
+        let output = '';
+        child.stderr.on('data', (chunk: Buffer | string) => { output = `${output}${String(chunk)}`.slice(-20_000); });
+        child.once('error', () => resolve(output));
+        child.once('close', () => resolve(output));
+      });
+      const durationMatch = /Duration:\s*(\d+):(\d+):([\d.]+)/i.exec(stderr);
+      const duration = durationMatch
+        ? Number(durationMatch[1]) * 3600 + Number(durationMatch[2]) * 60 + Number(durationMatch[3])
+        : null;
+      const sizeMatch = /,\s*(\d{2,5})x(\d{2,5})(?:[,\s]|$)/.exec(stderr);
+      const size = sizeMatch ? { width: Number(sizeMatch[1]), height: Number(sizeMatch[2]) } : null;
+      return { duration: duration && Number.isFinite(duration) && duration > 0 ? duration : null, size };
+    } catch (error) {
+      console.warn('[Finalize workflow video] Could not read local media metadata:', error);
+      return { duration: null, size: null };
+    } finally {
+      await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  })();
+  localProbeCache.set(url, probe);
+  return probe;
+}
+
 async function probeDuration(url: string): Promise<number | null> {
-  try {
-    return readDuration(await falRun(FAL_METADATA_ENDPOINT, { media_url: url }));
-  } catch (error) {
-    console.warn('[Finalize workflow video] Could not read media duration:', error);
-    return null;
-  }
+  return (await probeLocalMedia(url)).duration;
 }
 
 function readDuration(payload: Record<string, unknown>): number | null {
@@ -825,12 +870,7 @@ function readFrameSize(payload: Record<string, unknown>): FrameSize | null {
 }
 
 async function probeFrameSize(url: string): Promise<FrameSize | null> {
-  try {
-    return readFrameSize(await falRun(FAL_METADATA_ENDPOINT, { media_url: url }));
-  } catch (error) {
-    console.warn('[Finalize workflow video] Could not read clip metadata:', error);
-    return null;
-  }
+  return (await probeLocalMedia(url)).size;
 }
 
 const makeEven = (value: number) => (value % 2 === 0 ? value : value + 1);

@@ -163,3 +163,10 @@ Quick Use 可编辑参数也改为 Admin allow-list：
 - [x] `npm run build`
 - [x] `git diff --check`
 - [ ] 部署后管理员验收：Edit 已发布模板，确认多个 Result 均恢复；进入 Quick Use Builder，把 Result choice 从左侧拖入并排序；发布后分别选择两个 Result，确认最终视频使用对应素材且不触发该步骤供应商生成。
+
+## 2026-09-05：计费显示与装配探针修正
+
+- Result choice 不再被当作生成步骤的 Required 输入。无论用户选择 Result 1 还是 Result 2，都只是在已保存资产之间切换，不计入该步骤的 credits，也不会触发供应商。
+- 新的候选项默认不强制 Required；是否必填由 Quick Use Builder 中管理员勾选的 `Required` 决定。没有用户上传、没有改参数的步骤会走模板 Result 复用；只有明确必填或实际改动才进入计费估算。
+- Final Assembly 原先用 Fal `ffmpeg-api/metadata` 探测每个片段的尺寸和时长。两段视频一次合成因此可能出现 3 条约 `$0.0002` 的 metadata 记录，虽然没有生成镜头。现在改用服务器自带 ffmpeg 在本地读取媒体信息，纯拼接不再调用 Fal metadata；有额外音频时只提交一次 compose 混音任务。
+- 多 Result 恢复读取增加了旧资产 key 的后缀兼容，能识别旧版按序号、按步骤 ID 或历史前缀保存的结果，避免再次打开时把已保存 Result 判定为丢失。

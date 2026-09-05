@@ -250,7 +250,9 @@ function deriveResultChoiceCandidates(
       capability: step.capability,
       capabilityVersion: step.capabilityVersion,
       label: group.label,
-      required: true,
+      // Selecting an authored result is never a generation input. It must not
+      // force a paid step just because the choice block is visible.
+      required: false,
       parameterType: 'enum',
       defaultValue: group.defaultOptionId,
       enumValues: group.options.map((option) => option.id),
@@ -400,10 +402,9 @@ function deriveMaterialCandidates(
         capability: step.capability,
         capabilityVersion: step.capabilityVersion,
         label: slot.label,
-        required: Boolean(
-          (input.required || slot.required)
-          && !(input.source === 'template_asset' && input.templateAssetId),
-        ),
+        // Required is an Admin/Quick Use presentation decision. A template
+        // asset remains the step's default when the user uploads nothing.
+        required: false,
         assetType: slot.assetType,
         acceptedMimeTypes: [...slot.acceptedMimeTypes],
         maxCount: slot.maxCount,
@@ -649,7 +650,9 @@ function deriveSettingCandidates(
           label: parameter.label,
           // A registry-required Setting with a version default can remain
           // optional in Quick Use; omitting it preserves the Workflow value.
-          required: parameter.required && defaultValue === undefined,
+          // The Admin explicitly decides whether this setting is required in
+          // Quick Use. Registry requiredness alone must not create a charge.
+          required: false,
           parameterType: parameter.type,
         };
         if (defaultValue !== undefined) candidate.defaultValue = defaultValue;

@@ -1087,10 +1087,16 @@ export async function loadTemplateDraft(
     const resultAssets = assets.filter((asset) => (
       asset.asset_key.startsWith(stableResultPrefix)
       || asset.asset_key.startsWith(ordinalResultPrefix)
+      || authoredResultOptions.some((option) => asset.asset_key.endsWith(`-result-${option.id}`))
+      || (resultChoiceGroup?.options || []).some((option) => asset.asset_key.endsWith(`-result-${option.id}`))
     ) && !asset.asset_key.endsWith('-thumbnail'));
     const optionIdForAsset = (asset: SavedAssetRow): string => asset.asset_key.startsWith(stableResultPrefix)
       ? asset.asset_key.slice(stableResultPrefix.length)
-      : asset.asset_key.slice(ordinalResultPrefix.length);
+      : asset.asset_key.startsWith(ordinalResultPrefix)
+        ? asset.asset_key.slice(ordinalResultPrefix.length)
+        : (authoredResultOptions.find((option) => asset.asset_key.endsWith(`-result-${option.id}`))?.id
+          || resultChoiceGroup?.options.find((option) => asset.asset_key.endsWith(`-result-${option.id}`))?.id
+          || '');
     const orderedResultAssets = authoredResultOptions.length > 0
       ? authoredResultOptions.flatMap((option) => {
           const asset = resultAssets.find((candidate) => optionIdForAsset(candidate) === option.id);

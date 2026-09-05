@@ -148,8 +148,9 @@ export const estimateQuickUseCreditsDetailed = (
   // step decided before it.
   steps.forEach((step) => {
     const stepBlocks = blocksByStepId.get(step.id) || [];
-    const hasRequiredBlock = stepBlocks.some((block) => block.required);
-    const wasEdited = stepBlocks.some((block) => isBlockModified(block, values[block.candidateId]));
+    const generationBlocks = stepBlocks.filter((block) => !block.candidateId.startsWith('timeline-choice:'));
+    const hasRequiredBlock = generationBlocks.some((block) => block.required);
+    const wasEdited = generationBlocks.some((block) => isBlockModified(block, values[block.candidateId]));
     const upstreamRegenerates = (step.dependsOnStepIds || []).some((id) => generating.has(id));
     // hasTemplateResult is undefined on a server that predates this feature.
     // Treating that as "no demo result" quotes the full price, which is the
