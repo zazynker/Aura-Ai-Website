@@ -7,7 +7,6 @@ import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Generation, Collection, Template } from '../types';
 import { supabase } from '../utils/supabase';
-import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import {
   deleteCreatorTemplate,
   fetchCreatorTemplates,
@@ -95,44 +94,6 @@ export const Dashboard = () => {
   }, [location.search]);
   const [selectedImage, setSelectedImage] = useState<Generation | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<Generation[] | null>(null);
-  const [generatedThumbnails, setGeneratedThumbnails] = useState<Record<string, string>>({});
-  const generatedThumbnailsRef = useRef<Record<string, string>>({});
-  const attemptedThumbnailsRef = useRef<Set<string>>(new Set());
-  const [failedThumbnails, setFailedThumbnails] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    let cancelled = false;
-    const queue = generations.filter((generation) => (
-      !generation.thumbnailUrl &&
-      !generatedThumbnailsRef.current[generation.id] &&
-      !attemptedThumbnailsRef.current.has(generation.id) &&
-      !generation.id.startsWith('session_')
-    ));
-    let cursor = 0;
-    const worker = async () => {
-      while (!cancelled && cursor < queue.length) {
-        const generation = queue[cursor++];
-        attemptedThumbnailsRef.current.add(generation.id);
-        const thumbnailUrl = await ensureGenerationThumbnail(generation);
-        if (cancelled) continue;
-        if (!thumbnailUrl) {
-          setFailedThumbnails((current) => {
-            const next = new Set(current);
-            next.add(generation.id);
-            return next;
-          });
-          continue;
-        }
-        generatedThumbnailsRef.current[generation.id] = thumbnailUrl;
-        setGeneratedThumbnails((current) => ({ ...current, [generation.id]: thumbnailUrl }));
-      }
-    };
-    void Promise.all([worker(), worker(), worker()]);
-    return () => {
-      cancelled = true;
-    };
-  }, [generations]);
-
   const [myTemplates, setMyTemplates] = useState<CreatorTemplateCard[]>([]);
   const [loadingMyTemplates, setLoadingMyTemplates] = useState(false);
   const [myTemplatesError, setMyTemplatesError] = useState<string | null>(null);
@@ -394,7 +355,9 @@ useEffect(() => {
     controls = false,
     fullResolution = false,
   ) => {
-    const thumbnailUrl = generatedThumbnails[gen.id] || gen.thumbnailUrl || '';
+    // Browsing history must never create a paid provider job. Generations
+    // without a persisted poster use a neutral placeholder until opened.
+    const thumbnailUrl = gen.thumbnailUrl || '';
     if (isVideoGeneration(gen) && gen.videoUrl) {
       if (!controls) {
         return thumbnailUrl ? (
@@ -407,11 +370,7 @@ useEffect(() => {
           />
         ) : (
           <div className={`${className} flex items-center justify-center bg-slate-100 dark:bg-slate-800`}>
-            {failedThumbnails.has(gen.id) ? (
-              <Film className="w-8 h-8 text-slate-400 dark:text-slate-500" />
-            ) : (
-              <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
-            )}
+            <Film className="w-8 h-8 text-slate-400 dark:text-slate-500" />
           </div>
         );
       }
@@ -432,11 +391,7 @@ useEffect(() => {
     if (!displayUrl) {
       return (
         <div className={`${className} flex items-center justify-center bg-slate-100 dark:bg-slate-800`}>
-          {failedThumbnails.has(gen.id) ? (
-            <ImageIcon className="w-8 h-8 text-slate-400 dark:text-slate-500" />
-          ) : (
-            <Loader2 className="w-7 h-7 animate-spin text-slate-300 dark:text-slate-600" />
-          )}
+          <ImageIcon className="w-8 h-8 text-slate-400 dark:text-slate-500" />
         </div>
       );
     }

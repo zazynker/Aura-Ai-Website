@@ -45,7 +45,6 @@ const FAL_MERGE_ENDPOINT = 'fal-ai/ffmpeg-api/merge-videos';
 const FAL_COMPOSE_ENDPOINT = 'fal-ai/ffmpeg-api/compose';
 const FAL_SCALE_ENDPOINT = 'fal-ai/workflow-utilities/scale-video';
 const FAL_METADATA_ENDPOINT = 'fal-ai/ffmpeg-api/metadata';
-const FAL_EXTRACT_FRAME_URL = 'https://fal.run/fal-ai/ffmpeg-api/extract-frame';
 const FINAL_VIDEO_BUCKET = 'workflow-final-videos';
 
 /** Mirrors QUICK_USE_FINAL_VIDEO_MIN_CLIPS / MAX_CLIPS in workflows/. */
@@ -73,6 +72,7 @@ const POLL_INTERVAL_MS = 2_000;
 const MAX_REHOST_BYTES = 300 * 1024 * 1024;
 const MAX_RETIME_BYTES = 150 * 1024 * 1024;
 const RETIME_TIMEOUT_MS = 90_000;
+const LOCAL_MERGE_TIMEOUT_MS = 180_000;
 
 type RunRow = Record<string, unknown>;
 
@@ -97,11 +97,11 @@ interface QueuedJob {
 type AssemblyPhase = 'retiming' | 'padding' | 'merging' | 'mixing' | 'storing';
 
 interface AssemblyState {
-  version: 1 | 2 | 3;
+  version: 1 | 2 | 3 | 4;
   phase: AssemblyPhase;
   /** null when clip metadata was unreadable and the provider must choose. */
   target: FrameSize | null;
-  /** Assembly-only retimed URL per position. Version 3 only. */
+  /** Assembly-only normalized/retimed URL per position. Version 3+. */
   retimed: (string | null)[];
   /** Whether each source still needs letterboxing after retiming. */
   needsPadding: boolean[];
@@ -442,15 +442,18 @@ async function ensureFetchableUrl(
 // Assembly-only retiming
 // ---------------------------------------------------------------------------
 
-async function runFfmpeg(args: string[]): Promise<void> {
+async function runFfmpeg(
+  args: string[],
+  timeoutMs = RETIME_TIMEOUT_MS,
+): Promise<void> {
   if (!ffmpegPath) throw new Error('The FFmpeg executable is unavailable.');
   await new Promise<void>((resolve, reject) => {
     const child = spawn(ffmpegPath, args, { windowsHide: true });
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error('Clip retiming exceeded the server time limit.'));
-    }, RETIME_TIMEOUT_MS);
+      reject(new Error('Video processing exceeded the server time limit.'));
+    }, timeoutMs);
     child.stderr.on('data', (chunk: Buffer | string) => {
       stderr = `${stderr}${String(chunk)}`.slice(-8_000);
     });
@@ -461,16 +464,42 @@ async function runFfmpeg(args: string[]): Promise<void> {
     child.once('close', (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(`Clip retiming failed${stderr.trim() ? `: ${stderr.trim()}` : '.'}`));
+      else reject(new Error(`Video processing failed${stderr.trim() ? `: ${stderr.trim()}` : '.'}`));
     });
   });
 }
 
-async function retimeClip(
+async function uploadAssemblyVideo(
+  supabase: SupabaseClient,
+  filePath: string,
+  storagePath: string,
+): Promise<string> {
+  const outputBytes = await readFile(filePath);
+  const { error } = await supabase.storage
+    .from(FINAL_VIDEO_BUCKET)
+    .upload(storagePath, outputBytes, {
+      contentType: 'video/mp4',
+      cacheControl: '31536000',
+      upsert: true,
+    });
+  if (error) throw new Error(`The processed video could not be stored: ${error.message}`);
+  const { data } = supabase.storage.from(FINAL_VIDEO_BUCKET).getPublicUrl(storagePath);
+  if (!data.publicUrl) throw new Error('The processed video has no readable URL.');
+  return data.publicUrl;
+}
+
+/**
+ * Re-encodes every timeline clip before concatenation. Besides applying an
+ * optional speed change, this resets broken timestamps and makes all audio
+ * 48 kHz stereo AAC. Fal's merge endpoint produced repeated broadband clicks
+ * when a stereo clip was followed by a mono clip with irregular timestamps.
+ */
+async function prepareClip(
   supabase: SupabaseClient,
   sourceUrl: string,
   durationScale: number,
   storagePath: string,
+  target: FrameSize | null,
 ): Promise<string> {
   const workDir = await mkdtemp(join(tmpdir(), 'lazora-retime-'));
   const inputPath = join(workDir, 'input.mp4');
@@ -485,36 +514,121 @@ async function retimeClip(
     await writeFile(inputPath, inputBytes);
 
     const playbackRate = 1 / durationScale;
+    const videoFilter = [
+      `setpts=${durationScale.toFixed(4)}*(PTS-STARTPTS)`,
+      'fps=24',
+      ...(target ? [
+        `scale=${target.width}:${target.height}:force_original_aspect_ratio=decrease`,
+        `pad=${target.width}:${target.height}:(ow-iw)/2:(oh-ih)/2:black`,
+      ] : []),
+    ].join(',');
+    const commonArgs = [
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-y',
+      '-fflags', '+genpts+discardcorrupt',
+      '-i', inputPath,
+      '-map', '0:v:0',
+      '-map', '0:a:0',
+      '-filter:v', videoFilter,
+      '-filter:a', `aresample=48000:async=1:first_pts=0,aformat=sample_rates=48000:channel_layouts=stereo,atempo=${playbackRate.toFixed(6)},asetpts=PTS-STARTPTS`,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '18',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-ar', '48000',
+      '-ac', '2',
+      '-avoid_negative_ts', 'make_zero',
+      '-movflags', '+faststart',
+      outputPath,
+    ];
+    try {
+      await runFfmpeg(commonArgs);
+    } catch (error) {
+      // A silent video still needs a real audio stream so every prepared clip
+      // has the same concat shape. Do not hide any other processing failure.
+      if (!(error instanceof Error) || !error.message.includes('matches no streams')) throw error;
+      await runFfmpeg([
+        '-hide_banner',
+        '-loglevel', 'error',
+        '-y',
+        '-fflags', '+genpts+discardcorrupt',
+        '-i', inputPath,
+        '-f', 'lavfi',
+        '-i', 'anullsrc=r=48000:cl=stereo',
+        '-map', '0:v:0',
+        '-map', '1:a:0',
+        '-filter:v', videoFilter,
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '18',
+        '-pix_fmt', 'yuv420p',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-ar', '48000',
+        '-ac', '2',
+        '-shortest',
+        '-avoid_negative_ts', 'make_zero',
+        '-movflags', '+faststart',
+        outputPath,
+      ]);
+    }
+
+    return await uploadAssemblyVideo(supabase, outputPath, storagePath);
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function mergePreparedClips(
+  supabase: SupabaseClient,
+  sourceUrls: string[],
+  storagePath: string,
+): Promise<string> {
+  const workDir = await mkdtemp(join(tmpdir(), 'lazora-merge-'));
+  const outputPath = join(workDir, 'merged.mp4');
+  try {
+    const inputPaths: string[] = [];
+    for (let index = 0; index < sourceUrls.length; index += 1) {
+      const response = await fetch(sourceUrls[index]);
+      if (!response.ok) throw new Error(`Prepared clip ${index + 1} could not be downloaded (${response.status}).`);
+      const declaredLength = Number(response.headers.get('content-length') || '0');
+      if (declaredLength > MAX_RETIME_BYTES) throw new Error(`Prepared clip ${index + 1} is too large.`);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (bytes.byteLength > MAX_RETIME_BYTES) throw new Error(`Prepared clip ${index + 1} is too large.`);
+      const inputPath = join(workDir, `input-${index + 1}.mp4`);
+      await writeFile(inputPath, bytes);
+      inputPaths.push(inputPath);
+    }
+
+    const inputArgs = inputPaths.flatMap((path) => ['-i', path]);
+    const concatInputs = inputPaths
+      .map((_, index) => `[${index}:v:0][${index}:a:0]`)
+      .join('');
     await runFfmpeg([
       '-hide_banner',
       '-loglevel', 'error',
       '-y',
-      '-i', inputPath,
-      '-map', '0:v:0',
-      '-map', '0:a?',
-      '-filter:v', `setpts=${durationScale.toFixed(4)}*PTS`,
-      '-filter:a', `atempo=${playbackRate.toFixed(6)}`,
+      ...inputArgs,
+      '-filter_complex', `${concatInputs}concat=n=${inputPaths.length}:v=1:a=1[v][a]`,
+      '-map', '[v]',
+      '-map', '[a]',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '18',
+      '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
       '-b:a', '192k',
+      '-ar', '48000',
+      '-ac', '2',
+      '-avoid_negative_ts', 'make_zero',
       '-movflags', '+faststart',
       outputPath,
-    ]);
+    ], LOCAL_MERGE_TIMEOUT_MS);
 
-    const outputBytes = await readFile(outputPath);
-    const { error } = await supabase.storage
-      .from(FINAL_VIDEO_BUCKET)
-      .upload(storagePath, outputBytes, {
-        contentType: 'video/mp4',
-        cacheControl: '31536000',
-        upsert: true,
-      });
-    if (error) throw new Error(`The retimed clip could not be stored: ${error.message}`);
-    const { data } = supabase.storage.from(FINAL_VIDEO_BUCKET).getPublicUrl(storagePath);
-    if (!data.publicUrl) throw new Error('The retimed clip has no readable URL.');
-    return data.publicUrl;
+    return await uploadAssemblyVideo(supabase, outputPath, storagePath);
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -722,7 +836,7 @@ const sameFrame = (a: FrameSize | null, b: FrameSize): boolean =>
 function readAssemblyState(
   value: unknown,
   clipCount: number,
-  expectedVersion: 1 | 2 | 3,
+  expectedVersion: 1 | 2 | 3 | 4,
   expectedFingerprint: string | null,
 ): AssemblyState | null {
   if (!isRecord(value) || value.version !== expectedVersion) return null;
@@ -733,7 +847,7 @@ function readAssemblyState(
   if (!Array.isArray(padded) || !Array.isArray(padJobs)) return null;
   // A checkpoint that does not describe this run's clip list is not resumable.
   if (padded.length !== clipCount || padJobs.length !== clipCount) return null;
-  if (expectedVersion === 3 && (
+  if (expectedVersion >= 3 && (
     !Array.isArray(retimed)
     || retimed.length !== clipCount
     || !Array.isArray(needsPadding)
@@ -742,7 +856,7 @@ function readAssemblyState(
   )) return null;
   const phase = value.phase;
   if (phase !== 'retiming' && phase !== 'padding' && phase !== 'merging' && phase !== 'mixing' && phase !== 'storing') return null;
-  if (phase === 'retiming' && expectedVersion !== 3) return null;
+  if (phase === 'retiming' && expectedVersion < 3) return null;
   const inputFingerprint = readString(value.inputFingerprint);
   if (expectedVersion >= 2 && inputFingerprint !== expectedFingerprint) return null;
 
@@ -765,10 +879,10 @@ function readAssemblyState(
     version: expectedVersion,
     phase,
     target,
-    retimed: expectedVersion === 3
+    retimed: expectedVersion >= 3
       ? (retimed as unknown[]).map((entry) => readString(entry))
       : Array.from({ length: clipCount }, () => null),
-    needsPadding: expectedVersion === 3
+    needsPadding: expectedVersion >= 3
       ? needsPadding as boolean[]
       : Array.from({ length: clipCount }, () => false),
     padded: padded.map((entry) => readString(entry)),
@@ -803,26 +917,47 @@ async function saveAssemblyState(
 // Poster + re-hosting
 // ---------------------------------------------------------------------------
 
-async function extractPoster(videoUrl: string): Promise<string | null> {
-  if (!falKey) return null;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 20_000);
+async function extractPoster(
+  supabase: SupabaseClient,
+  videoUrl: string,
+  storagePath: string,
+): Promise<string | null> {
+  const workDir = await mkdtemp(join(tmpdir(), 'lazora-poster-'));
+  const inputPath = join(workDir, 'input.mp4');
+  const outputPath = join(workDir, 'poster.jpg');
   try {
-    const response = await fetch(FAL_EXTRACT_FRAME_URL, {
-      method: 'POST',
-      headers: { Authorization: `Key ${falKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ video_url: videoUrl, frame_type: 'first' }),
-      signal: controller.signal,
-    });
+    const response = await fetch(videoUrl);
     if (!response.ok) return null;
-    const payload = await readJson(response);
-    const images = payload.images;
-    if (!Array.isArray(images) || !isRecord(images[0])) return null;
-    return readString(images[0].url);
-  } catch {
+    const declaredLength = Number(response.headers.get('content-length') || '0');
+    if (declaredLength > MAX_REHOST_BYTES) return null;
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.byteLength > MAX_REHOST_BYTES) return null;
+    await writeFile(inputPath, bytes);
+    await runFfmpeg([
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-y',
+      '-i', inputPath,
+      '-frames:v', '1',
+      '-q:v', '2',
+      outputPath,
+    ], 30_000);
+    const posterBytes = await readFile(outputPath);
+    const { error } = await supabase.storage
+      .from(FINAL_VIDEO_BUCKET)
+      .upload(storagePath, posterBytes, {
+        contentType: 'image/jpeg',
+        cacheControl: '31536000',
+        upsert: true,
+      });
+    if (error) return null;
+    const { data } = supabase.storage.from(FINAL_VIDEO_BUCKET).getPublicUrl(storagePath);
+    return data.publicUrl || null;
+  } catch (error) {
+    console.warn('[Finalize workflow video] Could not create a local poster:', error);
     return null;
   } finally {
-    clearTimeout(timer);
+    await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
@@ -1039,14 +1174,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ? timeline.videoClips.map((clip) => clip.durationScale)
       : clipUrls.map(() => 1);
     const hasRetimedClips = durationScales.some((scale) => scale !== 1);
-    const retimedStoragePaths = durationScales.map((_, index) => (
-      `${user.id}/${runId}/retimed-${index + 1}.mp4`
+    const preparedStoragePaths = durationScales.map((_, index) => (
+      `${user.id}/${runId}/prepared-${index + 1}.mp4`
     ));
     const inputFingerprint = timeline ? timelineFingerprint(timeline) : null;
-    // Version 3 adds persisted assembly-only retiming. Timelines that do not
-    // use it stay on version 2 so an already-running ordinary assembly is not
-    // invalidated by this release.
-    const stateVersion: 1 | 2 | 3 = timeline ? (hasRetimedClips ? 3 : 2) : 1;
+    // Version 4 normalizes every timeline clip before concatenation. This
+    // invalidates older timeline checkpoints that may still contain mixed
+    // channel layouts or broken timestamps.
+    const stateVersion: 1 | 2 | 3 | 4 = timeline ? 4 : 1;
     checkpointToClear = true;
 
     let state = readAssemblyState(run.assembly_state, clipUrls.length, stateVersion, inputFingerprint);
@@ -1070,14 +1205,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const needsPadding = clipUrls.map((_, index) => Boolean(target && !sameFrame(sizes[index], target)));
       state = {
         version: stateVersion,
-        phase: hasRetimedClips ? 'retiming' : 'padding',
+        phase: timeline ? 'retiming' : 'padding',
         target,
-        retimed: clipUrls.map((url, index) => durationScales[index] === 1 ? url : null),
+        retimed: clipUrls.map(() => null),
         needsPadding,
         // A clip whose metadata could not be read is padded rather than assumed
         // to match: guessing is the one path that silently stretches a shot.
         padded: clipUrls.map((url, index) => (
-          durationScales[index] === 1 && (!target || !needsPadding[index]) ? url : null
+          !timeline && (!target || !needsPadding[index]) ? url : null
         )),
         padJobs: clipUrls.map(() => null),
         mergeJob: null,
@@ -1099,14 +1234,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           // Retime one clip per invocation when the earlier work has consumed
           // most of the safe budget. Each completed copy is checkpointed.
           if (budgetRemaining() < 15_000) return pendingResponse('retiming');
-          const retimedUrl = await retimeClip(
+          const retimedUrl = await prepareClip(
             supabase,
             clipUrls[index],
             durationScales[index],
-            retimedStoragePaths[index],
+            preparedStoragePaths[index],
+            state.target && state.needsPadding[index] ? state.target : null,
           );
           state.retimed[index] = retimedUrl;
-          if (!state.target || !state.needsPadding[index]) state.padded[index] = retimedUrl;
+          state.padded[index] = retimedUrl;
           state.retimedCount += 1;
           await saveAssemblyState(supabase, runId, state);
         }
@@ -1166,29 +1302,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await saveAssemblyState(supabase, runId, state);
           continue;
         }
-        if (!state.mergeJob) {
-          state.mergeJob = await falSubmit(FAL_MERGE_ENDPOINT, state.target
-            ? { video_urls: videoUrls, resolution: { width: state.target.width, height: state.target.height } }
-            // Without a known frame the provider picks, taking the first clip's
-            // aspect ratio. Clips may be stretched in that case, but the run
-            // still gets a deliverable.
-            : { video_urls: videoUrls, resolution_aspect_ratio_video_index: 0 },
-            'Video merge');
-          await saveAssemblyState(supabase, runId, state);
-        }
-
-        const result = await falPoll(state.mergeJob, 'Video merge');
-        if (result) {
-          const url = firstVideoUrl(result);
-          if (!url) throw new Error('The merge provider returned no video.');
-          state.mergedUrl = url;
-          state.mergedDuration = readDuration(result) || await probeDuration(url);
-          state.phase = timeline && audioClips.length > 0 ? 'mixing' : 'storing';
-          await saveAssemblyState(supabase, runId, state);
+        if (!timeline) {
+          if (!state.mergeJob) {
+            state.mergeJob = await falSubmit(FAL_MERGE_ENDPOINT, state.target
+              ? { video_urls: videoUrls, resolution: { width: state.target.width, height: state.target.height } }
+              : { video_urls: videoUrls, resolution_aspect_ratio_video_index: 0 },
+              'Video merge');
+            await saveAssemblyState(supabase, runId, state);
+          }
+          const result = await falPoll(state.mergeJob, 'Video merge');
+          if (result) {
+            const url = firstVideoUrl(result);
+            if (!url) throw new Error('The merge provider returned no video.');
+            state.mergedUrl = url;
+            state.mergedDuration = readDuration(result) || await probeDuration(url);
+            state.phase = 'storing';
+            await saveAssemblyState(supabase, runId, state);
+            continue;
+          }
+          if (budgetRemaining() < POLL_INTERVAL_MS * 2) return pendingResponse('merging');
+          await delay(POLL_INTERVAL_MS);
           continue;
         }
-        if (budgetRemaining() < POLL_INTERVAL_MS * 2) return pendingResponse('merging');
-        await delay(POLL_INTERVAL_MS);
+        if (budgetRemaining() < 20_000) return pendingResponse('merging');
+        const url = await mergePreparedClips(
+          supabase,
+          videoUrls,
+          `${user.id}/${runId}/merged-local.mp4`,
+        );
+        state.mergedUrl = url;
+        state.mergedDuration = await probeDuration(url);
+        state.phase = timeline && audioClips.length > 0 ? 'mixing' : 'storing';
+        await saveAssemblyState(supabase, runId, state);
         continue;
       }
 
@@ -1259,10 +1404,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       );
       const finalVideoUrl = hostedVideoUrl || state.mergedUrl;
 
-      const posterSource = await extractPoster(finalVideoUrl);
-      const finalThumbnailUrl = posterSource
-        ? (await rehost(supabase, posterSource, `${user.id}/${runId}/final-poster.jpg`, 'image/jpeg')) || posterSource
-        : null;
+      const finalThumbnailUrl = await extractPoster(
+        supabase,
+        finalVideoUrl,
+        `${user.id}/${runId}/final-poster.jpg`,
+      );
 
       const { error: updateError } = await supabase
         .from('template_runs')
@@ -1289,13 +1435,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         stepIds,
       });
 
-      if (hasRetimedClips && hostedVideoUrl) {
-        const temporaryPaths = retimedStoragePaths.filter((_, index) => durationScales[index] !== 1);
+      if (timeline && hostedVideoUrl) {
+        const temporaryPaths = [...preparedStoragePaths, `${user.id}/${runId}/merged-local.mp4`];
         const { error: cleanupError } = await supabase.storage
           .from(FINAL_VIDEO_BUCKET)
           .remove(temporaryPaths);
         if (cleanupError) {
-          console.warn('[Finalize workflow video] Could not remove assembly-only retimed clips:', cleanupError.message);
+          console.warn('[Finalize workflow video] Could not remove assembly-only prepared clips:', cleanupError.message);
         }
       }
 
@@ -1308,7 +1454,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         thumbnailUrl: finalThumbnailUrl,
         durationSeconds: state.mergedDuration,
         frame: state.target,
-        retimedClipCount: state.retimedCount,
+        retimedClipCount: hasRetimedClips
+          ? durationScales.filter((scale) => scale !== 1).length
+          : 0,
         paddedClipCount: state.paddedCount,
         stepIds,
         clips: clips.map((clip, index) => ({

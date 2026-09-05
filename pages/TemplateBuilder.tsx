@@ -61,7 +61,6 @@ import {
   QUICK_USE_TIMELINE_MAX_VIDEO_CLIPS,
   QUICK_USE_TIMELINE_MIN_DURATION_SCALE,
 } from '../workflows/quickUseTimeline';
-import { ensureGenerationThumbnail } from '../utils/generationThumbnail';
 import { AuthGateModal } from '../components/AuthGateModal';
 import {
   compileDialoguePrompt,
@@ -1917,17 +1916,6 @@ export const TemplateBuilder = () => {
     });
     if (activeStep.resultUrl?.startsWith('blob:')) URL.revokeObjectURL(activeStep.resultUrl);
     updateActiveStep(nextStep);
-    if (nextStep.resultType === 'video' && !nextStep.resultThumbnailUrl) {
-      void ensureGenerationThumbnail(generation).then((thumbnailUrl) => {
-        if (!thumbnailUrl) return;
-        setSteps((current) => current.map((step) => (
-          step.id === activeStep.id && step.resultGenerationId === generation.id
-            ? { ...step, resultThumbnailUrl: thumbnailUrl }
-            : step
-        )));
-      });
-    }
-
     if (!isFinalResultManual && nextStep.resultType !== 'audio' && activeStep.id === steps[steps.length - 1]?.id) {
       setFinalResult(resultUrl);
       setFinalResultType(
@@ -2014,22 +2002,10 @@ export const TemplateBuilder = () => {
 
     setSaveState('saving');
     setBuilderError(null);
-    const stepsForSave = await Promise.all(steps.map(async (step) => {
-      if (
-        step.resultType !== 'video'
-        || !step.resultGenerationId
-        || step.resultThumbnailUrl
-      ) {
-        return step;
-      }
-      const generation = generations.find((item) => item.id === step.resultGenerationId);
-      if (!generation) return step;
-      const thumbnailUrl = await ensureGenerationThumbnail(generation);
-      return thumbnailUrl ? { ...step, resultThumbnailUrl: thumbnailUrl } : step;
-    }));
-    if (stepsForSave.some((step, index) => step !== steps[index])) {
-      setSteps(stepsForSave);
-    }
+    // Saving or viewing a template must not create paid Fal thumbnail jobs.
+    // Persist an existing provider poster when available; otherwise the UI
+    // uses its neutral video placeholder.
+    const stepsForSave = steps;
     const { workflow, validation } = convertAndValidateBuilderWorkflow(stepsForSave);
     if (!validation.valid) {
       const message =

@@ -34,7 +34,6 @@ import {
   type TemplateDetailMaterial,
   type RealTemplateDetail,
 } from '../utils/templateDetailApi';
-import { ensureTemplateResultPoster } from '../utils/templatePosterApi';
 import {
   createRunIdempotencyKey,
   startTemplateRun,
@@ -160,42 +159,6 @@ export const TemplateDetail = () => {
         setTemplate(data);
         setActiveStep(data.steps[0]?.id || '');
         setModalContent(null);
-        if (
-          user
-          &&
-          data.finalResult.type === 'video'
-          && (data.finalResult.thumbnailIsFallback || !data.finalResult.thumbnail)
-        ) {
-          void ensureTemplateResultPoster(data.id, data.versionId).then((thumbnail) => {
-            if (cancelled || !thumbnail) return;
-            setTemplate((current) => {
-              if (
-                !current
-                || current.id !== data.id
-                || current.versionId !== data.versionId
-              ) {
-                return current;
-              }
-              const finalResultId = current.finalResult.id;
-              return {
-                ...current,
-                finalResult: {
-                  ...current.finalResult,
-                  thumbnail,
-                  thumbnailIsFallback: false,
-                },
-                steps: current.steps.map((step) => ({
-                  ...step,
-                  results: step.results.map((result) => (
-                    result.id === finalResultId
-                      ? { ...result, thumbnail, thumbnailIsFallback: false }
-                      : result
-                  )),
-                })),
-              };
-            });
-          });
-        }
       })
       .catch((error: unknown) => {
         if (cancelled) return;
