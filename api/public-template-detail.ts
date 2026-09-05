@@ -183,6 +183,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const assets = (assetData || []) as AssetRow[];
     const assetByKey = new Map(assets.map((asset) => [asset.asset_key, asset]));
+    // Result rows may use the stable step-id key introduced for multi-result
+    // templates (for example `${step.id}-result-<id>`), not only the legacy
+    // ordinal `step-3-result` key. Include both forms when creating readable
+    // URLs so the credit estimator can see that a saved result is reusable.
+    const resultChoiceAssetKeys = new Set(
+      (quickUseDefinition?.timeline?.resultChoices || [])
+        .flatMap((group) => group.options.map((option) => option.assetKey)),
+    );
+    const stepResultAsset = (asset: AssetRow) => {
+      if (asset.asset_key.endsWith('-thumbnail')) return false;
+      if (/^step-\d+-result(?:-.+)?$/.test(asset.asset_key)) return true;
+      if (steps.some((step) => asset.asset_key.startsWith(`${step.id}-result-`))) return true;
+      return resultChoiceAssetKeys.has(asset.asset_key);
+    };
     const relevantAssets = assets.filter((asset) => (
       asset.asset_key === 'cover-thumbnail'
       || asset.asset_key === 'cover-original'
@@ -191,7 +205,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       || asset.asset_key.startsWith('step-1-material-')
       || asset.asset_key === 'step-1-result'
       || asset.asset_key === 'step-1-result-thumbnail'
-      || /^step-\d+-result(?:-thumbnail)?$/.test(asset.asset_key)
+      || stepResultAsset(asset)
+      || (asset.asset_key.endsWith('-thumbnail') && assets.some((result) => result.asset_key === asset.asset_key.slice(0, -'-thumbnail'.length) && stepResultAsset(result)))
       || asset.asset_key.startsWith(QUICK_USE_EXAMPLE_ASSET_KEY_PREFIX)
     ));
     const urlEntries = await Promise.all(
@@ -262,8 +277,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     };
 
     const firstStep = steps[0];
-    const firstStepResultAsset = assetByKey.get('step-1-result');
-    const firstStepResultThumbnailAsset = assetByKey.get('step-1-result-thumbnail');
+    const firstChoice = quickUseDefinition?.timeline?.resultChoices
+      ?.find((group) => group.stepId === firstStep.id);
+    const firstStepResultAsset = (firstChoice
+      ? assetByKey.get(firstChoice.options.find((option) => option.id === firstChoice.defaultOptionId)?.assetKey || '')
+      : undefined)
+      || assetByKey.get('step-1-result')
+      || assets.find((asset) => asset.asset_key.startsWith(`${firstStep.id}-result-`) && stepResultAsset(asset));
+    const firstStepResultThumbnailAsset = firstStepResultAsset
+      ? assetByKey.get(`${firstStepResultAsset.asset_key}-thumbnail`)
+        || assetByKey.get('step-1-result-thumbnail')
+      : undefined;
     const firstStepResult = await resultForAsset(
       firstStepResultAsset,
       firstStep.capability,
@@ -287,10 +311,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const stepResults = new Map<string, NonNullable<Awaited<ReturnType<typeof resultForAsset>>>>();
     for (let index = 0; index < steps.length; index += 1) {
-      const resultAsset = assetByKey.get(`step-${index + 1}-result`);
-      const thumbnailAsset = assetByKey.get(`step-${index + 1}-result-thumbnail`);
-      const result = await resultForAsset(resultAsset, steps[index].capability, thumbnailAsset);
-      if (result) stepResults.set(steps[index].id, result);
+      const step = steps[index];
+      const choice = quickUseDefinition?.timeline?.resultChoices
+        ?.find((group) => group.stepId === step.id);
+      const resultAsset = (choice
+        ? assetByKey.get(choice.options.find((option) => option.id === choice.defaultOptionId)?.assetKey || '')
+        : undefined)
+        || assetByKey.get(`step-${index + 1}-result`)
+        || assets.find((asset) => asset.asset_key.startsWith(`${step.id}-result-`) && stepResultAsset(asset))
+        || assets.find((asset) => asset.asset_key.startsWith(`step-${index + 1}-result-`) && stepResultAsset(asset));
+      const thumbnailAsset = resultAsset
+        ? assetByKey.get(`${resultAsset.asset_key}-thumbnail`)
+          || assetByKey.get(`step-${index + 1}-result-thumbnail`)
+        : undefined;
+      const result = await resultForAsset(resultAsset, step.capability, thumbnailAsset);
+      if (result) stepResults.set(step.id, result);
     }
     const manualFinal = await resultForAsset(
       assetByKey.get('final-result'),
