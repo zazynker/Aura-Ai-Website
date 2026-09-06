@@ -31,5 +31,8 @@
     "**/*.ts",
     "**/*.tsx",
     "env.d.ts"
+  ],
+  "exclude": [
+    "supabase/functions/**"
   ]
 }

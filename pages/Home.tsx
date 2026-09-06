@@ -740,6 +740,7 @@ export const Home: React.FC<HomeProps> = ({ onGuestTemplateClick }) => {
           purchaseType: 'quick_use_single_generation',
           templateId: selectedTemplateForModal.id,
           templateVersionId: experienceDetail.versionId,
+          estimatedCredits: String(Math.max(1, Math.ceil(estimatedCredits))),
         },
         country: 'US',
       }, {
